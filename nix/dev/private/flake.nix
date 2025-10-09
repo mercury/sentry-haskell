@@ -1,0 +1,13 @@
+{
+  description = "private inputs";
+
+  inputs = {
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
+  };
+
+  outputs = _: { };
+}
