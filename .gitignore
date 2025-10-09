@@ -1,0 +1,11 @@
+# jujutsu VCS
+.jj/*
+
+# direnv cache
+.direnv/*
+
+# nix build artifacts
+result
+
+# cabal-install build artifacts
+dist-newstyle/*
