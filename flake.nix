@@ -13,10 +13,14 @@
         "aarch64-darwin"
         "aarch64-linux"
       ];
-      eachSystem = forEachSystem systems;
+      overlays = [ self.overlays.native ];
+      eachSystem = forEachSystem { inherit systems overlays; };
     in
     {
       # public outputs, should not reference
+      overlays = {
+        native = import ./nix/overlays/native.nix;
+      };
 
       # (private) dev outputs, should not be imported by downstream consumers
       # as they may depend on private flake inputs.
@@ -24,7 +28,10 @@
         { pkgs, ... }:
         {
           default = pkgs.mkShell {
-            buildInputs = with pkgs; [ ];
+            buildInputs = with pkgs; [
+              hpack
+              kent-server
+            ];
           };
         }
       );
