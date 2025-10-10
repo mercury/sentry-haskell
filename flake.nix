@@ -29,8 +29,15 @@
         {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
+              # tooling
+              cabal-install
+              ghcid
+              haskell.compiler.ghc910
               hpack
+              # integration test server
               kent-server
+              # C library dependencies
+              zlib.dev
             ];
           };
         }

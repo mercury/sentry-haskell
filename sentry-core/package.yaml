@@ -1,0 +1,51 @@
+<<: !include ../hpack-defaults.yaml
+
+name:               sentry-core
+version:            0.0.0
+build-type:         Simple
+
+# common dependencies, shared between all targets
+dependencies:
+  # core libraries
+  - base
+  - deepseq
+  - text
+  - time
+  - vector
+  # hackage dependencies
+  - hs-opentelemetry-instrumentation-http-client
+  - patrol
+  - witch
+
+library:
+  source-dirs: library
+
+tests:
+  unit:
+    source-dirs: tests/unit
+    main: Driver.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    build-tools: ["tasty-discover:tasty-discover"]
+    dependencies:
+      - sentry-core
+      - tasty
+      - tasty-discover
+      - tasty-hspec
+
+benchmarks:
+  time:
+    source-dirs: benchmarks/time
+    main: Driver.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    build-tools: ["tasty-discover:tasty-discover"]
+    dependencies:
+      - sentry-core
+      - tasty
+      - tasty-bench
+      - tasty-discover
+  space:
+    source-dirs: benchmarks/space
+    main: Main.hs
+    dependencies:
+      - sentry-core
+      - weigh
