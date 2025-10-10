@@ -8,12 +8,13 @@ let
     in
     builtins.getFlake (builtins.unsafeDiscardStringContext flakePath);
   forEachSystem =
-    systems: f:
+    { systems, overlays, ... }:
+    f:
     builtins.listToAttrs (
       builtins.map (system: {
         name = system;
         value = f {
-          pkgs = inputs.nixpkgs.legacyPackages.${system};
+          pkgs = import inputs.nixpkgs { inherit overlays system; };
           inherit system;
         };
       }) systems
