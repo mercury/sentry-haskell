@@ -1,0 +1,12 @@
+<<: !include ../hpack-defaults.yaml
+
+name:               sentry
+version:            0.0.0
+build-type:         Simple
+
+# common dependencies, shared between all targets
+dependencies:
+  - base
+
+library:
+  source-dirs: library

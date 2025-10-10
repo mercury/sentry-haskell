@@ -1,0 +1,153 @@
+cabal-version: 3.0
+
+-- This file has been generated from package.yaml by hpack version 0.38.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           sentry-core
+version:        0.0.0
+author:         jkachmar
+maintainer:     stability@mercury.com
+copyright:      2025 jkachmar
+license:        MPL-2.0
+license-file:   LICENSE
+build-type:     Simple
+tested-with:
+    GHC == { 9.10.3, 9.12.2 }
+
+library
+  exposed-modules:
+      Sentry.Client
+      Sentry.Client.Options
+      Sentry.Integration
+      Sentry.Transport
+  other-modules:
+      Paths_sentry_core
+  autogen-modules:
+      Paths_sentry_core
+  hs-source-dirs:
+      library
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      OverloadedRecordDot
+      OverloadedStrings
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
+  build-depends:
+      base
+    , deepseq
+    , hs-opentelemetry-instrumentation-http-client
+    , patrol
+    , text
+    , time
+    , vector
+    , witch
+  default-language: GHC2024
+
+test-suite unit
+  type: exitcode-stdio-1.0
+  main-is: Driver.hs
+  other-modules:
+      Paths_sentry_core
+  autogen-modules:
+      Paths_sentry_core
+  hs-source-dirs:
+      tests/unit
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      OverloadedRecordDot
+      OverloadedStrings
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      tasty-discover:tasty-discover
+  build-depends:
+      base
+    , deepseq
+    , hs-opentelemetry-instrumentation-http-client
+    , patrol
+    , sentry-core
+    , tasty
+    , tasty-discover
+    , tasty-hspec
+    , text
+    , time
+    , vector
+    , witch
+  default-language: GHC2024
+
+benchmark space
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_sentry_core
+  autogen-modules:
+      Paths_sentry_core
+  hs-source-dirs:
+      benchmarks/space
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      OverloadedRecordDot
+      OverloadedStrings
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
+  build-depends:
+      base
+    , deepseq
+    , hs-opentelemetry-instrumentation-http-client
+    , patrol
+    , sentry-core
+    , text
+    , time
+    , vector
+    , weigh
+    , witch
+  default-language: GHC2024
+
+benchmark time
+  type: exitcode-stdio-1.0
+  main-is: Driver.hs
+  other-modules:
+      Paths_sentry_core
+  autogen-modules:
+      Paths_sentry_core
+  hs-source-dirs:
+      benchmarks/time
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      OverloadedRecordDot
+      OverloadedStrings
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      tasty-discover:tasty-discover
+  build-depends:
+      base
+    , deepseq
+    , hs-opentelemetry-instrumentation-http-client
+    , patrol
+    , sentry-core
+    , tasty
+    , tasty-bench
+    , tasty-discover
+    , text
+    , time
+    , vector
+    , witch
+  default-language: GHC2024
