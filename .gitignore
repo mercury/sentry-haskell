@@ -9,3 +9,4 @@ result
 
 # cabal-install build artifacts
 dist-newstyle/*
+cabal/*

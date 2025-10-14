@@ -62,19 +62,23 @@ direnv allow
 nix develop
 
 # Build the project
-cabal build all
+just build
+
+# Build just the core package
+just build-core
 
 # Run tests
 cabal test sentry-core:unit
 
 # Watch mode for development
-ghcid
+just ghcid
 ```
 
 ### What's in the Dev Shell
 
 The Nix flake provides:
 - **GHC 9.10** and **cabal-install**
+- **just**: Command runner for common tasks (see `justfile`)
 - **ghcid**: Fast feedback loop for development
 - **hpack**: Generate .cabal files from package.yaml
 - **kent-server**: Mock Sentry backend for integration testing (v2.1.0)
@@ -91,7 +95,7 @@ This project uses **hpack** for package configuration (source of truth is `packa
 hpack
 
 # Then build as normal
-cabal build all
+just build
 ```
 
 **Common shared settings** (`hpack-defaults.yaml`):
@@ -124,10 +128,10 @@ vim sentry-core/library/Sentry/Client.hs
 hpack
 
 # 3. Auto-reload development (recommended)
-ghcid
+just ghcid
 
 # 4. Or build manually
-cabal build sentry-core
+just build-core
 
 # 5. Run tests
 cabal test sentry-core:unit
@@ -166,6 +170,7 @@ Both use existential types (`SomeTransport`, `SomeIntegration`) for heterogeneou
 | `sentry-core/library/Sentry/Client/Options.hs` | Configuration options |
 | `cabal.project` | Workspace package list |
 | `flake.nix` | Development environment definition |
+| `justfile` | Common build/test commands |
 
 ## Code Quality Standards
 
@@ -216,12 +221,13 @@ This project adapts sentry-rust's proven architecture to Haskell:
 ## Tips for AI Assistants
 
 1. **Always run `hpack`** after modifying `package.yaml` files before building
-2. **Use `ghcid`** for fast feedback during development
-3. **Check `hpack-defaults.yaml`** for shared GHC options/extensions
-4. **Kent server** is available for integration testing (Flask-based mock)
-5. **Type-driven development**: Leverage strict types and GHC warnings
-6. **Plugin pattern**: New transports/integrations should implement respective typeclasses
-7. **Reference sentry-rust**: When in doubt about design decisions, check how sentry-rust solves similar problems
+2. **Use `just` commands**: Prefer `just build`, `just build-core`, and `just ghcid` over direct cabal commands
+3. **Use `just ghcid`** for fast feedback during development
+4. **Check `hpack-defaults.yaml`** for shared GHC options/extensions
+5. **Kent server** is available for integration testing (Flask-based mock)
+6. **Type-driven development**: Leverage strict types and GHC warnings
+7. **Plugin pattern**: New transports/integrations should implement respective typeclasses
+8. **Reference sentry-rust**: When in doubt about design decisions, check how sentry-rust solves similar problems
 
 ## Getting Help
 
