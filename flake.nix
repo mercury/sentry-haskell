@@ -31,9 +31,10 @@
             buildInputs = with pkgs; [
               # tooling
               cabal-install
-              ghcid
+              ghciwatch
               haskell.compiler.ghc910
               hpack
+              just
               # integration test server
               kent-server
               # C library dependencies
