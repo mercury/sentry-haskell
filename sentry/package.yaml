@@ -6,7 +6,36 @@ build-type:         Simple
 
 # common dependencies, shared between all targets
 dependencies:
+  # core libraries
   - base
+  - async
+  - bytestring
+  - stm
+  - text
+  - time
+  # hackage dependencies
+  - aeson
+  - hs-opentelemetry-instrumentation-http-client
+  - http-client
+  - patrol
+  - sentry-core
+  - unagi-chan
+  - unliftio-core
 
 library:
   source-dirs: library
+
+tests:
+  unit:
+    source-dirs: tests/unit
+    main: Driver.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    build-tools: ["tasty-discover:tasty-discover"]
+    dependencies:
+      # library under test
+      - sentry
+      # test frameworks
+      - hspec
+      - tasty
+      - tasty-discover
+      - tasty-hspec

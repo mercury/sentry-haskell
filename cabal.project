@@ -1,2 +1,10 @@
 packages:
-  sentry-core
+    sentry
+  , sentry-core
+
+constraints:
+  hs-opentelemetry-api >= 0.3.0.0
+
+allow-newer:
+    hs-opentelemetry-instrumentation-http-client:hs-opentelemetry-api
+  , hs-opentelemetry-instrumentation-conduit:hs-opentelemetry-api
