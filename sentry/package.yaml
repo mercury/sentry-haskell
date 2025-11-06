@@ -15,12 +15,13 @@ dependencies:
   - time
   # hackage dependencies
   - aeson
+  - extra
   - hs-opentelemetry-instrumentation-http-client
   - http-client
   - patrol
   - sentry-core
   - unagi-chan
-  - unliftio-core
+  - unliftio
 
 library:
   source-dirs: library
