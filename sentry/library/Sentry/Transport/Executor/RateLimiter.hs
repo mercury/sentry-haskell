@@ -19,14 +19,12 @@
 -- > let limiter = RateLimiter.updateFromSentryHeader initialLimiter currentTime headers
 -- 
 -- > -- Check if category is rate limited
--- > if RateLimiter.isEnabled currentTime limiter RateLimitingCategory.Error
--- >   then sendEvent event
--- >   else pure ()
+-- > when (RateLimiter.isEnabled currentTime limiter RateLimitingCategory.Error) $
+-- >   sendEvent event
 -- 
 -- > -- Or filter envelope items
--- > case RateLimiter.filterEnvelope currentTime limiter envelope of
--- >   Just filtered -> sendEnvelope filtered
--- >   Nothing -> pure () -- All items filtered
+-- > whenJust (RateLimiter.filterEnvelope currentTime limiter envelope) \filtered ->
+-- >   sendEnvelope filtered
 module Sentry.Transport.Executor.RateLimiter
   ( -- * Rate Limiter
     RateLimiter (..),

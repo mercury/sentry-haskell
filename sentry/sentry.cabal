@@ -17,6 +17,7 @@ tested-with:
 
 library
   exposed-modules:
+      Sentry.Transport.Executor.Async
       Sentry.Transport.Executor.RateLimiter
   other-modules:
       Paths_sentry
@@ -39,6 +40,7 @@ library
     , async
     , base
     , bytestring
+    , extra
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , patrol
@@ -47,7 +49,7 @@ library
     , text
     , time
     , unagi-chan
-    , unliftio-core
+    , unliftio
   default-language: GHC2024
 
 test-suite unit
@@ -77,6 +79,7 @@ test-suite unit
     , async
     , base
     , bytestring
+    , extra
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , http-client
@@ -90,5 +93,5 @@ test-suite unit
     , text
     , time
     , unagi-chan
-    , unliftio-core
+    , unliftio
   default-language: GHC2024
