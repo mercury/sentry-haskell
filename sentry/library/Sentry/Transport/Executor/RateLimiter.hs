@@ -14,14 +14,14 @@
 -- Example usage:
 --
 -- > let initialLimiter = RateLimiter.new
--- 
+--
 -- > -- After receiving response with rate limit headers
 -- > let limiter = RateLimiter.updateFromSentryHeader initialLimiter currentTime headers
--- 
+--
 -- > -- Check if category is rate limited
 -- > when (RateLimiter.isEnabled currentTime limiter RateLimitingCategory.Error) $
 -- >   sendEvent event
--- 
+--
 -- > -- Or filter envelope items
 -- > whenJust (RateLimiter.filterEnvelope currentTime limiter envelope) \filtered ->
 -- >   sendEnvelope filtered
@@ -55,7 +55,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Kind (Type)
 import Data.List qualified as List
-import Data.Maybe (mapMaybe, isNothing)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
@@ -89,7 +89,7 @@ data RateLimitingCategory
 -- | Rate limiter tracking active rate limits per category.
 --
 -- This is a pure value that gets threaded through the transport worker loop.
--- 
+--
 -- Use 'new' to create an initial instance and 'updateFromRetryAfter' as well
 -- as 'updateFromSentryHeader' to incorporate  rate limit information from
 -- server responses.
@@ -119,7 +119,7 @@ new =
 -- | Update the global rate limit to end 1 minute after the provided time, in
 -- response to a HTTP 429 status code.
 updateFrom429 :: RateLimiter -> UTCTime -> RateLimiter
-updateFrom429 rateLimiter now = rateLimiter { global = Just $ 60 `addUTCTime` now }
+updateFrom429 rateLimiter now = rateLimiter{global = Just $ 60 `addUTCTime` now}
 
 -- | Update rate limits from a @Retry-After@ header value:
 --
@@ -129,7 +129,7 @@ updateFrom429 rateLimiter now = rateLimiter { global = Just $ 60 `addUTCTime` no
 updateFromRetryAfter :: RateLimiter -> UTCTime -> ByteString -> RateLimiter
 updateFromRetryAfter rateLimiter now value =
   let expiresAt = parseRetryAfter (ByteString.Char8.unpack value) now
-   in rateLimiter {global = Just $ maxTime rateLimiter.global expiresAt}
+   in rateLimiter{global = Just $ maxTime rateLimiter.global expiresAt}
 
 -- | Parse @Retry-After@ header value.
 --
@@ -143,7 +143,7 @@ parseRetryAfter str now = case readMaybe str of
     Nothing -> 60 `addUTCTime` now
 
 -- | Update rate limits from @X-Sentry-Rate-Limits@ header value.
--- 
+--
 -- Format:
 --   @\<rate-limit\> = (\<group\>,)+@
 --   @\<group\> = \<time\>:(\<category\>;):\<scope\>:(:\<reason\>)@
@@ -155,7 +155,7 @@ updateFromSentryHeader rateLimiter now value =
     processGroup :: RateLimiter -> ByteString -> RateLimiter
     processGroup rl group =
       List.foldl'
-        (\accum (category,dt) -> updateCategory (dt `addUTCTime` now) category accum)
+        (\accum (category, dt) -> updateCategory (dt `addUTCTime` now) category accum)
         rl
         (processRateLimitGroup group)
 
@@ -184,10 +184,9 @@ parseCategories :: ByteString -> [RateLimitingCategory]
 parseCategories bs =
   let categoryStrs = ByteString.Char8.split ';' bs
       categoryTexts = map (Text.strip . Text.Encoding.decodeUtf8) categoryStrs
-   in
-     if null categoryStrs
-      then [Any]
-      else mapMaybe parseCategoryName categoryTexts
+   in if null categoryStrs
+        then [Any]
+        else mapMaybe parseCategoryName categoryTexts
   where
     -- Parse a single category name.
     parseCategoryName :: Text -> Maybe RateLimitingCategory
@@ -204,12 +203,12 @@ parseCategories bs =
 -- existing value or the given time to update it with.
 updateCategory :: UTCTime -> RateLimitingCategory -> RateLimiter -> RateLimiter
 updateCategory expiresAt category rateLimiter = case category of
-  Any -> rateLimiter {global = Just $ maxTime rateLimiter.global expiresAt}
-  Error -> rateLimiter {error_ = Just $ maxTime rateLimiter.error_ expiresAt}
-  Session -> rateLimiter {session = Just $ maxTime rateLimiter.session expiresAt}
-  Transaction -> rateLimiter {transaction = Just $ maxTime rateLimiter.transaction expiresAt}
-  Attachment -> rateLimiter {attachment = Just $ maxTime rateLimiter.attachment expiresAt}
-  LogItem -> rateLimiter {logItem = Just $ maxTime rateLimiter.logItem expiresAt}
+  Any -> rateLimiter{global = Just $ maxTime rateLimiter.global expiresAt}
+  Error -> rateLimiter{error_ = Just $ maxTime rateLimiter.error_ expiresAt}
+  Session -> rateLimiter{session = Just $ maxTime rateLimiter.session expiresAt}
+  Transaction -> rateLimiter{transaction = Just $ maxTime rateLimiter.transaction expiresAt}
+  Attachment -> rateLimiter{attachment = Just $ maxTime rateLimiter.attachment expiresAt}
+  LogItem -> rateLimiter{logItem = Just $ maxTime rateLimiter.logItem expiresAt}
 
 -- | Check when a given category is rate limited until.
 --
@@ -234,7 +233,7 @@ isDisabledUntil rateLimiter category =
       Just t -> Just $ maxTime mt t
 
 -- | Check how many seconds a given 'RateLimitingCategory' is disabled for.
--- 
+--
 -- Returns @Just duration@ if rate limited, where @duration@ is the number of
 -- seconds until rate limiting expires with respect to the provided 'UTCTime'.
 --
@@ -242,9 +241,10 @@ isDisabledUntil rateLimiter category =
 isDisabledFor :: UTCTime -> RateLimitingCategory -> RateLimiter -> Maybe NominalDiffTime
 isDisabledFor now category rateLimiter = checkExpiry =<< isDisabledUntil rateLimiter category
   where
-    checkExpiry expiresAt = if now < expiresAt
-      then Just $ expiresAt `diffUTCTime` now
-      else Nothing
+    checkExpiry expiresAt =
+      if now < expiresAt
+        then Just $ expiresAt `diffUTCTime` now
+        else Nothing
 
 -- | Check if a category is currently allowed (not rate limited).
 isEnabled :: UTCTime -> RateLimitingCategory -> RateLimiter -> Bool
@@ -256,24 +256,24 @@ isEnabled now category rateLimiter =
 -- Removes items whose categories are currently rate limited (leaving any items
 -- whose types cannot be determined) and returns 'Nothing' if all items were
 -- filtered out.
--- 
+--
 -- Returns @Nothing@ if all items are filtered out.
 filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> Maybe Patrol.Envelope
 filterEnvelope rateLimiter now envelope =
   let filteredItems = mapMaybe (filterItem rateLimiter now) envelope.items
    in if null filteredItems
         then Nothing
-        else Just envelope {Patrol.Envelope.items = filteredItems}
+        else Just envelope{Patrol.Envelope.items = filteredItems}
 
 -- | Filter a single item based on its rate limit status.
 filterItem :: RateLimiter -> UTCTime -> Patrol.Item -> Maybe Patrol.Item
-filterItem rateLimiter now item =  case categoryFromItem item of
+filterItem rateLimiter now item = case categoryFromItem item of
   Nothing -> Just item -- Unknown type, keep it
   Just category ->
     if isEnabled now category rateLimiter
       then Just item
       else Nothing
-    
+
 -- | Extract the rate limiting category from an envelope item's type header.
 --
 -- The item type is stored in the "type" field of the item's headers.

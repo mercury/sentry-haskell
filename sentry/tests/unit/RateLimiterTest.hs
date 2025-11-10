@@ -1,7 +1,7 @@
 module RateLimiterTest where
 
 import Data.ByteString (ByteString)
-import Data.Time.Clock (UTCTime(..), addUTCTime)
+import Data.Time.Clock (UTCTime (..), addUTCTime)
 import Data.Time.Clock.System (systemEpochDay)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Test.Hspec
@@ -32,7 +32,7 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
       `shouldBe` Nothing
     let header1 = "30::,\n120:invalid:invalid,\n4711:foo;bar;baz;security:project" :: ByteString
         rl1 = RateLimiter.updateFromSentryHeader rl0 startTime header1
-    
+
     RateLimiter.isDisabledFor startTime RateLimiter.Any rl1
       `shouldBe` Just 30
     RateLimiter.isDisabledFor startTime RateLimiter.Transaction rl1
@@ -43,7 +43,7 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
       `shouldBe` Just 60
 
 spec_updateFrom429 :: Spec
-spec_updateFrom429 =  describe "updateFrom429" do
+spec_updateFrom429 = describe "updateFrom429" do
   it "the HTTP 429 status code helper adds a 60 second delay" do
     let startTime = UTCTime systemEpochDay 0
         rl = RateLimiter.updateFrom429 RateLimiter.new startTime
