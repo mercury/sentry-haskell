@@ -1,0 +1,5 @@
+comma-style: trailing
+haddock-style: single-line
+import-export-style: trailing
+indentation: 2
+indent-wheres: true

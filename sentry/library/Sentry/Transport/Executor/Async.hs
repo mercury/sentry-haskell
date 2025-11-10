@@ -29,12 +29,13 @@ where
 
 import Control.Concurrent.Async (Async, async)
 import Control.Concurrent.Async qualified as Async
+import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 import Control.Monad (void)
 import Control.Monad.Extra (ifM)
-import Data.Maybe (fromMaybe)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
+import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime)
 import GHC.Conc.Sync (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
 import Patrol qualified
@@ -42,7 +43,6 @@ import Sentry.Transport (Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
 import UnliftIO.Timeout qualified as UnliftIO (timeout)
 
 -- | Tasks that can be sent to the worker thread.
@@ -97,7 +97,7 @@ new queueSize sendFn = do
   (taskQueue, outChan) <- Unagi.newChan queueSize
   shutdownRef <- newTVarIO False
   handle <- async $ mkWorker outChan sendFn
-  pure AsyncExecutor {taskQueue, shutdownRef, handle}
+  pure AsyncExecutor{taskQueue, shutdownRef, handle}
 
 -- | Worker thread loop that processes tasks from the queue.
 mkWorker ::
@@ -107,21 +107,22 @@ mkWorker ::
 mkWorker outChan sendFn = loop RateLimiter.new
   where
     loop :: RateLimiter -> IO ()
-    loop rateLimiter = Unagi.readChan outChan >>= \case
-      Shutdown -> pure ()
-      -- signal that all events enqueued behind the flush request have been sent
-      Flush syncVar -> putMVar syncVar () *> loop rateLimiter
-      SendEnvelope envelope -> do
-        now <- getCurrentTime
-        case RateLimiter.isDisabledFor now RateLimiter.Any rateLimiter of
-          -- we're globally rate-limited, drop the envelope & loop
-          Just _ -> loop rateLimiter
-          Nothing -> case RateLimiter.filterEnvelope rateLimiter now envelope of
-            -- all item categories are rate limited, drop the envelope & loop
-            Nothing -> loop rateLimiter
-            Just filteredEnvelope -> do
-              newRateLimiter <- sendFn filteredEnvelope rateLimiter
-              loop newRateLimiter
+    loop rateLimiter =
+      Unagi.readChan outChan >>= \case
+        Shutdown -> pure ()
+        -- signal that all events enqueued behind the flush request have been sent
+        Flush syncVar -> putMVar syncVar () *> loop rateLimiter
+        SendEnvelope envelope -> do
+          now <- getCurrentTime
+          case RateLimiter.isDisabledFor now RateLimiter.Any rateLimiter of
+            -- we're globally rate-limited, drop the envelope & loop
+            Just _ -> loop rateLimiter
+            Nothing -> case RateLimiter.filterEnvelope rateLimiter now envelope of
+              -- all item categories are rate limited, drop the envelope & loop
+              Nothing -> loop rateLimiter
+              Just filteredEnvelope -> do
+                newRateLimiter <- sendFn filteredEnvelope rateLimiter
+                loop newRateLimiter
 
 instance Sentry.Transport.Transport AsyncExecutor where
   send :: AsyncExecutor -> Patrol.Envelope -> IO Sentry.Transport.SendResponse

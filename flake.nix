@@ -62,7 +62,10 @@
         in
         eval {
           projectRootFile = "flake.nix";
-          programs.nixfmt.enable = true;
+          programs = {
+            fourmolu.enable = true;
+            nixfmt.enable = true;
+          };
           # Globally exclude the following patterns from auto-formatting:
           settings.global.excludes = [
             # ...jujutsu's VCS tracking directory
