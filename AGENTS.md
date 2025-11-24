@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 ## Project Overview
 
@@ -17,7 +17,7 @@ This is an **unofficial Sentry SDK for Haskell**, currently in early development
 ```
 sentry-haskell/
 ├── sentry-core/          # Core SDK abstractions (for integration authors)
-├── sentry/               # High-level "batteries included" SDK (WIP)
+├── sentry/               # High-level SDK (WIP: async executor & rate limiter done)
 ├── nix/                  # Nix build infrastructure
 │   ├── packages/         # Custom packages (kent mock server)
 │   └── overlays/         # Nix overlays
@@ -39,8 +39,12 @@ Foundation package providing low-level abstractions:
 
 **Rust SDK parallel**: Similar to `sentry-core` and `sentry-types` in sentry-rust
 
-### `sentry` (Planned)
-High-level SDK with default implementations and convenience functions.
+### `sentry` (WIP)
+High-level SDK with concrete transport implementations:
+- **`Sentry.Transport.Executor.Async`**: Asynchronous executor with worker threads (✅ implemented)
+- **`Sentry.Transport.Executor.RateLimiter`**: Server-compliant rate limiting (✅ implemented)
+- ⏳ HTTP transport implementation pending
+- ⏳ Integration tests pending
 
 **Target audience**: End users integrating Sentry into applications
 
@@ -71,7 +75,10 @@ just build-core
 cabal test sentry-core:unit
 
 # Watch mode for development
-just ghcid
+just ghciwatch
+
+# Watch mode with auto-testing
+just ghciwatch-unit
 ```
 
 ### What's in the Dev Shell
@@ -79,8 +86,9 @@ just ghcid
 The Nix flake provides:
 - **GHC 9.10** and **cabal-install**
 - **just**: Command runner for common tasks (see `justfile`)
-- **ghcid**: Fast feedback loop for development
+- **ghciwatch**: Live-reloading REPL watcher for fast feedback
 - **hpack**: Generate .cabal files from package.yaml
+- **fourmolu**: Haskell code formatter (config in fourmolu.yaml)
 - **kent-server**: Mock Sentry backend for integration testing (v2.1.0)
 - **zlib**: C dependencies
 
@@ -111,6 +119,15 @@ just build
 - Discovery: **tasty-discover** (automatic test discovery)
 - Run: `cabal test sentry-core:unit`
 
+**Unit tests** (sentry/tests/unit/):
+- Framework: **tasty** + **tasty-hspec**
+- Test files:
+  - `RateLimiterTest.hs` - Rate limiter behavior (7 test cases)
+    - Header parsing (`X-Sentry-Rate-Limits`, `Retry-After`)
+    - HTTP 429 handling
+    - Category filtering
+- Run: `cabal test sentry:unit`
+
 **Benchmarks** (sentry-core/benchmarks/):
 - **Time**: `tasty-bench` → `cabal bench sentry-core:time`
 - **Space**: `weigh` library → `cabal bench sentry-core:space`
@@ -128,7 +145,8 @@ vim sentry-core/library/Sentry/Client.hs
 hpack
 
 # 3. Auto-reload development (recommended)
-just ghcid
+just ghciwatch              # Standard watch mode
+just ghciwatch-unit         # Watch with auto-testing
 
 # 4. Or build manually
 just build-core
@@ -160,6 +178,66 @@ Both use existential types (`SomeTransport`, `SomeIntegration`) for heterogeneou
 - **Plugin architecture**: Integrations act as both event sources AND processors
 - **Concurrent-safe**: Uses `IORef`, `stm-containers`, `unagi-chan` for thread safety
 
+#### Concurrency Patterns
+
+The SDK uses several Haskell concurrency primitives for thread-safe operation:
+
+- **Bounded channels** (`unagi-chan`): Lock-free producer-consumer queues for task distribution
+- **TVar** (`stm`): Software transactional memory for shutdown coordination
+- **MVar**: Point-to-point synchronization for flush operations
+- **Async**: Lightweight thread management for dedicated workers
+- **Pure threading**: Rate limiter uses immutable values threaded through loops (no shared mutable state)
+
+This approach minimizes contention while maintaining type safety and preventing race conditions.
+
+### Async Transport Executor
+
+**File**: `sentry/library/Sentry/Transport/Executor/Async.hs`
+
+Asynchronous envelope delivery using dedicated worker threads (mirrors sentry-rust's executor pattern):
+
+**Architecture:**
+- **Bounded task queue** (default 30 items, configurable) using `unagi-chan`
+- **Dedicated worker thread** processes tasks asynchronously via `async`
+- **Rate limiter integration** filters envelopes before sending
+- **Non-blocking semantics**: Queue-full events are dropped (prevents blocking callers)
+
+**Task types:**
+- `SendEnvelope` - Deliver event envelope
+- `Flush` - Synchronous flush point with MVar coordination
+- `Shutdown` - Graceful termination with timeout
+
+**Error handling:**
+- Explicit response types: `SendResponse`, `FlushResponse`, `ShutdownResponse`
+- No exceptions thrown to callers
+- Timeout support via UnliftIO
+
+### Transport Rate Limiter
+
+**File**: `sentry/library/Sentry/Transport/Executor/RateLimiter.hs`
+
+Server-side rate limit enforcement per Sentry protocol (compliant with official spec):
+
+**Supported headers:**
+- `X-Sentry-Rate-Limits` - Per-category rate limits
+- `Retry-After` - Global rate limit (numeric seconds or HTTP-date)
+- HTTP 429 - Defaults to 60-second rate limit
+
+**Rate limit categories:**
+- `Error`, `Session`, `Transaction`, `Attachment`, `LogItem`, `Any` (global)
+
+**Key operations:**
+- `updateFrom429` - Handle HTTP 429 responses
+- `updateFromRetryAfter` - Parse `Retry-After` headers
+- `updateFromSentryHeader` - Parse `X-Sentry-Rate-Limits`
+- `isEnabled` - Check if category can send now
+- `filterEnvelope` - Remove rate-limited items from payload
+
+**Threading model:**
+- Pure functional updates (immutable `RateLimiter` value)
+- Threaded through worker loop (no shared mutable state)
+- Per-category UTC timestamp tracking
+
 ## Important Files to Understand
 
 | File | Purpose |
@@ -168,9 +246,12 @@ Both use existential types (`SomeTransport`, `SomeIntegration`) for heterogeneou
 | `sentry-core/library/Sentry/Integration.hs` | Plugin interface for event processing |
 | `sentry-core/library/Sentry/Transport.hs` | Abstraction for event delivery |
 | `sentry-core/library/Sentry/Client/Options.hs` | Configuration options |
+| `sentry/library/Sentry/Transport/Executor/Async.hs` | Async executor with worker threads |
+| `sentry/library/Sentry/Transport/Executor/RateLimiter.hs` | Rate limiting implementation |
 | `cabal.project` | Workspace package list |
 | `flake.nix` | Development environment definition |
 | `justfile` | Common build/test commands |
+| `fourmolu.yaml` | Code formatter configuration |
 
 ## Code Quality Standards
 
@@ -178,28 +259,40 @@ Both use existential types (`SomeTransport`, `SomeIntegration`) for heterogeneou
 - **Language**: GHC2024 with modern extensions
 - **Documentation**: Inline Haddock comments (use `-- |` for exports)
 - **Type safety**: Strict data by default, leveraging type system for correctness
+- **Formatting**: Fourmolu with project-specific configuration
+  - Style: Trailing commas, 2-space indentation, single-line Haddock
+  - Integration: Treefmt-nix in dev shell (`nix fmt`)
+  - Config: `fourmolu.yaml`
 
 ## Dependencies Overview
 
-**Core runtime**:
+**Core runtime** (sentry-core):
 - `patrol`: Sentry protocol types (external package)
 - `witch`: Type conversions
 - `stm-containers`, `unagi-chan`: Concurrent data structures
 - `text`, `time`, `vector`: Standard utilities
 
+**sentry runtime** (extends sentry-core):
+- `async`, `stm`, `unagi-chan`, `unliftio`: Concurrency primitives
+- `http-client`: HTTP transport client
+- `aeson`, `bytestring`: JSON parsing and binary data
+- `extra`: Utility functions
+
 **Development only**:
 - `tasty`, `tasty-hspec`, `tasty-discover`: Testing
 - `tasty-bench`, `weigh`: Benchmarking
-- `ghcid`: Fast feedback loop
+- `ghciwatch`: Fast feedback loop
 
 ## Current Project Status
 
-**Stage**: Early scaffolding (v0.0.0)
+**Stage**: Active development (v0.0.0)
 - ✅ Core abstractions defined and documented
 - ✅ Test/benchmark infrastructure configured
 - ✅ Plugin system (Transport, Integration) in place
-- ⏳ High-level `sentry` package implementation pending
-- ⏳ Example integrations/transports pending
+- ✅ Async transport executor with rate limiting
+- ⏳ HTTP transport implementation
+- ⏳ Integration tests for sentry package
+- ⏳ Example integrations (breadcrumbs, contexts)
 
 ## Version Control
 
@@ -221,8 +314,8 @@ This project adapts sentry-rust's proven architecture to Haskell:
 ## Tips for AI Assistants
 
 1. **Always run `hpack`** after modifying `package.yaml` files before building
-2. **Use `just` commands**: Prefer `just build`, `just build-core`, and `just ghcid` over direct cabal commands
-3. **Use `just ghcid`** for fast feedback during development
+2. **Use `just` commands**: Prefer `just build`, `just build-core`, and `just ghciwatch` over direct cabal commands
+3. **Use `just ghciwatch`** for fast feedback during development
 4. **Check `hpack-defaults.yaml`** for shared GHC options/extensions
 5. **Kent server** is available for integration testing (Flask-based mock)
 6. **Type-driven development**: Leverage strict types and GHC warnings
