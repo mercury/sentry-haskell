@@ -35,6 +35,7 @@
               haskell.compiler.ghc910
               hpack
               just
+              specify-cli
               # integration test server
               kent-server
               # C library dependencies
