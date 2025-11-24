@@ -42,6 +42,7 @@ data SendResponse
     -- /delivered/ successfully, whether or not that is true depends on the
     -- semantics of the transport itself.
     SendProcessed
+  deriving stock (Eq, Show)
 
 -- | Potential responses from a call to 'flush'.
 type FlushResponse :: Type
@@ -62,20 +63,25 @@ data FlushResponse
     FlushFailed_Other Text
   | -- | The transport was flushed successfully within the time limit.
     FlushSucceeded
+  deriving stock (Eq, Show)
 
 -- | Potential responses from a call to 'shutdown'.
 type ShutdownResponse :: Type
 data ShutdownResponse
-  = -- | The transport failed to shut down before the given timeout.
-    Shutdown_TimedOut NominalDiffTime
+  = -- | The transport was already shut down when the call to 'shutdown' was
+    -- received.
+    ShutdownFailed_AlreadyShutdown
+  | -- | The transport failed to gracefully shut down before the given timeout.
+    ShutdownFailed_TimedOut NominalDiffTime
   | -- | The transport failed to shutdown gracefully for some other reason.
     --
     -- Since users provide their own 'Transport' implementations, we can't
     -- enumerate all possible failure modes here.
-    Shutdown_Other Text
+    ShutdownFailed_Other Text
   | -- | The transport shutdown gracefully, within its time limit, after flushing
     -- all items enqueued to be sent.
     ShutdownSucceeded
+  deriving stock (Eq, Show)
 
 -- | An opaque wrapper around any type with a valid 'Transport' instance.
 --

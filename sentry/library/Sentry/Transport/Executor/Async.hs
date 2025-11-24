@@ -30,7 +30,7 @@ where
 import Control.Concurrent.Async (Async, async)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
-import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar)
 import Control.Monad (void)
 import Control.Monad.Extra (ifM)
 import Data.Functor ((<&>))
@@ -111,7 +111,7 @@ mkWorker outChan sendFn = loop RateLimiter.new
       Unagi.readChan outChan >>= \case
         Shutdown -> pure ()
         -- signal that all events enqueued behind the flush request have been sent
-        Flush syncVar -> putMVar syncVar () *> loop rateLimiter
+        Flush syncVar -> tryPutMVar syncVar () *> loop rateLimiter
         SendEnvelope envelope -> do
           now <- getCurrentTime
           case RateLimiter.isDisabledFor now RateLimiter.Any rateLimiter of
@@ -141,12 +141,12 @@ instance Sentry.Transport.Transport AsyncExecutor where
       then do
         -- Wait for the task to release the sync var, otherwise time out.
         result <- UnliftIO.timeout (toMicroseconds timeout) do
-          Sentry.Transport.FlushSucceeded <$ takeMVar syncVar
+          Sentry.Transport.FlushSucceeded <$ readMVar syncVar
         pure $ (fromMaybe $ Sentry.Transport.FlushFailed_TimedOut timeout) result
       else pure Sentry.Transport.FlushFailed_QueueFull
 
   shutdown :: AsyncExecutor -> NominalDiffTime -> IO Sentry.Transport.ShutdownResponse
-  shutdown executor timeout = do
+  shutdown executor timeout = unlessShutdown executor.shutdownRef Sentry.Transport.ShutdownFailed_AlreadyShutdown do
     -- Prevent new tasks from being enqueued.
     atomically $ writeTVar executor.shutdownRef True
     -- Send shutdown task (best effort)
@@ -154,7 +154,11 @@ instance Sentry.Transport.Transport AsyncExecutor where
     -- Wait for the worker or cancel if it hasn't cleaned itself up in time.
     result <- UnliftIO.timeout (toMicroseconds timeout) do
       Sentry.Transport.ShutdownSucceeded <$ Async.wait executor.handle
-    pure $ (fromMaybe $ Sentry.Transport.Shutdown_TimedOut timeout) result
+    case result of
+      Just success -> pure success
+      Nothing -> do
+        Async.cancel executor.handle
+        pure $ Sentry.Transport.ShutdownFailed_TimedOut timeout
 
 -- | Helper to check whether the executor has been shut down and should refuse
 -- to perform a given action.

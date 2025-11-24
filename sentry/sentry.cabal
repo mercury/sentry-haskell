@@ -56,6 +56,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
+      AsyncExecutorTest
       RateLimiterTest
       Paths_sentry
   autogen-modules:
