@@ -32,7 +32,6 @@ import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar)
 import Control.Monad (void)
-import Control.Monad.Extra (ifM)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
@@ -163,7 +162,10 @@ instance Sentry.Transport.Transport AsyncExecutor where
 -- | Helper to check whether the executor has been shut down and should refuse
 -- to perform a given action.
 unlessShutdown :: TVar Bool -> a -> IO a -> IO a
-unlessShutdown ref a ma = ifM (readTVarIO ref) (pure a) ma
+unlessShutdown ref a ma = readTVarIO ref >>= \case
+  True -> pure a
+  False -> ma
+{-# INLINE unlessShutdown #-}
 
 -- | Helper to convert 'Data.Time.Clock.NominalDiffTime' (whose integer form
 -- represents whole seconds, but which has picosecond precision) to an integer

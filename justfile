@@ -7,11 +7,20 @@ jobs := ""
 
 # local caching directories
 cabal_dir := "cabal"
+bench_dir := cabal_dir + "/bench"
 build_dir := cabal_dir + "/build"
 repl_dir := cabal_dir + "/repl"
 test_dir := cabal_dir + "/test"
 
-# GHC compilation options, passed thru 'cabal'
+# profiling
+profiling := "false"
+project_file := if "{{profiling}}" != "false" {
+  "cabal.project.profiling"
+} else {
+  "cabal.project"
+}
+
+# GHC compilation options, passed thru to 'cabal'
 ghc_opts := ""
 repl_opts := "-O0 -fobject-code"
 
@@ -22,6 +31,21 @@ build target=package:
     --ghc-options '{{ghc_opts}}'
 
 build-core: (build "sentry-core")
+
+
+test target=package:
+  cabal test {{target}} \
+    -j{{jobs}} \
+    --builddir '{{build_dir}}' \
+    --ghc-options '{{ghc_opts}}'
+
+bench target=package:
+  cabal bench {{target}} \
+    -j{{jobs}} \
+    --project-file {{project_file}} \
+    --builddir '{{bench_dir}}' \
+    --ghc-options '{{ghc_opts}}' \
+    --benchmark-options '+RTS -T -p'
 
 ghciwatch target=package:
   ghciwatch \

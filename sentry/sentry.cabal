@@ -40,7 +40,6 @@ library
     , async
     , base
     , bytestring
-    , extra
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , patrol
@@ -80,7 +79,6 @@ test-suite unit
     , async
     , base
     , bytestring
-    , extra
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , http-client
@@ -121,7 +119,6 @@ benchmark time
     , async
     , base
     , bytestring
-    , extra
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , patrol
