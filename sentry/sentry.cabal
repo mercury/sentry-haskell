@@ -96,3 +96,42 @@ test-suite unit
     , unagi-chan
     , unliftio
   default-language: GHC2024
+
+benchmark time
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_sentry
+  autogen-modules:
+      Paths_sentry
+  hs-source-dirs:
+      benchmarks
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      OverloadedRecordDot
+      OverloadedStrings
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
+  build-depends:
+      aeson
+    , async
+    , base
+    , bytestring
+    , extra
+    , hs-opentelemetry-instrumentation-http-client
+    , http-client
+    , patrol
+    , sentry
+    , sentry-core
+    , stm
+    , tasty
+    , tasty-bench
+    , text
+    , time
+    , unagi-chan
+    , unliftio
+  default-language: GHC2024

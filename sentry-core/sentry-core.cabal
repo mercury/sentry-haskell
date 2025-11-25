@@ -102,7 +102,7 @@ benchmark space
       OverloadedStrings
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
   build-depends:
       base
     , deepseq
@@ -118,7 +118,7 @@ benchmark space
 
 benchmark time
   type: exitcode-stdio-1.0
-  main-is: Driver.hs
+  main-is: Main.hs
   other-modules:
       Paths_sentry_core
   autogen-modules:
@@ -134,9 +134,7 @@ benchmark time
       OverloadedStrings
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
   build-depends:
       base
     , deepseq
@@ -145,7 +143,6 @@ benchmark time
     , sentry-core
     , tasty
     , tasty-bench
-    , tasty-discover
     , text
     , time
     , vector

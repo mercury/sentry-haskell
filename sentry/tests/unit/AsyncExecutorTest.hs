@@ -1,9 +1,9 @@
 module AsyncExecutorTest where
 
-import Control.Monad (void)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar)
 import Control.Concurrent.STM.TQueue (TQueue, flushTQueue, newTQueueIO, readTQueue, tryReadTQueue, writeTQueue)
+import Control.Monad (void)
 import Control.Monad.STM (atomically)
 import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
@@ -45,7 +45,7 @@ spec_send = parallel $ describe "sending envelopes" do
     -- process the first envelope, filling the executor's outgoing queue
     res0 <- Transport.send executor testEnvelope
     res0 `shouldBe` Transport.SendProcessed
-    -- attempt to process the second envelope, but the queue is full 
+    -- attempt to process the second envelope, but the queue is full
     res1 <- Transport.send executor testEnvelope
     res1 `shouldBe` Transport.SendFailed_QueueFull
     -- unblock the send function

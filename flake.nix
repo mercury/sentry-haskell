@@ -28,19 +28,24 @@
         { pkgs, ... }:
         {
           default = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              # tooling
-              cabal-install
-              ghciwatch
-              haskell.compiler.ghc910
-              hpack
-              just
-              specify-cli
-              # integration test server
-              kent-server
-              # C library dependencies
-              zlib.dev
-            ];
+            buildInputs =
+              (with pkgs; [
+                # tooling
+                cabal-install
+                ghciwatch
+                haskell.compiler.ghc910
+                hpack
+                just
+                specify-cli
+                # integration test server
+                kent-server
+                # C library dependencies
+                zlib.dev
+              ])
+              ++ (with pkgs.haskell.packages.ghc910; [
+                profiterole
+                profiteur
+              ]);
           };
         }
       );
