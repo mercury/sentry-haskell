@@ -35,17 +35,16 @@ tests:
 benchmarks:
   time:
     source-dirs: benchmarks/time
-    main: Driver.hs
-    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
-    build-tools: ["tasty-discover:tasty-discover"]
+    main: Main.hs
+    ghc-options: -with-rtsopts=-A32m
     dependencies:
       - sentry-core
       - tasty
       - tasty-bench
-      - tasty-discover
   space:
     source-dirs: benchmarks/space
     main: Main.hs
+    ghc-options: -with-rtsopts=-A32m
     dependencies:
       - sentry-core
       - weigh

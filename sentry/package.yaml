@@ -40,3 +40,19 @@ tests:
       - tasty
       - tasty-discover
       - tasty-hspec
+
+benchmarks:
+  time:
+    source-dirs: benchmarks
+    main: Main.hs
+    ghc-options:
+      - -g
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-A32M -N"'
+    dependencies:
+      # library under test
+      - sentry
+      # test frameworks
+      - tasty
+      - tasty-bench
