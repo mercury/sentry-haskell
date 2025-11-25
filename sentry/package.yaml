@@ -15,7 +15,6 @@ dependencies:
   - time
   # hackage dependencies
   - aeson
-  - extra
   - hs-opentelemetry-instrumentation-http-client
   - http-client
   - patrol
@@ -30,7 +29,12 @@ tests:
   unit:
     source-dirs: tests/unit
     main: Driver.hs
-    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    ghc-options:
+      - -g
+      - -Wno-missed-specialisations
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
     build-tools: ["tasty-discover:tasty-discover"]
     dependencies:
       # library under test
