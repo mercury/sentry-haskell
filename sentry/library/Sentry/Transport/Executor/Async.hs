@@ -162,9 +162,10 @@ instance Sentry.Transport.Transport AsyncExecutor where
 -- | Helper to check whether the executor has been shut down and should refuse
 -- to perform a given action.
 unlessShutdown :: TVar Bool -> a -> IO a -> IO a
-unlessShutdown ref a ma = readTVarIO ref >>= \case
-  True -> pure a
-  False -> ma
+unlessShutdown ref a ma =
+  readTVarIO ref >>= \case
+    True -> pure a
+    False -> ma
 {-# INLINE unlessShutdown #-}
 
 -- | Helper to convert 'Data.Time.Clock.NominalDiffTime' (whose integer form
