@@ -14,8 +14,12 @@ dependencies:
   - vector
   # hackage dependencies
   - atomic-primops
+  - data-default
+  - hs-opentelemetry-api
   - hs-opentelemetry-instrumentation-http-client
+  - network-uri
   - patrol ^>= 1.2
+  - unordered-containers
   - witch
 
 library:

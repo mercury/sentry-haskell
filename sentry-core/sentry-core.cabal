@@ -41,11 +41,15 @@ library
   build-depends:
       atomic-primops
     , base
+    , data-default
     , deepseq
+    , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , network-uri
     , patrol ==1.2.*
     , text
     , time
+    , unordered-containers
     , vector
     , witch
   default-language: GHC2024
@@ -74,8 +78,11 @@ test-suite unit
   build-depends:
       atomic-primops
     , base
+    , data-default
     , deepseq
+    , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , network-uri
     , patrol ==1.2.*
     , sentry-core
     , tasty
@@ -83,6 +90,7 @@ test-suite unit
     , tasty-hspec
     , text
     , time
+    , unordered-containers
     , vector
     , witch
   default-language: GHC2024
@@ -109,12 +117,16 @@ benchmark space
   build-depends:
       atomic-primops
     , base
+    , data-default
     , deepseq
+    , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , network-uri
     , patrol ==1.2.*
     , sentry-core
     , text
     , time
+    , unordered-containers
     , vector
     , weigh
     , witch
@@ -142,14 +154,18 @@ benchmark time
   build-depends:
       atomic-primops
     , base
+    , data-default
     , deepseq
+    , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , network-uri
     , patrol ==1.2.*
     , sentry-core
     , tasty
     , tasty-bench
     , text
     , time
+    , unordered-containers
     , vector
     , witch
   default-language: GHC2024
