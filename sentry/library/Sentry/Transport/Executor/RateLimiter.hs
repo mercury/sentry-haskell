@@ -48,9 +48,6 @@ module Sentry.Transport.Executor.RateLimiter
   )
 where
 
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Aeson.Key
-import Data.Aeson.KeyMap qualified as Aeson.KeyMap
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Kind (Type)
@@ -63,8 +60,8 @@ import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
-import Patrol.Type.Headers qualified as Patrol.Headers
 import Patrol.Type.Item qualified as Patrol.Item
+import Patrol.Type.Items qualified as Patrol.Items
 import Text.Read (readMaybe)
 
 -- | Categories for rate limiting in Sentry.
@@ -259,37 +256,28 @@ isEnabled now category rateLimiter =
 --
 -- Returns @Nothing@ if all items are filtered out.
 filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> Maybe Patrol.Envelope
-filterEnvelope rateLimiter now envelope =
-  let filteredItems = mapMaybe (filterItem rateLimiter now) envelope.items
-   in if null filteredItems
-        then Nothing
-        else Just envelope{Patrol.Envelope.items = filteredItems}
+filterEnvelope rateLimiter now envelope = do
+  filteredItems <- filterItems rateLimiter now envelope.items
+  Just envelope{Patrol.Envelope.items = filteredItems}
 
--- | Filter a single item based on its rate limit status.
-filterItem :: RateLimiter -> UTCTime -> Patrol.Item -> Maybe Patrol.Item
-filterItem rateLimiter now item = case categoryFromItem item of
-  Nothing -> Just item -- Unknown type, keep it
-  Just category ->
-    if isEnabled now category rateLimiter
-      then Just item
+-- | Filter items based on their rate limit status.
+filterItems :: RateLimiter -> UTCTime -> Patrol.Items.Items -> Maybe Patrol.Items.Items
+filterItems rateLimiter now = \case
+  payload@(Patrol.Items.Raw _) ->
+    if isEnabled now Any rateLimiter
+      then Just payload
       else Nothing
+  Patrol.Items.EnvelopeItems items ->
+    let filtered = flip filter items \item -> isEnabled now (categoryFromItem item) rateLimiter
+     in case filtered of
+          [] -> Nothing
+          remaining -> Just $ Patrol.Items.EnvelopeItems remaining
 
 -- | Extract the rate limiting category from an envelope item's type header.
---
--- The item type is stored in the "type" field of the item's headers.
-categoryFromItem :: Patrol.Item -> Maybe RateLimitingCategory
-categoryFromItem item = do
-  let headers = Patrol.Headers.intoObject item.headers
-  itemType <- case Aeson.KeyMap.lookup (Aeson.Key.fromString "type") headers of
-    Just (Aeson.String type_) -> Just type_
-    _ -> Nothing
-  case itemType of
-    "event" -> Just Error
-    "session" -> Just Session
-    "transaction" -> Just Transaction
-    "attachment" -> Just Attachment
-    "log_item" -> Just LogItem
-    _ -> Nothing
+categoryFromItem :: Patrol.Item -> RateLimitingCategory
+categoryFromItem = \case
+  Patrol.Item.Event _ -> Error
+  Patrol.Item.Raw -> Any
 
 -- | Helper to get the maximum of an optional and provided 'UTCTime'.
 maxTime :: Maybe UTCTime -> UTCTime -> UTCTime

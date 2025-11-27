@@ -14,7 +14,7 @@ dependencies:
   - vector
   # hackage dependencies
   - hs-opentelemetry-instrumentation-http-client
-  - patrol
+  - patrol ^>= 1.2
   - witch
 
 library:
