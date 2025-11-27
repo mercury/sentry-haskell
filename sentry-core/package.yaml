@@ -13,6 +13,7 @@ dependencies:
   - time
   - vector
   # hackage dependencies
+  - atomic-primops
   - hs-opentelemetry-instrumentation-http-client
   - patrol ^>= 1.2
   - witch

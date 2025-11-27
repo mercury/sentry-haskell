@@ -22,9 +22,11 @@ class Transport t where
   -- | Signal the transport to flush all enqueued messages, blocking for up to
   -- the provided time limit before returning.
   flush :: t -> NominalDiffTime -> IO FlushResponse
+  flush _ _ = pure FlushSucceeded
 
   -- | Signal the transport to shut itself down within the provided time limit.
   shutdown :: t -> NominalDiffTime -> IO ShutdownResponse
+  shutdown transport timeout = ShutdownSucceeded <$ flush transport timeout
 
 -- | Potential responses from a call to 'send'.
 type SendResponse :: Type

@@ -49,7 +49,7 @@ bench target=package:
 
 ghciwatch target=package:
   ghciwatch \
-    --watch {{package}} \
+    --watch {{target}} \
     --command \
       "cabal repl {{target}} \
         -j{{jobs}} \
