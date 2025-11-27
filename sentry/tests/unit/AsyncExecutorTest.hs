@@ -188,10 +188,11 @@ testSendFn q fn env rl = do
 
 -- | An empty envelope; no headers means it should be filtered out.
 emptyEnvelope :: Patrol.Envelope
-emptyEnvelope = Patrol.Envelope.Envelope{
-    Patrol.Envelope.items = Patrol.Items.EnvelopeItems [],
-    Patrol.Envelope.headers = Patrol.Headers.empty
-  }
+emptyEnvelope =
+  Patrol.Envelope.Envelope
+    { Patrol.Envelope.items = Patrol.Items.EnvelopeItems [],
+      Patrol.Envelope.headers = Patrol.Headers.empty
+    }
 
 -- | A valid 'Patrol.Type.Envelope.Envelope', derived from the 'testEvent' and
 -- 'testDsn' mocks.

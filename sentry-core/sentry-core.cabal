@@ -20,6 +20,7 @@ library
       Sentry.Client
       Sentry.Client.Options
       Sentry.Integration
+      Sentry.Test
       Sentry.Transport
   other-modules:
       Paths_sentry_core
@@ -38,7 +39,8 @@ library
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
   build-depends:
-      base
+      atomic-primops
+    , base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
     , patrol ==1.2.*
@@ -70,7 +72,8 @@ test-suite unit
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
-      base
+      atomic-primops
+    , base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
     , patrol ==1.2.*
@@ -104,7 +107,8 @@ benchmark space
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
   build-depends:
-      base
+      atomic-primops
+    , base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
     , patrol ==1.2.*
@@ -136,7 +140,8 @@ benchmark time
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
   build-depends:
-      base
+      atomic-primops
+    , base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
     , patrol ==1.2.*
