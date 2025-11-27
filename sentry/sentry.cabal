@@ -42,7 +42,7 @@ library
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
     , http-client
-    , patrol
+    , patrol ==1.2.*
     , sentry-core
     , stm
     , text
@@ -71,7 +71,7 @@ test-suite unit
       OverloadedStrings
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
@@ -82,7 +82,7 @@ test-suite unit
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , http-client
-    , patrol
+    , patrol ==1.2.*
     , sentry
     , sentry-core
     , stm
@@ -121,7 +121,7 @@ benchmark time
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
     , http-client
-    , patrol
+    , patrol ==1.2.*
     , sentry
     , sentry-core
     , stm

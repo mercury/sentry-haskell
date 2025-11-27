@@ -11,6 +11,7 @@ import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Headers qualified as Patrol.Headers
+import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
@@ -187,7 +188,10 @@ testSendFn q fn env rl = do
 
 -- | An empty envelope; no headers means it should be filtered out.
 emptyEnvelope :: Patrol.Envelope
-emptyEnvelope = Patrol.Envelope.Envelope{Patrol.Envelope.items = [], Patrol.Envelope.headers = Patrol.Headers.empty}
+emptyEnvelope = Patrol.Envelope.Envelope{
+    Patrol.Envelope.items = Patrol.Items.EnvelopeItems [],
+    Patrol.Envelope.headers = Patrol.Headers.empty
+  }
 
 -- | A valid 'Patrol.Type.Envelope.Envelope', derived from the 'testEvent' and
 -- 'testDsn' mocks.

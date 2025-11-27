@@ -41,7 +41,7 @@ library
       base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
-    , patrol
+    , patrol ==1.2.*
     , text
     , time
     , vector
@@ -73,7 +73,7 @@ test-suite unit
       base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
-    , patrol
+    , patrol ==1.2.*
     , sentry-core
     , tasty
     , tasty-discover
@@ -107,7 +107,7 @@ benchmark space
       base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
-    , patrol
+    , patrol ==1.2.*
     , sentry-core
     , text
     , time
@@ -139,7 +139,7 @@ benchmark time
       base
     , deepseq
     , hs-opentelemetry-instrumentation-http-client
-    , patrol
+    , patrol ==1.2.*
     , sentry-core
     , tasty
     , tasty-bench

@@ -17,7 +17,7 @@ dependencies:
   - aeson
   - hs-opentelemetry-instrumentation-http-client
   - http-client
-  - patrol
+  - patrol ^>= 1.2
   - sentry-core
   - unagi-chan
   - unliftio
