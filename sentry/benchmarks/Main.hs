@@ -6,9 +6,9 @@ import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Transport qualified as Transport
-import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.Async (AsyncExecutor)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
+import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Test.Tasty (TestTree, withResource)
 import Test.Tasty.Bench qualified as Bench
 import UnliftIO.Exception (SomeException (..))
@@ -27,9 +27,10 @@ benchNoopExecutor =
   ]
 
 withNoopExecutor :: (IO (AsyncExecutor, Patrol.Envelope) -> TestTree) -> TestTree
-withNoopExecutor = withResource
-  ((,) <$> AsyncExecutor.new AsyncExecutor.defaultQueueSize noopSend <*> mkTestEnvelope)
-  (\(executor, _) -> void $ Transport.shutdown executor 1)
+withNoopExecutor =
+  withResource
+    ((,) <$> AsyncExecutor.new AsyncExecutor.defaultQueueSize noopSend <*> mkTestEnvelope)
+    (\(executor, _) -> void $ Transport.shutdown executor 1)
 
 noopSend :: Patrol.Envelope -> RateLimiter -> IO RateLimiter
 noopSend (!_) (!rl) = pure rl
