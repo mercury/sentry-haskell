@@ -1,11 +1,13 @@
 module Sentry.Integration where
 
 import Data.Kind (Constraint, Type)
+import Data.Proxy (Proxy (Proxy))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Patrol qualified
 import Sentry.Client.Options (ClientOptions (..))
-import Type.Reflection (Typeable, typeOf)
+import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
+import Witch qualified
 
 -- | An 'Integration' has two primary purposes:
 --
@@ -53,9 +55,9 @@ class (Typeable t) => Integration t where
 -- be stored in a 'Sentry.Client.Client' and applied successively as part of
 -- an 'Patrol.Type.Event.Event' processing pipeline.
 type SomeIntegration :: Type
-data SomeIntegration = forall t. (Integration t) => SomeIntegration t
+data SomeIntegration = forall t. (Integration t) => SomeIntegration SomeTypeRep t
 
 instance Integration SomeIntegration where
-  name (SomeIntegration i) = name i
-  setup (SomeIntegration i) = setup i
-  processEvent (SomeIntegration i) = processEvent i
+  name (SomeIntegration _ i) = name i
+  setup (SomeIntegration _ i) = setup i
+  processEvent (SomeIntegration _ i) = processEvent i
