@@ -1,7 +1,7 @@
 module Sentry.Integration where
 
 import Data.Kind (Constraint, Type)
-import Data.Proxy (Proxy (Proxy))
+import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Patrol qualified
@@ -61,3 +61,12 @@ instance Integration SomeIntegration where
   name (SomeIntegration _ i) = name i
   setup (SomeIntegration _ i) = setup i
   processEvent (SomeIntegration _ i) = processEvent i
+
+instance Integration i => Witch.From i SomeIntegration where
+  from = fromIntegration
+
+-- | Package up any type with an 'Integration' instance into 'SomeIntegration',
+-- storing its type representation so that it may be used as an index when
+-- looking up integrations installed in a 'Sentry.Client.Client'.
+fromIntegration :: forall i. Integration i => i -> SomeIntegration
+fromIntegration i = SomeIntegration (someTypeRep (Proxy @i)) i
