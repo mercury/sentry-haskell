@@ -20,6 +20,7 @@ library
       Sentry.Client
       Sentry.Client.Options
       Sentry.Integration
+      Sentry.Internal
       Sentry.Test
       Sentry.Transport
   other-modules:
