@@ -1,7 +1,7 @@
 module Sentry.Client.Options
   ( -- * ClientOptions
     Internal.ClientOptions (..),
-    Internal.defaultClientOptions,
+    pattern Internal.DEFAULT_CLIENT_OPTIONS,
     Internal.BeforeCallback,
   ) where
 

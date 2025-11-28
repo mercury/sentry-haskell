@@ -26,7 +26,9 @@ default-extensions:
   - DeriveAnyClass
   - DerivingStrategies
   - ImportQualifiedPost
+  - MultiWayIf
   - OverloadedRecordDot
   - OverloadedStrings
+  - PatternSynonyms
   - ScopedTypeVariables
   - StrictData

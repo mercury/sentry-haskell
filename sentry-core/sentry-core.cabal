@@ -21,6 +21,9 @@ library
       Sentry.Client.Options
       Sentry.Integration
       Sentry.Internal
+      Sentry.Scope
+      Sentry.Scope.IO
+      Sentry.Scope.Monad
       Sentry.Test
       Sentry.Transport
   other-modules:
@@ -34,22 +37,30 @@ library
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
   build-depends:
-      atomic-primops
+      aeson
+    , annotated-exception
+    , atomic-primops
     , base
+    , containers
     , data-default
     , deepseq
+    , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
     , network-uri
     , patrol ==1.2.*
+    , safe-exceptions
     , text
     , time
+    , unliftio-core
     , unordered-containers
     , vector
     , witch
@@ -59,6 +70,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
+      ScopeTest
       Paths_sentry_core
   autogen-modules:
       Paths_sentry_core
@@ -69,28 +81,38 @@ test-suite unit
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
-      atomic-primops
+      aeson
+    , annotated-exception
+    , atomic-primops
     , base
+    , containers
     , data-default
     , deepseq
+    , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , hspec
+    , mtl
     , network-uri
     , patrol ==1.2.*
+    , safe-exceptions
     , sentry-core
     , tasty
     , tasty-discover
     , tasty-hspec
     , text
     , time
+    , unliftio-core
     , unordered-containers
     , vector
     , witch
@@ -110,23 +132,31 @@ benchmark space
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
   build-depends:
-      atomic-primops
+      aeson
+    , annotated-exception
+    , atomic-primops
     , base
+    , containers
     , data-default
     , deepseq
+    , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
     , network-uri
     , patrol ==1.2.*
+    , safe-exceptions
     , sentry-core
     , text
     , time
+    , unliftio-core
     , unordered-containers
     , vector
     , weigh
@@ -147,25 +177,33 @@ benchmark time
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
   build-depends:
-      atomic-primops
+      aeson
+    , annotated-exception
+    , atomic-primops
     , base
+    , containers
     , data-default
     , deepseq
+    , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
     , network-uri
     , patrol ==1.2.*
+    , safe-exceptions
     , sentry-core
     , tasty
     , tasty-bench
     , text
     , time
+    , unliftio-core
     , unordered-containers
     , vector
     , witch

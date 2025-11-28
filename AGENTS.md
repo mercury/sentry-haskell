@@ -321,6 +321,7 @@ This project adapts sentry-rust's proven architecture to Haskell:
 6. **Type-driven development**: Leverage strict types and GHC warnings
 7. **Plugin pattern**: New transports/integrations should implement respective typeclasses
 8. **Reference sentry-rust**: When in doubt about design decisions, check how sentry-rust solves similar problems
+9. **NEVER** search `/nix/store`; reading store paths is okay, but the top-level `/nix/store` directory is very large and running `find` can take a long time
 
 ## Getting Help
 

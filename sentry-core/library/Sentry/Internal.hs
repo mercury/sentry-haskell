@@ -3,7 +3,7 @@
 module Sentry.Internal
   ( -- * ClientOptions
     ClientOptions (..),
-    defaultClientOptions,
+    pattern DEFAULT_CLIENT_OPTIONS,
     BeforeCallback,
 
     -- * Integration
@@ -121,8 +121,8 @@ data ClientOptions = ClientOptions
     shutdownTimeout :: NominalDiffTime
   }
 
-defaultClientOptions :: ClientOptions
-defaultClientOptions =
+pattern DEFAULT_CLIENT_OPTIONS :: ClientOptions
+pattern DEFAULT_CLIENT_OPTIONS <-
   ClientOptions
     { dsn = Nothing,
       debug = False,
@@ -132,18 +132,38 @@ defaultClientOptions =
       maxBreadcrumbs = 100,
       sendDefaultPII = False,
       serverName = Nothing,
-      inAppInclude = HashSet.empty,
-      inAppExclude = HashSet.empty,
-      integrations = Vector.empty,
+      inAppInclude = (HashSet.null -> True),
+      inAppExclude = (HashSet.null -> True),
+      integrations = (Vector.null -> True),
       defaultIntegrations = True,
       beforeSend = Nothing,
       beforeBreadcrumb = Nothing,
       transport = Nothing,
       shutdownTimeout = 2 -- seconds
     }
+  where
+    DEFAULT_CLIENT_OPTIONS =
+      ClientOptions
+        { dsn = Nothing,
+          debug = False,
+          release = Nothing,
+          environment = Nothing,
+          sampleRate = 1.0,
+          maxBreadcrumbs = 100,
+          sendDefaultPII = False,
+          serverName = Nothing,
+          inAppInclude = HashSet.empty,
+          inAppExclude = HashSet.empty,
+          integrations = Vector.empty,
+          defaultIntegrations = True,
+          beforeSend = Nothing,
+          beforeBreadcrumb = Nothing,
+          transport = Nothing,
+          shutdownTimeout = 2 -- seconds
+        }
 
 instance Default ClientOptions where
-  def = defaultClientOptions
+  def = DEFAULT_CLIENT_OPTIONS
 
 instance Witch.From Patrol.Dsn ClientOptions where
   from (Just -> dsn) = def{dsn}

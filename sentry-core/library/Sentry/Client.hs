@@ -7,7 +7,7 @@ import Data.Proxy (Proxy (Proxy))
 import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
-import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Integration (Integration, SomeIntegration (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (someTypeRep)
@@ -39,3 +39,14 @@ getIntegration iType client = do
   let iid = someTypeRep (Proxy @iType)
   (SomeIntegration _ i) <- Vector.find (\(SomeIntegration rep _) -> rep == iid) client.integrations
   cast i
+
+-- | Any client which does not have a valid 'Transport' is non-recording.
+pattern NON_RECORDING_CLIENT :: Client
+pattern NON_RECORDING_CLIENT <- Client{transport = Nothing}
+  where
+    NON_RECORDING_CLIENT =
+      Client
+        { options = DEFAULT_CLIENT_OPTIONS,
+          transport = Nothing,
+          integrations = Vector.empty
+        }

@@ -8,6 +8,7 @@ build-type:         Simple
 dependencies:
   # core libraries
   - base
+  - containers
   - deepseq
   - text
   - time
@@ -16,9 +17,14 @@ dependencies:
   - atomic-primops
   - data-default
   - hs-opentelemetry-api
+  - aeson
+  - annotated-exception
+  - exceptions
   - hs-opentelemetry-instrumentation-http-client
   - network-uri
   - patrol ^>= 1.2
+  - safe-exceptions
+  - unliftio-core
   - unordered-containers
   - witch
 
@@ -32,6 +38,8 @@ tests:
     ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
     build-tools: ["tasty-discover:tasty-discover"]
     dependencies:
+      - hspec
+      - mtl
       - sentry-core
       - tasty
       - tasty-discover
