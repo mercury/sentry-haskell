@@ -8,7 +8,7 @@ import Control.Exception.Safe qualified as Safe
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (runReaderT)
 import Data.Typeable (cast)
-import Sentry.Scope (ImmutableScope (..), ScopeType (..))
+import Sentry.Scope (ScopeData (..), ScopeType (..))
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Monad qualified as Scope.Monad
 import Test.Hspec
@@ -25,7 +25,7 @@ spec_Scope_IO = describe "Scope.IO" do
           let scopes = immutableScopes anns
           scopes `shouldSatisfy` (not . null)
           case scopes of
-            [] -> expectationFailure "no ImmutableScope annotation found"
+            [] -> expectationFailure "no ScopeData annotation found"
             (scope : _) -> do
               scope.type_ `shouldBe` Just Merged
 
@@ -54,7 +54,7 @@ spec_Scope_IO = describe "Scope.IO" do
           let scopes = immutableScopes anns
           scopes `shouldSatisfy` (not . null)
           case scopes of
-            [] -> expectationFailure "no ImmutableScope annotation found"
+            [] -> expectationFailure "no ScopeData annotation found"
             (scope : _) -> do
               scope.type_ `shouldBe` Just Merged
 
@@ -97,7 +97,7 @@ spec_Scope_IO = describe "Scope.IO" do
           length scopes `shouldBe` 1
 
   describe "async exceptions" do
-    it "does not annotate async exceptions with ImmutableScope" do
+    it "does not annotate async exceptions with ScopeData" do
       result <- Exception.try @SomeException $ Scope.IO.withScope \_ -> do
         tid <- myThreadId
         _ <- forkIO $ throwTo tid ThreadKilled
@@ -123,7 +123,7 @@ spec_Scope_Monad = describe "Scope.Monad" do
           let scopes = immutableScopes anns
           scopes `shouldSatisfy` (not . null)
           case scopes of
-            [] -> expectationFailure "no ImmutableScope annotation found"
+            [] -> expectationFailure "no ScopeData annotation found"
             (scope : _) -> do
               scope.type_ `shouldBe` Just Merged
 
@@ -153,7 +153,7 @@ spec_Scope_Monad = describe "Scope.Monad" do
           let scopes = immutableScopes anns
           scopes `shouldSatisfy` (not . null)
           case scopes of
-            [] -> expectationFailure "no ImmutableScope annotation found"
+            [] -> expectationFailure "no ScopeData annotation found"
             (scope : _) -> do
               scope.type_ `shouldBe` Just Merged
 
@@ -199,7 +199,7 @@ spec_Scope_Monad = describe "Scope.Monad" do
           length scopes `shouldBe` 1
 
   describe "async exceptions" do
-    it "does not annotate async exceptions with ImmutableScope" do
+    it "does not annotate async exceptions with ScopeData" do
       result <- Exception.try @SomeException $ runM $ Scope.Monad.withScope \_ -> liftIO do
         tid <- myThreadId
         _ <- forkIO $ throwTo tid ThreadKilled
@@ -215,8 +215,8 @@ spec_Scope_Monad = describe "Scope.Monad" do
 
 -- Helpers
 
-immutableScopes :: [Annotation] -> [ImmutableScope]
-immutableScopes anns = [s | Annotation a <- anns, Just s <- [cast @_ @ImmutableScope a]]
+immutableScopes :: [Annotation] -> [ScopeData]
+immutableScopes anns = [s | Annotation a <- anns, Just s <- [cast @_ @ScopeData a]]
 
 runM :: (forall m. (Safe.MonadMask m, Safe.MonadThrow m, MonadIO m) => m a) -> IO a
 runM action = runReaderT action ()
