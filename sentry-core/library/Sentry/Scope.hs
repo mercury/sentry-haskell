@@ -1,11 +1,32 @@
 {-# LANGUAGE ViewPatterns #-}
 
+-- | Thread-local scope management for enriching Sentry events with contextual
+-- metadata (tags, breadcrumbs, user info, etc.).
+--
+-- Sentry uses a three-layer scope model:
+--
+-- * __Global__ — process-wide metadata applied to every event ('global').
+-- * __Isolation__ — per-request or per-task metadata (e.g. one per HTTP request).
+-- * __Current__ — narrowly-scoped metadata within a single operation.
+--
+-- When an exception is captured, these layers are merged (global \< isolation
+-- \< current) and attached as an annotation. Later values override earlier ones
+-- for scalar fields; collection fields (breadcrumbs, tags, extras, contexts)
+-- are combined.
 module Sentry.Scope
   ( -- * Scope
+
+    -- ** Definition
+    Scope,
+    ScopeType (..),
+    ScopeData (..),
 
     -- ** Construction
     create,
     clone,
+
+    -- ** Access,
+    readScopeRef,
 
     -- ** Context Manipulation
     lookupCurrent,
@@ -17,14 +38,6 @@ module Sentry.Scope
 
     -- ** Global Scope
     global,
-
-    -- ** Types
-    Scope,
-    ScopeType (..),
-    ImmutableScope (..),
-
-    -- ** Internal
-    unsafeReadScopeRef,
   ) where
 
 import Control.Applicative ((<|>))
@@ -44,18 +57,25 @@ import Patrol qualified
 import Sentry.Internal (BeforeCallback)
 import System.IO.Unsafe (unsafePerformIO)
 
--- | TODO: Documentation.
+-- | A mutable reference to 'ScopeData' that lives on thread-local context.
+--
+-- Callers update the scope during execution (adding breadcrumbs, setting tags,
+-- etc.). When an exception is captured, the current value is read, merged with
+-- other scope layers, and attached as an annotation.
 type Scope :: Type
-data Scope = Scope (IORef ImmutableScope)
-
--- | TODO: Documentation.
-unsafeReadScopeRef :: (MonadIO m) => Scope -> m ImmutableScope
-unsafeReadScopeRef (Scope ref) = liftIO $ readIORef ref
+data Scope = Scope (IORef ScopeData)
 
 instance Show Scope where
   showsPrec d (Scope _) = showParen (d > 10) $ showString "Scope <<ioref>>"
 
--- | TODO: Documentation.
+-- | Read the current state of the 'ScopeData' contained within the given
+-- 'Scope' reference.
+readScopeRef :: (MonadIO m) => Scope -> m ScopeData
+readScopeRef (Scope ref) = liftIO $ readIORef ref
+
+-- | Identifies which layer of the scope hierarchy an 'ScopeData' belongs
+-- to. Scopes are merged (via their 'Semigroup' instance) when an exception is
+-- captured, at which point the result is tagged 'Merged'.
 type ScopeType :: Type
 data ScopeType
   = Global
@@ -64,9 +84,11 @@ data ScopeType
   | Merged
   deriving stock (Eq, Ord, Show)
 
--- | TODO: Documentation.
-type ImmutableScope :: Type
-data ImmutableScope = ImmutableScope
+-- | A pure, immutable snapshot of scope metadata. Values of this type are
+-- stored behind the mutable 'IORef' inside a 'Scope' so they can be updated
+-- incrementally.
+type ScopeData :: Type
+data ScopeData = ScopeData
   { type_ :: Maybe ScopeType,
     level :: Maybe Patrol.Level,
     fingerprint :: Maybe (Vector Text),
@@ -76,13 +98,15 @@ data ImmutableScope = ImmutableScope
     extras :: Map Text Aeson.Value,
     tags :: Map Text Text,
     contexts :: Map Text Patrol.Context,
+    -- | Pipeline of callbacks that can modify or suppress an event before it is
+    -- sent. Returning 'Nothing' drops the event entirely.
     eventProcessor :: BeforeCallback Patrol.Event
   }
 
-instance Show ImmutableScope where
+instance Show ScopeData where
   showsPrec p scope =
     showParen (p > 10) $
-      showString "ImmutableScope {"
+      showString "ScopeData {"
         . showString " type_ = "
         . shows scope.type_
         . showString ", level = "
@@ -104,9 +128,13 @@ instance Show ImmutableScope where
         . showString ", eventProcessor = <<function>>"
         . showString " }"
 
-instance Semigroup ImmutableScope where
+-- | Merge two scopes. For scalar fields ('level', 'fingerprint', 'transaction',
+-- 'user') the right-hand (newer) value wins. For collection fields
+-- ('breadcrumbs', 'extras', 'tags', 'contexts') values are combined. Event
+-- processors are chained left-to-right (older processor runs first).
+instance Semigroup ScopeData where
   old <> new =
-    ImmutableScope
+    ScopeData
       { -- we are merging scopes, by definition, if `(<>)` is ever called.
         type_ = Just Merged,
         level = new.level <|> old.level,
@@ -122,13 +150,17 @@ instance Semigroup ImmutableScope where
           new.eventProcessor event'
       }
 
-instance Default ImmutableScope where
-  def = defaultImmutableScope
+instance Monoid ScopeData where
+  mempty = defaultScopeData
 
--- | TODO: Documentation
-defaultImmutableScope :: ImmutableScope
-defaultImmutableScope =
-  ImmutableScope
+instance Default ScopeData where
+  def = defaultScopeData
+
+-- | An "empty" 'ScopeData' with no metadata and a pass-through event
+-- processor.
+defaultScopeData :: ScopeData
+defaultScopeData =
+  ScopeData
     { type_ = Nothing,
       level = Nothing,
       fingerprint = Nothing,
@@ -141,51 +173,54 @@ defaultImmutableScope =
       eventProcessor = Just
     }
 
--- | A globally accessible 'Scope' holding data that will be added to *all*
--- 'Patrol.Type.Event.Event's sent by this process.
+-- | A globally accessible 'Scope' holding data that will be added to /all/
+-- events sent by this process.
+--
+-- Implemented via 'unsafePerformIO' (the standard top-level mutable state
+-- pattern); the @NOINLINE@ pragma ensures the 'IORef' is allocated exactly
+-- once.
 global :: Scope
 global = Scope $ unsafePerformIO $ newIORef (def{type_ = Just Global})
 {-# NOINLINE global #-}
 
--- | TODO: Documentation
 currentScopeKey :: Key Scope
 currentScopeKey = unsafePerformIO $ Context.newKey "current_scope"
 {-# NOINLINE currentScopeKey #-}
 
--- | TODO: Documentation
+-- | Attempt to retrieve 'Current' scope if one exists on thread-local storage.
 lookupCurrent :: Context -> Maybe Scope
 lookupCurrent = Context.lookup currentScopeKey
 
--- | TODO: Documentation
+-- | Insert the given 'Current' scope on thread-local storage.
 insertCurrent :: Scope -> Context -> Context
 insertCurrent = Context.insert currentScopeKey
 
--- | TODO: Documentation
+-- | Remove any active 'Current' scope from thread-local storage.
 removeCurrent :: Context -> Context
 removeCurrent = Context.delete currentScopeKey
 
--- | TODO: Documentation
 isolationScopeKey :: Key Scope
 isolationScopeKey = unsafePerformIO $ Context.newKey "isolation_scope"
 {-# NOINLINE isolationScopeKey #-}
 
--- | TODO: Documentation
+-- | Attempt to retrieve 'Isolation' scope if one exists on thread-local storage.
 lookupIsolation :: Context -> Maybe Scope
 lookupIsolation = Context.lookup isolationScopeKey
 
--- | TODO: Documentation
+-- | Insert the given 'Isolation' scope on thread-local storage.
 insertIsolation :: Scope -> Context -> Context
 insertIsolation = Context.insert isolationScopeKey
 
--- | TODO: Documentation
+-- | Remove any active 'Isolation' scope from thread-local storage.
 removeIsolation :: Context -> Context
 removeIsolation = Context.delete isolationScopeKey
 
--- | TODO: Documentation
+-- | Create a fresh 'Scope' of the given 'ScopeType'.
 create :: (MonadIO m) => ScopeType -> m Scope
 create (Just -> type_) = Scope <$> (liftIO $ newIORef (def{type_}))
 
--- | TODO: Documentation
+-- | Return an independent copy of the given 'Scope'. Mutations to the clone
+-- do not affect the original, and vice versa.
 clone :: (MonadIO m) => Scope -> m Scope
 clone (Scope ref) = liftIO do
   scope <- readIORef ref

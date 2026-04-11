@@ -1,4 +1,4 @@
-module Sentry.Scope.Monad where
+module Sentry.Scope.Monad (withScope, withIsolationScope) where
 
 import Control.Exception (SomeAsyncException, SomeException, fromException)
 import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
@@ -8,20 +8,32 @@ import Control.Monad.IO.Class (MonadIO)
 import Data.Maybe (isJust)
 import Data.Typeable (cast)
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
-import Sentry.Scope (ImmutableScope, Scope, unsafeReadScopeRef)
+import Sentry.Scope (Scope, ScopeData, readScopeRef)
 import Sentry.Scope qualified as Scope
 
--- | TODO: Documentation
+-- | Fork the current scope and pass it to the given action to be performed.
+--
+-- If a current scope already exists on the thread-local context it is cloned;
+-- otherwise a new one is created.
+--
+-- The previous scope is restored when the action completes.
+--
+-- If the action throws a synchronous exception, the merged scope (global \<>
+-- isolation \<> current) is attached as an 'Annotation' so that Sentry can
+-- capture contextual metadata alongside the error.
+--
+-- This is the @MonadMask@\/@MonadIO@ variant; see "Sentry.Scope.IO" for the
+-- @MonadUnliftIO@ version.
 withScope :: forall m a. (MonadMask m, MonadIO m) => (Scope -> m a) -> m a
 withScope action = MonadMask.bracket acquire release \(_, scope) ->
   catchAndAnnotate (action scope) do
-    global <- unsafeReadScopeRef Scope.global
-    current <- unsafeReadScopeRef scope
+    global <- readScopeRef Scope.global
+    current <- readScopeRef scope
     context <- ThreadLocal.getContext
     case Scope.lookupIsolation context of
       Nothing -> pure $ global <> current
       Just s -> do
-        isolation <- unsafeReadScopeRef s
+        isolation <- readScopeRef s
         pure $ global <> isolation <> current
   where
     acquire :: m (Maybe Scope, Scope)
@@ -39,17 +51,22 @@ withScope action = MonadMask.bracket acquire release \(_, scope) ->
       ThreadLocal.adjustContext \ctx ->
         maybe (Scope.removeCurrent ctx) (`Scope.insertCurrent` ctx) parentScope
 
--- | TODO: Documentation
+-- | Like 'withScope', but operates on the isolation scope layer. Use this at
+-- request or task boundaries (e.g. one isolation scope per incoming HTTP
+-- request).
+--
+-- This is the @MonadMask@\/@MonadIO@ variant; see "Sentry.Scope.IO" for the
+-- @MonadUnliftIO@ version.
 withIsolationScope :: forall m a. (MonadMask m, MonadIO m) => (Scope -> m a) -> m a
 withIsolationScope action = MonadMask.bracket acquire release \(_, scope) ->
   catchAndAnnotate (action scope) do
-    global <- unsafeReadScopeRef Scope.global
-    isolation <- unsafeReadScopeRef scope
+    global <- readScopeRef Scope.global
+    isolation <- readScopeRef scope
     context <- ThreadLocal.getContext
     case Scope.lookupCurrent context of
       Nothing -> pure $ global <> isolation
       Just s -> do
-        current <- unsafeReadScopeRef s
+        current <- readScopeRef s
         pure $ global <> isolation <> current
   where
     acquire :: m (Maybe Scope, Scope)
@@ -67,8 +84,11 @@ withIsolationScope action = MonadMask.bracket acquire release \(_, scope) ->
       ThreadLocal.adjustContext \ctx ->
         maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentScope
 
--- | TODO: Documentation
-catchAndAnnotate :: (MonadMask m, MonadIO m) => m a -> m ImmutableScope -> m a
+-- | Catch synchronous exceptions and annotate them with merged scope metadata.
+-- Async exceptions are re-thrown immediately. If the exception already carries
+-- an 'ScopeData' annotation (from a nested scope) it is left unchanged to
+-- preserve the innermost context.
+catchAndAnnotate :: (MonadMask m, MonadIO m) => m a -> m ScopeData -> m a
 catchAndAnnotate action mergeScopes =
   action `MonadMask.catch` \(exn :: SomeException) ->
     case fromException @SomeAsyncException exn of
@@ -79,7 +99,7 @@ catchAndAnnotate action mergeScopes =
                 Just ae -> ae
                 Nothing -> AnnotatedException [] exn
         if
-          | any (\(Annotation a) -> isJust (cast @_ @ImmutableScope a)) anns ->
+          | any (\(Annotation a) -> isJust (cast @_ @ScopeData a)) anns ->
               MonadMask.throwM $ AnnotatedException anns inner
           | otherwise -> do
               merged <- mergeScopes
