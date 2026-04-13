@@ -70,6 +70,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
+      ScopeDataTest
       ScopeTest
       Paths_sentry_core
   autogen-modules:
