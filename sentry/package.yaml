@@ -15,12 +15,14 @@ dependencies:
   - time
   # hackage dependencies
   - aeson
+  - atomic-primops
   - hs-opentelemetry-instrumentation-http-client
-  - http-client
+  - http-types
   - patrol ^>= 1.2
   - sentry-core
   - unagi-chan
   - unliftio
+  - witch
 
 library:
   source-dirs: library
