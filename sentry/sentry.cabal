@@ -19,6 +19,7 @@ library
   exposed-modules:
       Sentry.Transport.Executor.Async
       Sentry.Transport.Executor.RateLimiter
+      Sentry.Transport.HTTP.Async
       Sentry.Transport.HTTP.Sync
   other-modules:
       Paths_sentry

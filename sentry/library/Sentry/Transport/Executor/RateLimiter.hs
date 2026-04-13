@@ -59,8 +59,8 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
-import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Network.HTTP.Types qualified as HttpTypes
+import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Item qualified as Patrol.Item
