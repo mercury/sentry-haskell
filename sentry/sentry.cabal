@@ -19,6 +19,7 @@ library
   exposed-modules:
       Sentry.Transport.Executor.Async
       Sentry.Transport.Executor.RateLimiter
+      Sentry.Transport.HTTP.Sync
   other-modules:
       Paths_sentry
   autogen-modules:
@@ -30,18 +31,21 @@ library
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
   build-depends:
       aeson
     , async
+    , atomic-primops
     , base
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
-    , http-client
+    , http-types
     , patrol ==1.2.*
     , sentry-core
     , stm
@@ -49,6 +53,7 @@ library
     , time
     , unagi-chan
     , unliftio
+    , witch
   default-language: GHC2024
 
 test-suite unit
@@ -67,8 +72,10 @@ test-suite unit
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
@@ -77,11 +84,12 @@ test-suite unit
   build-depends:
       aeson
     , async
+    , atomic-primops
     , base
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
     , hspec
-    , http-client
+    , http-types
     , patrol ==1.2.*
     , sentry
     , sentry-core
@@ -93,6 +101,7 @@ test-suite unit
     , time
     , unagi-chan
     , unliftio
+    , witch
   default-language: GHC2024
 
 benchmark time
@@ -109,18 +118,21 @@ benchmark time
       DeriveAnyClass
       DerivingStrategies
       ImportQualifiedPost
+      MultiWayIf
       OverloadedRecordDot
       OverloadedStrings
+      PatternSynonyms
       ScopedTypeVariables
       StrictData
   ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
   build-depends:
       aeson
     , async
+    , atomic-primops
     , base
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
-    , http-client
+    , http-types
     , patrol ==1.2.*
     , sentry
     , sentry-core
@@ -131,4 +143,5 @@ benchmark time
     , time
     , unagi-chan
     , unliftio
+    , witch
   default-language: GHC2024

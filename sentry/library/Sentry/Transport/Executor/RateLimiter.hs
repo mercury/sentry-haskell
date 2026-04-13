@@ -34,6 +34,7 @@ module Sentry.Transport.Executor.RateLimiter
     RateLimitingCategory (..),
 
     -- * Updating Rate Limits
+    updateFromResponse,
     updateFrom429,
     updateFromRetryAfter,
     updateFromSentryHeader,
@@ -58,6 +59,8 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
+import Network.HTTP.Types qualified as HttpTypes
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Item qualified as Patrol.Item
@@ -112,6 +115,31 @@ new =
       attachment = Nothing,
       logItem = Nothing
     }
+
+-- | Update rate limits from an HTTP response.
+--
+-- * On success: parses @X-Sentry-Rate-Limits@ and @Retry-After@ headers
+-- * On HTTP 429: applies a default 60-second global rate limit
+-- * On other errors: returns the rate limiter unchanged
+updateFromResponse ::
+  RateLimiter ->
+  UTCTime ->
+  Either HttpClient.HttpExceptionContent (HttpClient.Response ()) ->
+  RateLimiter
+updateFromResponse rl now = \case
+  Right response ->
+    let headers = HttpClient.responseHeaders response
+        rl' = case lookup "X-Sentry-Rate-Limits" headers of
+          Just value -> updateFromSentryHeader rl now value
+          Nothing -> rl
+        rl'' = case lookup "Retry-After" headers of
+          Just value -> updateFromRetryAfter rl' now value
+          Nothing -> rl'
+     in rl''
+  Left (HttpClient.StatusCodeException response _)
+    | HttpClient.responseStatus response == HttpTypes.tooManyRequests429 ->
+        updateFrom429 rl now
+  Left _ -> rl
 
 -- | Update the global rate limit to end 1 minute after the provided time, in
 -- response to a HTTP 429 status code.
