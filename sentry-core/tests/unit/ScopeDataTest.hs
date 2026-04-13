@@ -8,8 +8,8 @@ import Data.Vector qualified as Vector
 import Patrol qualified
 import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
-import Patrol.Type.User qualified as Patrol.User
 import Patrol.Type.Level qualified as Patrol.Level
+import Patrol.Type.User qualified as Patrol.User
 import Sentry.Scope (ScopeData (..), ScopeType (..))
 import Test.Hspec
 
@@ -139,25 +139,25 @@ spec_ScopeData_Monoid = describe "ScopeData Monoid" do
 testUser1 :: Patrol.User
 testUser1 =
   Patrol.User.User
-    { data_ = mempty
-    , email = "alice@example.com"
-    , geo = Nothing
-    , id = "user-1"
-    , ipAddress = ""
-    , name = "Alice"
-    , segment = ""
-    , username = "alice"
+    { data_ = mempty,
+      email = "alice@example.com",
+      geo = Nothing,
+      id = "user-1",
+      ipAddress = "",
+      name = "Alice",
+      segment = "",
+      username = "alice"
     }
 
 testUser2 :: Patrol.User
 testUser2 =
   Patrol.User.User
-    { data_ = mempty
-    , email = "bob@example.com"
-    , geo = Nothing
-    , id = "user-2"
-    , ipAddress = ""
-    , name = "Bob"
-    , segment = ""
-    , username = "bob"
+    { data_ = mempty,
+      email = "bob@example.com",
+      geo = Nothing,
+      id = "user-2",
+      ipAddress = "",
+      name = "Bob",
+      segment = "",
+      username = "bob"
     }
