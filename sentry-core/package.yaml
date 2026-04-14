@@ -23,7 +23,9 @@ dependencies:
   - hs-opentelemetry-instrumentation-http-client
   - network-uri
   - patrol ^>= 1.2
+  - random
   - safe-exceptions
+  - transformers
   - unliftio-core
   - unordered-containers
   - witch

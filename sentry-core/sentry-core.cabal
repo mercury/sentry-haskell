@@ -57,9 +57,11 @@ library
     , hs-opentelemetry-instrumentation-http-client
     , network-uri
     , patrol ==1.2.*
+    , random
     , safe-exceptions
     , text
     , time
+    , transformers
     , unliftio-core
     , unordered-containers
     , vector
@@ -106,6 +108,7 @@ test-suite unit
     , mtl
     , network-uri
     , patrol ==1.2.*
+    , random
     , safe-exceptions
     , sentry-core
     , tasty
@@ -113,6 +116,7 @@ test-suite unit
     , tasty-hspec
     , text
     , time
+    , transformers
     , unliftio-core
     , unordered-containers
     , vector
@@ -153,10 +157,12 @@ benchmark space
     , hs-opentelemetry-instrumentation-http-client
     , network-uri
     , patrol ==1.2.*
+    , random
     , safe-exceptions
     , sentry-core
     , text
     , time
+    , transformers
     , unliftio-core
     , unordered-containers
     , vector
@@ -198,12 +204,14 @@ benchmark time
     , hs-opentelemetry-instrumentation-http-client
     , network-uri
     , patrol ==1.2.*
+    , random
     , safe-exceptions
     , sentry-core
     , tasty
     , tasty-bench
     , text
     , time
+    , transformers
     , unliftio-core
     , unordered-containers
     , vector
