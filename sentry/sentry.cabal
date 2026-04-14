@@ -20,6 +20,7 @@ library
       Sentry.Transport.Executor.Async
       Sentry.Transport.Executor.RateLimiter
       Sentry.Transport.HTTP.Async
+      Sentry.Transport.HTTP.Request
       Sentry.Transport.HTTP.Sync
   other-modules:
       Paths_sentry
@@ -52,6 +53,7 @@ library
     , stm
     , text
     , time
+    , transformers
     , unagi-chan
     , unliftio
     , witch
@@ -100,6 +102,7 @@ test-suite unit
     , tasty-hspec
     , text
     , time
+    , transformers
     , unagi-chan
     , unliftio
     , witch
@@ -142,6 +145,7 @@ benchmark time
     , tasty-bench
     , text
     , time
+    , transformers
     , unagi-chan
     , unliftio
     , witch

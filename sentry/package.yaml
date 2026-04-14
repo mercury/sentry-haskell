@@ -20,6 +20,7 @@ dependencies:
   - http-types
   - patrol ^>= 1.2
   - sentry-core
+  - transformers
   - unagi-chan
   - unliftio
   - witch

@@ -100,13 +100,15 @@ data ClientOptions = ClientOptions
     --
     -- Defaults to @True@.
     defaultIntegrations :: Bool,
-    -- | Callback that is executed for each 'Patrol.Event' added.
+    -- | Callback that is executed before a 'Patrol.Event' is sent.
     --
     -- Defaults to @Nothing@.
     --
     -- <https://develop.sentry.dev/sdk/foundations/client/hooks/>
     beforeSend :: Maybe (BeforeCallback Patrol.Event),
-    -- | Callback that is executed for each 'Patrol.Breadcrumb' added.
+    -- | Callback that is executed when a 'Patrol.Breadcrumb' is constructed;
+    -- this is somewhat deliberately ambiguous, as "constructed" can refer to
+    -- "added to an event" or "added to the active scope".
     --
     -- Defaults to @Nothing@.
     --

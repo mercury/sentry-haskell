@@ -32,7 +32,6 @@ build target=package:
 
 build-core: (build "sentry-core")
 
-
 test target=package:
   cabal test {{target}} \
     -j{{jobs}} \

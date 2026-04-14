@@ -270,13 +270,13 @@ isDisabledFor now category rateLimiter = checkExpiry =<< isDisabledUntil rateLim
       if now < expiresAt
         then Just $ expiresAt `diffUTCTime` now
         else Nothing
-{-# INLINABLE isDisabledFor #-}
+{-# INLINEABLE isDisabledFor #-}
 
 -- | Check if a category is currently allowed (not rate limited).
 isEnabled :: UTCTime -> RateLimitingCategory -> RateLimiter -> Bool
 isEnabled now category rateLimiter =
   isNothing $ isDisabledFor now category rateLimiter
-{-# INLINABLE isEnabled #-}
+{-# INLINEABLE isEnabled #-}
 
 -- | Filter envelope items based on current rate limits.
 --
@@ -289,7 +289,7 @@ filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> Maybe Patrol.Enve
 filterEnvelope rateLimiter now envelope = do
   filteredItems <- filterItems rateLimiter now envelope.items
   Just envelope{Patrol.Envelope.items = filteredItems}
-{-# INLINABLE filterEnvelope #-}
+{-# INLINEABLE filterEnvelope #-}
 
 -- | Filter items based on their rate limit status.
 filterItems :: RateLimiter -> UTCTime -> Patrol.Items.Items -> Maybe Patrol.Items.Items
@@ -303,7 +303,7 @@ filterItems rateLimiter now = \case
      in case filtered of
           [] -> Nothing
           remaining -> Just $ Patrol.Items.EnvelopeItems remaining
-{-# INLINABLE filterItems #-}
+{-# INLINEABLE filterItems #-}
 
 -- | Extract the rate limiting category from an envelope item's type header.
 categoryFromItem :: Patrol.Item -> RateLimitingCategory
