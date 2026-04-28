@@ -48,6 +48,33 @@ tests:
       - tasty-discover
       - tasty-hspec
 
+  integration:
+    source-dirs: tests/integration
+    main: Driver.hs
+    ghc-options:
+      - -g
+      - -Wno-missed-specialisations
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    build-tools: ["tasty-discover:tasty-discover"]
+    dependencies:
+      # library under test
+      - sentry
+      - sentry-core
+      # extra runtime dependencies for spawning and querying kent
+      - data-default
+      - directory
+      - http-client
+      - patrol
+      - typed-process
+      - witch
+      # test frameworks
+      - hspec
+      - tasty
+      - tasty-discover
+      - tasty-hspec
+
 benchmarks:
   time:
     source-dirs: benchmarks
