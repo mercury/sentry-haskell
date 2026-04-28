@@ -12,7 +12,7 @@ module Sentry.Client
   )
 where
 
-import Control.Monad (guard)
+import Control.Monad (guard, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Kind (Type)
