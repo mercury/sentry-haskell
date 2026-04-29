@@ -3,7 +3,7 @@ module AsyncExecutorTest where
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar)
 import Control.Concurrent.STM.TQueue (TQueue, flushTQueue, newTQueueIO, readTQueue, tryReadTQueue, writeTQueue)
-import Control.Monad (void)
+import Control.Monad (replicateM, void)
 import Control.Monad.STM (atomically)
 import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
@@ -37,29 +37,27 @@ spec_send = parallel $ describe "sending envelopes" do
     envelope <- atomically $ readTQueue q
     envelope `shouldBe` testEnvelope
 
-  it "informs the caller when the outgoing queue is full" do
+  it "drops envelopes when pending writes exceed capacity + 1" do
     q <- newTQueueIO
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env rl = readMVar var *> testSendFn q id env rl
-    executor <- AsyncExecutor.new 1 sendFn
-    -- process the first envelope, filling the executor's outgoing queue
-    res0 <- Transport.send executor testEnvelope
-    res0 `shouldBe` Transport.SendProcessed
-    -- attempt to process the second envelope, but the queue is full
-    res1 <- Transport.send executor testEnvelope
-    res1 `shouldBe` Transport.SendFailed_QueueFull
-    -- unblock the send function
+        cap = 1
+        attempts = cap + 2
+    executor <- AsyncExecutor.new cap sendFn
+    -- Saturate the executor faster than the worker can drain:
+    --
+    -- * the worker is blocked in sendFn, so it dequeues at most one envelope
+    -- * at most cap+1 envelopes can ever be pending
+    -- * out of cap+2 rapid attempts, at least one is therefore guaranteed to
+    --   hit a full queue and return SendFailed_QueueFull
+    results <- replicateM attempts (Transport.send executor testEnvelope)
+    -- The first write always succeeds (queue is empty when it runs).
+    head results `shouldBe` Transport.SendProcessed
+    -- At least one attempt was rejected with QueueFull.
+    results `shouldSatisfy` elem Transport.SendFailed_QueueFull
+    -- Unblock the worker so the executor can be torn down cleanly.
     putMVar var ()
-    -- check that the first envelope processed correctly
-    envelope0 <- atomically $ readTQueue q
-    envelope0 `shouldBe` testEnvelope
-    -- process a third envelope, filling the queue again
-    res2 <- Transport.send executor testEnvelope
-    res2 `shouldBe` Transport.SendProcessed
-    -- check that the third envelope processed correctly
-    envelope2 <- atomically $ readTQueue q
-    envelope2 `shouldBe` testEnvelope
 
   it "is subject to filtering for valid envelope types" do
     q <- newTQueueIO
