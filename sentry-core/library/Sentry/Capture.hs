@@ -1,14 +1,21 @@
+{-# LANGUAGE ViewPatterns #-}
+
 -- | Capture an 'Patrol.Event' and dispatch it through a 'Client'.
 module Sentry.Capture
   ( captureEvent,
     captureEvent_,
+    captureException,
+    captureException_,
   )
 where
 
+import Control.Exception (Exception (toException), SomeException, fromException)
+import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
 import Control.Monad (guard, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Patrol qualified
@@ -17,6 +24,8 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Integration (Integration (..), SomeIntegration)
+import Sentry.Scope (ScopeData)
+import Sentry.Scope qualified as Scope
 import Sentry.Transport (SendResponse (..))
 import Sentry.Transport qualified as Transport
 import System.Random (randomRIO)
@@ -58,6 +67,39 @@ captureEvent client event = runMaybeT do
 -- | Convenience alias for a 'captureEvent' call that discards its result.
 captureEvent_ :: (MonadIO m) => Client -> Patrol.Event -> m ()
 captureEvent_ client event = void $ captureEvent client event
+
+-- | Capture an arbitrary 'Exception', building a 'Patrol.Event' from it and
+-- dispatching it through the 'Client'.
+--
+-- Scope selection follows the \"innermost wins\" principle that the rest of
+-- the SDK uses:
+--
+-- 1. If the exception is wrapped in an 'AnnotatedException' that carries a
+--    'ScopeData' annotation (attached by 'Sentry.Scope.IO.withScope' when the
+--    exception escaped a scope boundary), that 'ScopeData' is /authoritative/.
+-- 2. Otherwise, the ambient thread-local scope at the call site
+--    ('Sentry.Scope.readAmbientScope') is read and applied.
+--
+-- The scope is then used to construct the event that gets handed off to
+-- 'captureEvent' for transport to the appropriate backend.
+--
+-- If the scope's @eventProcessor@ drops the event, this function returns
+-- 'Nothing' without invoking the transport.
+captureException :: (MonadIO m, Exception e) => Client -> e -> m (Maybe Patrol.EventId)
+captureException client (toException -> exc) = do
+  let (anns, inner) = case fromException @(AnnotatedException SomeException) exc of
+        Just (AnnotatedException as i) -> (as, i)
+        Nothing -> ([], exc)
+      scopeFromAnnotation = listToMaybe [s | Annotation a <- anns, Just s <- [cast @_ @ScopeData a]]
+  scope <- maybe Scope.readAmbientScope pure scopeFromAnnotation
+  event <- liftIO $ Patrol.Event.fromSomeException inner
+  case scope `Scope.apply` event of
+    Nothing -> pure Nothing
+    Just finalEvent -> captureEvent client finalEvent
+
+-- | Convenience alias for a 'captureException' call that discards its result.
+captureException_ :: (MonadIO m, Exception e) => Client -> e -> m ()
+captureException_ client e = void $ captureException client e
 
 -- | Run each integration's 'Sentry.Integration.processEvent' in sequence.
 --

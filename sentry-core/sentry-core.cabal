@@ -24,8 +24,10 @@ library
       Sentry.Integration
       Sentry.Internal
       Sentry.Scope
+      Sentry.Scope.Internal
       Sentry.Scope.IO
       Sentry.Scope.Monad
+      Sentry.Scope.Update
       Sentry.Test
       Sentry.Transport
   other-modules:
@@ -74,7 +76,9 @@ test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
+      CaptureExceptionTest
       ScopeDataTest
+      ScopeMutationTest
       ScopeTest
       Paths_sentry_core
   autogen-modules:

@@ -25,10 +25,38 @@ module Sentry.Scope
     create,
     clone,
 
-    -- ** Access,
+    -- ** Access
     readScopeRef,
+    readAmbientScope,
 
-    -- ** Context Manipulation
+    -- ** Mutation
+
+    -- *** Scalar fields
+    setLevel,
+    unsetLevel,
+    setUser,
+    unsetUser,
+    setFingerprint,
+    unsetFingerprint,
+    setTransaction,
+    unsetTransaction,
+
+    -- *** Tags
+    setTag,
+    removeTag,
+    clearTags,
+
+    -- *** Extras
+    setExtra,
+    removeExtra,
+    clearExtras,
+
+    -- *** Contexts
+    setContext,
+    removeContext,
+    clearContexts,
+
+    -- ** Thread-local Context Manipulation
     lookupCurrent,
     insertCurrent,
     removeCurrent,
@@ -38,140 +66,110 @@ module Sentry.Scope
 
     -- ** Global Scope
     global,
-  ) where
+
+    -- ** Event Modification
+    apply,
+  )
+where
 
 import Control.Applicative ((<|>))
-import Control.Exception.Annotated (Annotation (..))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
-import Data.Default (Default (def))
-import Data.IORef (IORef, newIORef, readIORef)
-import Data.Kind (Type)
-import Data.Map.Strict (Map)
-import Data.Sequence (Seq)
+import Data.Default (def)
+import Data.IORef (newIORef, readIORef)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Vector (Vector)
+import Data.Vector qualified as Vector
 import OpenTelemetry.Context (Context, Key)
 import OpenTelemetry.Context qualified as Context
+import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Patrol qualified
-import Sentry.Internal (BeforeCallback)
+import Patrol.Type.Event qualified as Patrol.Event
+import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
 import System.IO.Unsafe (unsafePerformIO)
-
--- | A mutable reference to 'ScopeData' that lives on thread-local context.
---
--- Callers update the scope during execution (adding breadcrumbs, setting tags,
--- etc.). When an exception is captured, the current value is read, merged with
--- other scope layers, and attached as an annotation.
-type Scope :: Type
-data Scope = Scope (IORef ScopeData)
-
-instance Show Scope where
-  showsPrec d (Scope _) = showParen (d > 10) $ showString "Scope <<ioref>>"
 
 -- | Read the current state of the 'ScopeData' contained within the given
 -- 'Scope' reference.
 readScopeRef :: (MonadIO m) => Scope -> m ScopeData
 readScopeRef (Scope ref) = liftIO $ readIORef ref
 
--- | Identifies which layer of the scope hierarchy an 'ScopeData' belongs
--- to. Scopes are merged (via their 'Semigroup' instance) when an exception is
--- captured, at which point the result is tagged 'Merged'.
-type ScopeType :: Type
-data ScopeType
-  = Global
-  | Isolation
-  | Current
-  | Merged
-  deriving stock (Eq, Ord, Show)
+-- * Scalar setters
 
--- | A pure, immutable snapshot of scope metadata. Values of this type are
--- stored behind the mutable 'IORef' inside a 'Scope' so they can be updated
--- incrementally.
-type ScopeData :: Type
-data ScopeData = ScopeData
-  { type_ :: Maybe ScopeType,
-    level :: Maybe Patrol.Level,
-    fingerprint :: Maybe (Vector Text),
-    transaction :: Maybe Text,
-    breadcrumbs :: Seq Text,
-    user :: Maybe Patrol.User,
-    extras :: Map Text Aeson.Value,
-    tags :: Map Text Text,
-    contexts :: Map Text Patrol.Context,
-    -- | Pipeline of callbacks that can modify or suppress an event before it is
-    -- sent. Returning 'Nothing' drops the event entirely.
-    eventProcessor :: BeforeCallback Patrol.Event
-  }
+-- | Set the 'Patrol.Type.Level.Level' for the given 'Scope'.
+setLevel :: (MonadIO m) => Scope -> Patrol.Level -> m ()
+setLevel scope level = modifyScopeData scope \s -> s{level = Just level}
 
-instance Show ScopeData where
-  showsPrec p scope =
-    showParen (p > 10) $
-      showString "ScopeData {"
-        . showString " type_ = "
-        . shows scope.type_
-        . showString ", level = "
-        . shows scope.level
-        . showString ", fingerprint = "
-        . shows scope.fingerprint
-        . showString ", transaction = "
-        . shows scope.transaction
-        . showString ", breadcrumbs = "
-        . shows scope.breadcrumbs
-        . showString ", user = "
-        . shows scope.user
-        . showString ", extras = "
-        . shows scope.extras
-        . showString ", tags = "
-        . shows scope.tags
-        . showString ", contexts = "
-        . shows scope.contexts
-        . showString ", eventProcessor = <<function>>"
-        . showString " }"
+-- | Clear the 'Patrol.Type.Level.Level' from the given 'Scope'.
+unsetLevel :: (MonadIO m) => Scope -> m ()
+unsetLevel scope = modifyScopeData scope \s -> s{level = Nothing}
 
--- | Merge two scopes. For scalar fields ('level', 'fingerprint', 'transaction',
--- 'user') the right-hand (newer) value wins. For collection fields
--- ('breadcrumbs', 'extras', 'tags', 'contexts') values are combined. Event
--- processors are chained left-to-right (older processor runs first).
-instance Semigroup ScopeData where
-  old <> new =
-    ScopeData
-      { -- we are merging scopes, by definition, if `(<>)` is ever called.
-        type_ = Just Merged,
-        level = new.level <|> old.level,
-        fingerprint = new.fingerprint <|> old.fingerprint,
-        transaction = new.transaction <|> old.transaction,
-        breadcrumbs = old.breadcrumbs <> new.breadcrumbs,
-        user = new.user <|> old.user,
-        extras = new.extras <> old.extras,
-        tags = new.tags <> old.tags,
-        contexts = new.contexts <> old.contexts,
-        eventProcessor = \event -> do
-          event' <- old.eventProcessor event
-          new.eventProcessor event'
-      }
+-- | Set the 'Patrol.Type.User.User' for the given 'Scope'.
+setUser :: (MonadIO m) => Scope -> Patrol.User -> m ()
+setUser scope u = modifyScopeData scope \s -> s{user = Just u}
 
-instance Monoid ScopeData where
-  mempty = defaultScopeData
+-- | Clear the 'Patrol.Type.User.User' from the given 'Scope'.
+unsetUser :: (MonadIO m) => Scope -> m ()
+unsetUser scope = modifyScopeData scope \s -> s{user = Nothing}
 
-instance Default ScopeData where
-  def = defaultScopeData
+-- | Set the fingerprint for the given 'Scope'.
+setFingerprint :: (MonadIO m) => Scope -> Vector Text -> m ()
+setFingerprint scope fp = modifyScopeData scope \s -> s{fingerprint = Just fp}
 
--- | An "empty" 'ScopeData' with no metadata and a pass-through event
--- processor.
-defaultScopeData :: ScopeData
-defaultScopeData =
-  ScopeData
-    { type_ = Nothing,
-      level = Nothing,
-      fingerprint = Nothing,
-      transaction = Nothing,
-      breadcrumbs = mempty,
-      user = Nothing,
-      extras = mempty,
-      tags = mempty,
-      contexts = mempty,
-      eventProcessor = Just
-    }
+-- | Clear the fingerprint from the given 'Scope'.
+unsetFingerprint :: (MonadIO m) => Scope -> m ()
+unsetFingerprint scope = modifyScopeData scope \s -> s{fingerprint = Nothing}
+
+-- | Set the transaction name for the given 'Scope'.
+setTransaction :: (MonadIO m) => Scope -> Text -> m ()
+setTransaction scope t = modifyScopeData scope \s -> s{transaction = Just t}
+
+-- | Clear the transaction name from the given 'Scope'.
+unsetTransaction :: (MonadIO m) => Scope -> m ()
+unsetTransaction scope = modifyScopeData scope \s -> s{transaction = Nothing}
+
+-- * Tag setters
+
+-- | Insert (or overwrite) a tag at the given key.
+setTag :: (MonadIO m) => Scope -> Text -> Text -> m ()
+setTag scope k v = modifyScopeData scope \s -> s{tags = Map.insert k v s.tags}
+
+-- | Remove the tag at the given key, if present.
+removeTag :: (MonadIO m) => Scope -> Text -> m ()
+removeTag scope k = modifyScopeData scope \s -> s{tags = Map.delete k s.tags}
+
+-- | Clear all tags from the given 'Scope'.
+clearTags :: (MonadIO m) => Scope -> m ()
+clearTags scope = modifyScopeData scope \s -> s{tags = Map.empty}
+
+-- * Extra setters
+
+-- | Insert (or overwrite) an extra value at the given key.
+setExtra :: (MonadIO m) => Scope -> Text -> Aeson.Value -> m ()
+setExtra scope k v = modifyScopeData scope \s -> s{extras = Map.insert k v s.extras}
+
+-- | Remove the extra value at the given key, if present.
+removeExtra :: (MonadIO m) => Scope -> Text -> m ()
+removeExtra scope k = modifyScopeData scope \s -> s{extras = Map.delete k s.extras}
+
+-- | Clear all extras from the given 'Scope'.
+clearExtras :: (MonadIO m) => Scope -> m ()
+clearExtras scope = modifyScopeData scope \s -> s{extras = Map.empty}
+
+-- * Context setters
+
+-- | Insert (or overwrite) a context at the given key.
+setContext :: (MonadIO m) => Scope -> Text -> Patrol.Context -> m ()
+setContext scope k v = modifyScopeData scope \s -> s{contexts = Map.insert k v s.contexts}
+
+-- | Remove the context at the given key, if present.
+removeContext :: (MonadIO m) => Scope -> Text -> m ()
+removeContext scope k = modifyScopeData scope \s -> s{contexts = Map.delete k s.contexts}
+
+-- | Clear all contexts from the given 'Scope'.
+clearContexts :: (MonadIO m) => Scope -> m ()
+clearContexts scope = modifyScopeData scope \s -> s{contexts = Map.empty}
 
 -- | A globally accessible 'Scope' holding data that will be added to /all/
 -- events sent by this process.
@@ -221,3 +219,46 @@ clone :: (MonadIO m) => Scope -> m Scope
 clone (Scope ref) = liftIO do
   scope <- readIORef ref
   Scope <$> newIORef scope
+
+-- | Read the merged ambient 'ScopeData' visible at the call site:
+-- 'global' \<> isolation (from thread-local) \<> current (from thread-local).
+--
+-- Missing layers contribute 'mempty'.
+readAmbientScope :: (MonadIO m) => m ScopeData
+readAmbientScope = liftIO do
+  globalScope <- readScopeRef global
+  context <- ThreadLocal.getContext
+  isolationScope <- maybe (pure mempty) readScopeRef (lookupIsolation context)
+  currentScope <- maybe (pure mempty) readScopeRef (lookupCurrent context)
+  pure $ globalScope <> isolationScope <> currentScope
+
+-- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
+-- 'eventProcessor' as the final step.
+--
+-- Field semantics:
+--
+-- * Scalar fields ('level', 'fingerprint', 'transaction', 'user'): scope wins
+--   when it carries a value, otherwise the event's value is preserved. Scope
+--   is treated as authoritative because it represents the most-specific
+--   contextual state (whether ambient or attached as an annotation), and
+--   because event constructors like 'Patrol.Type.Event.fromSomeException'
+--   prefill defaults that scope is expected to override.
+-- * Collection fields ('tags', 'extras', 'contexts'): unioned, with the
+--   event's keys overriding the scope's on conflicts.
+--
+-- Returns 'Nothing' when the scope's 'eventProcessor' drops the event.
+apply :: ScopeData -> Patrol.Event -> Maybe Patrol.Event
+apply scope event = scope.eventProcessor merged
+  where
+    merged =
+      event
+        { Patrol.Event.level = scope.level <|> event.level,
+          Patrol.Event.fingerprint = case scope.fingerprint of
+            Just fp -> Vector.toList fp
+            Nothing -> event.fingerprint,
+          Patrol.Event.transaction = fromMaybe event.transaction scope.transaction,
+          Patrol.Event.user = scope.user <|> event.user,
+          Patrol.Event.tags = Map.union event.tags scope.tags,
+          Patrol.Event.extra = Map.union event.extra scope.extras,
+          Patrol.Event.contexts = Map.union event.contexts scope.contexts
+        }
