@@ -17,6 +17,8 @@ tested-with:
 
 library
   exposed-modules:
+      Sentry
+      Sentry.Capture
       Sentry.Client
       Sentry.Client.Options
       Sentry.Integration
