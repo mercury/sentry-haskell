@@ -6,7 +6,8 @@ import Data.Maybe (catMaybes)
 import Kent qualified
 import Patrol qualified
 import Patrol.Type.Event qualified as Patrol.Event
-import Sentry.Client (Client, captureEvent)
+import Sentry.Capture (captureEvent)
+import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
