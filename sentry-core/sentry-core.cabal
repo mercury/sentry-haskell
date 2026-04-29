@@ -19,6 +19,7 @@ library
   exposed-modules:
       Sentry
       Sentry.Capture
+      Sentry.CapturedEvent
       Sentry.Client
       Sentry.Client.Options
       Sentry.Integration

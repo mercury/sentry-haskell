@@ -10,8 +10,10 @@ import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
+import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Scope (ScopeData (..), ScopeType (..))
 import Test.Hspec
+import Witch qualified
 
 spec_ScopeData_Semigroup :: Spec
 spec_ScopeData_Semigroup = describe "ScopeData Semigroup" do
@@ -78,16 +80,16 @@ spec_ScopeData_Semigroup = describe "ScopeData Semigroup" do
     (old <> new).contexts `shouldBe` new.contexts
 
   it "chains eventProcessors left-to-right" do
-    let old = def{eventProcessor = const Nothing}
-        new = def{eventProcessor = Just}
+    let old = def{eventProcessor = \_ -> Nothing}
+        new = def{eventProcessor = \ce -> Just ce.event}
     -- old processor drops the event, so the chain should produce Nothing
-    (old <> new).eventProcessor Patrol.Event.empty `shouldBe` Nothing
+    (old <> new).eventProcessor (Witch.into @CapturedEvent Patrol.Event.empty) `shouldBe` Nothing
 
   it "chains eventProcessors — both pass-through preserves event" do
-    let old = def{eventProcessor = \e -> Just e{Patrol.Event.level = Just Patrol.Level.Warning}}
-        new = def{eventProcessor = \e -> Just e{Patrol.Event.level = Just Patrol.Level.Error}}
+    let old = def{eventProcessor = \ce -> Just ce.event{Patrol.Event.level = Just Patrol.Level.Warning}}
+        new = def{eventProcessor = \ce -> Just ce.event{Patrol.Event.level = Just Patrol.Level.Error}}
         merged = old <> new
-    case merged.eventProcessor Patrol.Event.empty of
+    case merged.eventProcessor (Witch.into @CapturedEvent Patrol.Event.empty) of
       Nothing -> expectationFailure "expected event to pass through"
       Just event -> event.level `shouldBe` Just Patrol.Level.Error
 
