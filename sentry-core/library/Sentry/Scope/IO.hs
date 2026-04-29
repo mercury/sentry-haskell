@@ -7,7 +7,7 @@ import Control.Monad.IO.Unlift (MonadUnliftIO (..))
 import Data.Maybe (isJust)
 import Data.Typeable (cast)
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
-import Sentry.Scope (Scope, ScopeData, readScopeRef)
+import Sentry.Scope (Scope, ScopeData)
 import Sentry.Scope qualified as Scope
 
 -- | Fork the current scope and pass it to the given action to be performed.
@@ -25,15 +25,7 @@ import Sentry.Scope qualified as Scope
 -- @MonadMask@\/@MonadIO@ version.
 withScope :: forall m a. (MonadUnliftIO m) => (Scope -> m a) -> m a
 withScope action = withRunInIO \run -> bracket acquire release \(_, scope) ->
-  catchAndAnnotate (run (action scope)) do
-    global <- readScopeRef Scope.global
-    current <- readScopeRef scope
-    context <- ThreadLocal.getContext
-    case Scope.lookupIsolation context of
-      Nothing -> pure $ global <> current
-      Just s -> do
-        isolation <- readScopeRef s
-        pure $ global <> isolation <> current
+  catchAndAnnotate (run (action scope)) Scope.readAmbientScope
   where
     acquire :: IO (Maybe Scope, Scope)
     acquire = do
@@ -59,15 +51,7 @@ withScope action = withRunInIO \run -> bracket acquire release \(_, scope) ->
 -- @MonadMask@\/@MonadIO@ version.
 withIsolationScope :: forall m a. (MonadUnliftIO m) => (Scope -> m a) -> m a
 withIsolationScope action = withRunInIO \run -> bracket acquire release \(_, scope) ->
-  catchAndAnnotate (run (action scope)) do
-    global <- readScopeRef Scope.global
-    isolation <- readScopeRef scope
-    context <- ThreadLocal.getContext
-    case Scope.lookupCurrent context of
-      Nothing -> pure $ global <> isolation
-      Just s -> do
-        current <- readScopeRef s
-        pure $ global <> isolation <> current
+  catchAndAnnotate (run (action scope)) Scope.readAmbientScope
   where
     acquire :: IO (Maybe Scope, Scope)
     acquire = do
