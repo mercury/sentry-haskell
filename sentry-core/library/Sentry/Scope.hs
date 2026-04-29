@@ -87,6 +87,7 @@ import OpenTelemetry.Context qualified as Context
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Patrol qualified
 import Patrol.Type.Event qualified as Patrol.Event
+import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -247,9 +248,10 @@ readAmbientScope = liftIO do
 --   event's keys overriding the scope's on conflicts.
 --
 -- Returns 'Nothing' when the scope's 'eventProcessor' drops the event.
-apply :: ScopeData -> Patrol.Event -> Maybe Patrol.Event
-apply scope event = scope.eventProcessor merged
+apply :: ScopeData -> CapturedEvent -> Maybe Patrol.Event
+apply scope ce = scope.eventProcessor ce{event = merged}
   where
+    event = ce.event
     merged =
       event
         { Patrol.Event.level = scope.level <|> event.level,

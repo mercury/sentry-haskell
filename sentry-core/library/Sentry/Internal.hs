@@ -4,7 +4,6 @@ module Sentry.Internal
   ( -- * ClientOptions
     ClientOptions (..),
     pattern DEFAULT_CLIENT_OPTIONS,
-    BeforeCallback,
 
     -- * Integration
     Integration (..),
@@ -25,15 +24,10 @@ import Data.Vector qualified as Vector
 import Network.URI (URI)
 import Patrol qualified
 import Patrol.Type.Dsn qualified as Patrol.Dsn
+import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
 import Witch qualified
-
--- | Alias for a callback that will be run when a client processes something
--- (e.g. a 'Patrol.Type.Breadcrumb.Breadcrumb' or 'Patrol.Type.Event.Event'),
--- and which can potentially filter that item by returning 'Nothing'.
-type BeforeCallback :: Type -> Type
-type BeforeCallback t = t -> Maybe t
 
 -- | Configuration settings for 'Sentry.Client.Client'.
 type ClientOptions :: Type
@@ -102,10 +96,13 @@ data ClientOptions = ClientOptions
     defaultIntegrations :: Bool,
     -- | Callback that is executed before a 'Patrol.Event' is sent.
     --
+    -- Receives a 'CapturedEvent' so the callback can inspect contextual
+    -- data such as the originating exception alongside the event itself.
+    --
     -- Defaults to @Nothing@.
     --
     -- <https://develop.sentry.dev/sdk/foundations/client/hooks/>
-    beforeSend :: Maybe (BeforeCallback Patrol.Event),
+    beforeSend :: Maybe (CapturedEvent -> Maybe Patrol.Event),
     -- | Callback that is executed when a 'Patrol.Breadcrumb' is constructed;
     -- this is somewhat deliberately ambiguous, as "constructed" can refer to
     -- "added to an event" or "added to the active scope".
@@ -113,7 +110,7 @@ data ClientOptions = ClientOptions
     -- Defaults to @Nothing@.
     --
     -- <https://develop.sentry.dev/sdk/foundations/client/hooks/>
-    beforeBreadcrumb :: Maybe (BeforeCallback Patrol.Breadcrumb),
+    beforeBreadcrumb :: Maybe (Patrol.Breadcrumb -> Maybe Patrol.Breadcrumb),
     -- | The 'Sentry.Transport.Transport' that the 'Sentry.Client.Client'
     -- constructed from these options will use.
     --
@@ -215,6 +212,12 @@ class (Typeable t) => Integration t where
   -- The main purpose behind the 'Integration' abstraction is to process
   -- 'Patrol.Type.Event.Event's flowing through it.
   --
+  -- The accompanying 'CapturedEvent' carries metadata about the event \-\-
+  -- most notably the originating 'Control.Exception.SomeException' when one
+  -- is available \-\- so integrations can downcast it to a library-specific
+  -- type (e.g. @HttpException@, @SqlException@) and enrich the event
+  -- accordingly.
+  --
   -- Examples include:
   --     * dropping 'Patrol.Type.Event.Event's entirely
   --     * adding or processing 'GHC.Stack.CallStack's
@@ -222,8 +225,8 @@ class (Typeable t) => Integration t where
   --     * adding information from, or produced by, the 'Integration' itself
   --
   -- The default implementation is a no-op.
-  processEvent :: t -> Patrol.Event -> ClientOptions -> IO (Maybe Patrol.Event)
-  processEvent _ event _ = pure . Just $ event
+  processEvent :: t -> CapturedEvent -> ClientOptions -> IO (Maybe Patrol.Event)
+  processEvent _ ce _ = pure . Just $ ce.event
 
 -- | An opaque wrapper around any type with a valid 'Integration' instance.
 --

@@ -19,13 +19,15 @@ module Sentry
     -- * Client Options
     ClientOptions (..),
     pattern DEFAULT_CLIENT_OPTIONS,
-    BeforeCallback,
 
     -- * Capturing Events
     captureEvent,
     captureEvent_,
     captureException,
     captureException_,
+
+    -- * Captured Event
+    CapturedEvent (..),
 
     -- * Scope
     Scope,
@@ -37,7 +39,8 @@ module Sentry
 where
 
 import Sentry.Capture (captureEvent, captureEvent_, captureException, captureException_)
+import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
-import Sentry.Client.Options (BeforeCallback, ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Scope (Scope, ScopeData (..), ScopeType (..))
 import Sentry.Scope.IO (withIsolationScope, withScope)

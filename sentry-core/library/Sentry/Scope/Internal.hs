@@ -26,7 +26,7 @@ import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Vector (Vector)
 import Patrol qualified
-import Sentry.Internal (BeforeCallback)
+import Sentry.CapturedEvent (CapturedEvent (..))
 
 -- | A mutable reference to 'ScopeData' that lives on thread-local context.
 --
@@ -68,7 +68,7 @@ data ScopeData = ScopeData
     extras :: Map Text Aeson.Value,
     tags :: Map Text Text,
     contexts :: Map Text Patrol.Context,
-    eventProcessor :: BeforeCallback Patrol.Event
+    eventProcessor :: CapturedEvent -> Maybe Patrol.Event
   }
 
 instance Show ScopeData where
@@ -119,9 +119,9 @@ instance Semigroup ScopeData where
         extras = new.extras <> old.extras,
         tags = new.tags <> old.tags,
         contexts = new.contexts <> old.contexts,
-        eventProcessor = \event -> do
-          event' <- old.eventProcessor event
-          new.eventProcessor event'
+        eventProcessor = \ce -> do
+          event' <- old.eventProcessor ce
+          new.eventProcessor ce{event = event'}
       }
 
 instance Monoid ScopeData where
@@ -144,7 +144,7 @@ defaultScopeData =
       extras = mempty,
       tags = mempty,
       contexts = mempty,
-      eventProcessor = Just
+      eventProcessor = \ce -> Just ce.event
     }
 
 -- | Apply a pure modification to the 'ScopeData' inside a 'Scope'.

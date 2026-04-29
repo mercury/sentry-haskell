@@ -51,7 +51,7 @@ spec_captureException = describe "captureException" do
   it "drops the event when scope's eventProcessor returns Nothing" do
     transport <- Test.new
     let client = mkClient transport
-        scopeData = (def @ScopeData){eventProcessor = const Nothing}
+        scopeData = (def @ScopeData){eventProcessor = \_ -> Nothing}
         annotated =
           AnnotatedException
             [Annotation scopeData]
