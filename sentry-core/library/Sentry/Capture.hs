@@ -6,6 +6,8 @@ module Sentry.Capture
     captureEvent_,
     captureException,
     captureException_,
+    captureMessage,
+    captureMessage_,
   )
 where
 
@@ -13,19 +15,23 @@ import Control.Exception (Exception (toException), SomeException, fromException)
 import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
 import Control.Monad (guard, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Reader (MonadReader)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Maybe (listToMaybe)
+import Data.Text (Text)
 import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
+import Patrol.Type.LogEntry qualified as Patrol.LogEntry
 import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.CapturedEvent qualified as CapturedEvent
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Integration (Integration (..), SomeIntegration)
+import Sentry.Monad (HasClient, askClient)
 import Sentry.Scope (ScopeData)
 import Sentry.Scope qualified as Scope
 import Sentry.Transport (SendResponse (..))
@@ -36,14 +42,16 @@ import Witch qualified
 -- | Process an event, applying any integrations & before-send hooks registered
 -- with the 'Client' to the given event before handing it off to the transport.
 --
--- Returns the event's 'Patrol.EventId' on success, otherwise 'Nothing' if the event
--- was dropped at any stage.
-captureEvent :: (MonadIO m) => Client -> Patrol.Event -> m (Maybe Patrol.EventId)
-captureEvent client event = capture client $ Witch.from event
+-- Returns the event's 'Patrol.EventId' on success, otherwise 'Nothing' if the
+-- event was dropped at any stage.
+captureEvent :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Event -> m (Maybe Patrol.EventId)
+captureEvent event = do
+  client <- askClient
+  captureWith client $ Witch.from event
 
 -- | Convenience alias for a 'captureEvent' call that discards its result.
-captureEvent_ :: (MonadIO m) => Client -> Patrol.Event -> m ()
-captureEvent_ client event = void $ captureEvent client event
+captureEvent_ :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Event -> m ()
+captureEvent_ = void . captureEvent
 
 -- | Capture an arbitrary 'Exception', building a 'Patrol.Event' from it and
 -- dispatching it through the 'Client'.
@@ -62,8 +70,9 @@ captureEvent_ client event = void $ captureEvent client event
 --
 -- If the scope's @eventProcessor@ drops the event, this function returns
 -- 'Nothing' without invoking the transport.
-captureException :: (MonadIO m, Exception e) => Client -> e -> m (Maybe Patrol.EventId)
-captureException client (toException -> exc) = do
+captureException :: (MonadIO m, MonadReader env m, HasClient env, Exception e) => e -> m (Maybe Patrol.EventId)
+captureException (toException -> exc) = do
+  client <- askClient
   let (anns, inner) = case fromException @(AnnotatedException SomeException) exc of
         Just (AnnotatedException as i) -> (as, i)
         Nothing -> ([], exc)
@@ -73,11 +82,32 @@ captureException client (toException -> exc) = do
   let captured = initialEvent `CapturedEvent.withException` inner
   case scope `Scope.apply` captured of
     Nothing -> pure Nothing
-    Just event -> capture client captured{event}
+    Just event -> captureWith client captured{event}
 
 -- | Convenience alias for a 'captureException' call that discards its result.
-captureException_ :: (MonadIO m, Exception e) => Client -> e -> m ()
-captureException_ client e = void $ captureException client e
+captureException_ :: (MonadIO m, MonadReader env m, HasClient env, Exception e) => e -> m ()
+captureException_ = void . captureException
+
+-- | Capture a plain message at the given severity level, applying the ambient
+-- scope before dispatch.
+--
+-- The message is placed in the event's @logentry@ field (both @message@ and
+-- @formatted@) per the Sentry protocol. If the scope's @eventProcessor@ drops
+-- the event, returns 'Nothing'.
+captureMessage :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Level -> Text -> m (Maybe Patrol.EventId)
+captureMessage lvl msg = do
+  client <- askClient
+  scope <- Scope.readAmbientScope
+  let logEntry = Patrol.LogEntry.empty{Patrol.LogEntry.formatted = msg, Patrol.LogEntry.message = msg}
+      event = Patrol.Event.empty{Patrol.Event.level = Just lvl, Patrol.Event.logentry = Just logEntry}
+      captured = Witch.from event
+  case scope `Scope.apply` captured of
+    Nothing -> pure Nothing
+    Just event' -> captureWith client captured{event = event'}
+
+-- | Convenience alias for a 'captureMessage' call that discards its result.
+captureMessage_ :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Level -> Text -> m ()
+captureMessage_ lvl = void . captureMessage lvl
 
 -- | Internal event processing utility; performs the following steps:
 --
@@ -86,8 +116,8 @@ captureException_ client e = void $ captureException client e
 --     3. Run each integration's 'Sentry.Integration.processEvent'
 --     4. Run 'ClientOptions.beforeSend'
 --     5. Wrap the event in an envelope and send it via the transport
-capture :: (MonadIO m) => Client -> CapturedEvent -> m (Maybe Patrol.EventId)
-capture client captured = runMaybeT do
+captureWith :: (MonadIO m) => Client -> CapturedEvent -> m (Maybe Patrol.EventId)
+captureWith client captured = runMaybeT do
   dsn <- MaybeT . pure $ client.options.dsn
   transport <- MaybeT . pure $ client.transport
   guard =<< sample client.options.sampleRate

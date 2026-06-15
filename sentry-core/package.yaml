@@ -25,6 +25,7 @@ dependencies:
   - patrol ^>= 1.2
   - random
   - safe-exceptions
+  - mtl
   - transformers
   - unliftio-core
   - unordered-containers

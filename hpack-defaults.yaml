@@ -20,6 +20,7 @@ ghc-options:
   - -Wno-missing-local-signatures
   - -Wno-prepositive-qualified-module # for some reason ghcid freaks out on this one?
   - -Wno-unused-packages # noisy in development, take this off once things are a little more settled
+  - -Wno-all-missed-specialisations
 
 default-extensions:
   - BlockArguments

@@ -1,7 +1,8 @@
 -- |  This module re-exports the API that consumers will typically use
 -- when instrumenting: the 'Client' and 'ClientOptions' types, the
--- 'captureEvent' verb, and the 'withScope' \/ 'withIsolationScope' helpers for
--- enriching events with contextual metadata.
+-- 'HasClient' capability and 'SentryT' carrier, the capture verbs, and the
+-- 'withScope' \/ 'withIsolationScope' helpers for enriching events with
+-- contextual metadata.
 --
 -- The re-exported 'withScope' \/ 'withIsolationScope' come from
 -- "Sentry.Scope.IO" and require 'Control.Monad.IO.Unlift.MonadUnliftIO'. If
@@ -20,11 +21,21 @@ module Sentry
     ClientOptions (..),
     pattern DEFAULT_CLIENT_OPTIONS,
 
+    -- * Ambient client capability
+    HasClient (..),
+    askClient,
+
+    -- * Concrete monad carrier
+    SentryT (..),
+    runSentryT,
+
     -- * Capturing Events
     captureEvent,
     captureEvent_,
     captureException,
     captureException_,
+    captureMessage,
+    captureMessage_,
 
     -- * Captured Event
     CapturedEvent (..),
@@ -38,9 +49,10 @@ module Sentry
   )
 where
 
-import Sentry.Capture (captureEvent, captureEvent_, captureException, captureException_)
+import Sentry.Capture (captureEvent, captureEvent_, captureException, captureException_, captureMessage, captureMessage_)
 import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT)
 import Sentry.Scope (Scope, ScopeData (..), ScopeType (..))
 import Sentry.Scope.IO (withIsolationScope, withScope)

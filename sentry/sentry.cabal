@@ -39,7 +39,7 @@ library
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
   build-depends:
       aeson
     , async
@@ -82,7 +82,7 @@ test-suite integration
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
@@ -136,7 +136,7 @@ test-suite unit
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
@@ -184,7 +184,7 @@ benchmark time
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
   build-depends:
       aeson
     , async

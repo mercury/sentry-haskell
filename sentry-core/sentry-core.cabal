@@ -24,6 +24,7 @@ library
       Sentry.Client.Options
       Sentry.Integration
       Sentry.Internal
+      Sentry.Monad
       Sentry.Scope
       Sentry.Scope.Internal
       Sentry.Scope.IO
@@ -48,7 +49,7 @@ library
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
   build-depends:
       aeson
     , annotated-exception
@@ -60,6 +61,7 @@ library
     , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , mtl
     , network-uri
     , patrol ==1.2.*
     , random
@@ -81,6 +83,7 @@ test-suite unit
       ScopeDataTest
       ScopeMutationTest
       ScopeTest
+      SentryMonadTest
       Paths_sentry_core
   autogen-modules:
       Paths_sentry_core
@@ -97,7 +100,7 @@ test-suite unit
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -g -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
@@ -150,7 +153,7 @@ benchmark space
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -with-rtsopts=-A32m
   build-depends:
       aeson
     , annotated-exception
@@ -162,6 +165,7 @@ benchmark space
     , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , mtl
     , network-uri
     , patrol ==1.2.*
     , random
@@ -197,7 +201,7 @@ benchmark time
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -with-rtsopts=-A32m
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -with-rtsopts=-A32m
   build-depends:
       aeson
     , annotated-exception
@@ -209,6 +213,7 @@ benchmark time
     , exceptions
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
+    , mtl
     , network-uri
     , patrol ==1.2.*
     , random

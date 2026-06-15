@@ -9,6 +9,7 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Monad (runSentryT)
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
@@ -34,7 +35,7 @@ spec_captureEvent = describe "captureEvent against kent" do
         replicateM n $
           Patrol.Event.fromSomeException $
             SomeException (userError "boom")
-      sentIds <- traverse (captureEvent client) events
+      sentIds <- traverse (\e -> runSentryT client $ captureEvent e) events
       flushResult <- Transport.flush transport 5
       flushResult `shouldBe` FlushSucceeded
       received <- Kent.listEvents kent
