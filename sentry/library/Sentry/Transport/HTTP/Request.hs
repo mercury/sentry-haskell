@@ -2,7 +2,7 @@
 --
 -- Rather than parsing a URL from the DSN, inserting headers, etc. per-send,
 -- we can preconstruct it for the lifetime of the HTTP transport:
--- 
+--
 --     * 'prepare' runs at transport construction to produce a'PreparedRequest'
 --     * 'attach' runs before send and attaches the serialized envelope body
 module Sentry.Transport.HTTP.Request

@@ -44,6 +44,7 @@ library
       aeson
     , async
     , atomic-primops
+    , attoparsec
     , base
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
@@ -88,6 +89,7 @@ test-suite integration
       aeson
     , async
     , atomic-primops
+    , attoparsec
     , base
     , bytestring
     , data-default
@@ -141,6 +143,7 @@ test-suite unit
       aeson
     , async
     , atomic-primops
+    , attoparsec
     , base
     , bytestring
     , hs-opentelemetry-instrumentation-http-client
@@ -186,6 +189,7 @@ benchmark time
       aeson
     , async
     , atomic-primops
+    , attoparsec
     , base
     , bytestring
     , hs-opentelemetry-instrumentation-http-client

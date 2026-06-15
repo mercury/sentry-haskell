@@ -80,7 +80,7 @@ captureException_ :: (MonadIO m, Exception e) => Client -> e -> m ()
 captureException_ client e = void $ captureException client e
 
 -- | Internal event processing utility; performs the following steps:
--- 
+--
 --     1. Check for a valid transport and DSN (short-circuit for non-recording clients)
 --     2. Apply sampling ('ClientOptions.sampleRate')
 --     3. Run each integration's 'Sentry.Integration.processEvent'

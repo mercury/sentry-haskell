@@ -16,6 +16,7 @@ dependencies:
   # hackage dependencies
   - aeson
   - atomic-primops
+  - attoparsec
   - hs-opentelemetry-instrumentation-http-client
   - http-types
   - patrol ^>= 1.2

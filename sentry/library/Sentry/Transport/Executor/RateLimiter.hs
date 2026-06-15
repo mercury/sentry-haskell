@@ -49,14 +49,15 @@ module Sentry.Transport.Executor.RateLimiter
   )
 where
 
+import Data.Attoparsec.ByteString.Char8 (Parser)
+import Data.Attoparsec.ByteString.Char8 qualified as Atto
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString.Char8
+import Data.Char (isSpace, toLower)
+import Data.Foldable (asum)
 import Data.Kind (Type)
 import Data.List qualified as List
-import Data.Maybe (isNothing, mapMaybe)
-import Data.Text (Text)
-import Data.Text qualified as Text
-import Data.Text.Encoding qualified as Text.Encoding
+import Data.Maybe (catMaybes, isNothing, mapMaybe)
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Network.HTTP.Types qualified as HttpTypes
@@ -65,7 +66,6 @@ import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
-import Text.Read (readMaybe)
 
 -- | Categories for rate limiting in Sentry.
 --
@@ -84,6 +84,8 @@ data RateLimitingCategory
     Attachment
   | -- | Log messages.
     LogItem
+  | -- | Metric buckets emitted on the trace metrics protocol.
+    TraceMetric
   deriving stock (Eq, Ord, Show, Read, Enum, Bounded)
 
 -- | Rate limiter tracking active rate limits per category.
@@ -100,7 +102,8 @@ data RateLimiter = RateLimiter
     session :: Maybe UTCTime,
     transaction :: Maybe UTCTime,
     attachment :: Maybe UTCTime,
-    logItem :: Maybe UTCTime
+    logItem :: Maybe UTCTime,
+    traceMetric :: Maybe UTCTime
   }
   deriving stock (Show)
 
@@ -113,7 +116,8 @@ new =
       session = Nothing,
       transaction = Nothing,
       attachment = Nothing,
-      logItem = Nothing
+      logItem = Nothing,
+      traceMetric = Nothing
     }
 
 -- | Update rate limits from an HTTP response.
@@ -144,7 +148,7 @@ updateFromResponse rl now = \case
 -- | Update the global rate limit to end 1 minute after the provided time, in
 -- response to a HTTP 429 status code.
 updateFrom429 :: RateLimiter -> UTCTime -> RateLimiter
-updateFrom429 rateLimiter now = rateLimiter{global = Just $ 60 `addUTCTime` now}
+updateFrom429 rateLimiter now = rateLimiter{global = Just $ defaultDelay `addUTCTime` now}
 
 -- | Update rate limits from a @Retry-After@ header value:
 --
@@ -153,75 +157,113 @@ updateFrom429 rateLimiter now = rateLimiter{global = Just $ 60 `addUTCTime` now}
 -- * Updates the global rate limit
 updateFromRetryAfter :: RateLimiter -> UTCTime -> ByteString -> RateLimiter
 updateFromRetryAfter rateLimiter now value =
-  let expiresAt = parseRetryAfter (ByteString.Char8.unpack value) now
+  let expiresAt = parseRetryAfter value now
    in rateLimiter{global = Just $ maxTime rateLimiter.global expiresAt}
 
--- | Parse @Retry-After@ header value.
+-- | Parse a @Retry-After@ header value into an absolute expiry time.
 --
--- Tries parsing as seconds first, then as HTTP-date; falls back to 60 seconds
--- on failure to parse.
-parseRetryAfter :: String -> UTCTime -> UTCTime
-parseRetryAfter str now = case readMaybe str of
-  Just seconds -> (fromInteger seconds) `addUTCTime` now
-  Nothing -> case parseTimeM True defaultTimeLocale "%a, %d %b %Y %H:%M:%S %Z" str of
-    Just retryAfterTime -> retryAfterTime
-    Nothing -> 60 `addUTCTime` now
+-- Tried in order:
+--
+--   1. Numeric seconds (integer or floating point) added to @now@.
+--   2. An HTTP-date (RFC 7231), interpreted as an absolute instant.
+--   3. Failing both, a default 60-second delay from @now@.
+parseRetryAfter :: ByteString -> UTCTime -> UTCTime
+parseRetryAfter value now =
+  case Atto.parseOnly secondsParser value of
+    Right seconds -> realToFrac seconds `addUTCTime` now
+    Left _ -> case parseHttpDate (ByteString.Char8.unpack value) of
+      Just expiresAt -> expiresAt
+      Nothing -> defaultDelay `addUTCTime` now
+  where
+    secondsParser :: Parser Double
+    secondsParser = Atto.skipSpace *> Atto.double <* Atto.skipSpace <* Atto.endOfInput
 
--- | Update rate limits from @X-Sentry-Rate-Limits@ header value.
+-- | The fallback rate-limit duration applied when a value cannot be parsed or
+-- on a bare HTTP 429 response.
+defaultDelay :: NominalDiffTime
+defaultDelay = 60
+
+-- | Parse an HTTP-date in any of the three formats permitted by RFC 7231:
+-- the preferred IMF-fixdate, the obsolete RFC 850 form, and the asctime form.
+parseHttpDate :: String -> Maybe UTCTime
+parseHttpDate str = asum [parseTimeM True defaultTimeLocale fmt str | fmt <- formats]
+  where
+    formats =
+      [ -- IMF-fixdate: Sun, 06 Nov 1994 08:49:37 GMT
+        "%a, %d %b %Y %H:%M:%S GMT",
+        -- RFC 850: Sunday, 06-Nov-94 08:49:37 GMT
+        "%A, %d-%b-%y %H:%M:%S GMT",
+        -- asctime: Sun Nov  6 08:49:37 1994
+        "%a %b %e %H:%M:%S %Y"
+      ]
+
+-- | Update rate limits from an @X-Sentry-Rate-Limits@ header value.
 --
--- Format:
---   @\<rate-limit\> = (\<group\>,)+@
---   @\<group\> = \<time\>:(\<category\>;):\<scope\>:(:\<reason\>)@
+-- The header is a comma-separated list of groups, each of the form:
+--
+-- > <retry_after>:<categories>:<scope>[:<reason>[:<namespaces>]]
+--
+-- where @retry_after@ is a (possibly fractional) number of seconds and
+-- @categories@ is a semicolon-separated list (empty meaning all categories).
+-- The @scope@, @reason@, and @namespaces@ fields are accepted but ignored.
+--
+-- Groups that cannot be parsed are skipped; well-formed groups in the same
+-- header still apply.
 updateFromSentryHeader :: RateLimiter -> UTCTime -> ByteString -> RateLimiter
 updateFromSentryHeader rateLimiter now value =
-  let groups = ByteString.Char8.split ',' value
-   in List.foldl' processGroup rateLimiter groups
+  case Atto.parseOnly rateLimitsParser value of
+    Left _ -> rateLimiter
+    Right groups -> List.foldl' applyGroup rateLimiter groups
   where
-    processGroup :: RateLimiter -> ByteString -> RateLimiter
-    processGroup rl group =
+    applyGroup :: RateLimiter -> (NominalDiffTime, [RateLimitingCategory]) -> RateLimiter
+    applyGroup rl (duration, categories) =
       List.foldl'
-        (\accum (category, dt) -> updateCategory (dt `addUTCTime` now) category accum)
+        (\accum category -> updateCategory (duration `addUTCTime` now) category accum)
         rl
-        (processRateLimitGroup group)
+        categories
 
--- | Process a single rate limit group from the header.
+-- | Parse an entire @X-Sentry-Rate-Limits@ header into per-group limits.
 --
--- Format: @\<time\>:(\<category\>;):\<scope\>:(:\<reason\>)@
---
--- Multiple rate limits are comma-separated. Empty categories apply globally.
-processRateLimitGroup :: ByteString -> [(RateLimitingCategory, NominalDiffTime)]
-processRateLimitGroup group = case ByteString.Char8.split ':' group of
-  (durationStr : categoriesStr : _scopeStr : _) ->
-    let duration = parseRateLimitDuration (ByteString.Char8.unpack durationStr)
-        categories = parseCategories categoriesStr
-     in map (,duration) categories
-  _ -> []
+-- Each group is consumed up to the next comma and parsed independently, so a
+-- malformed group yields no limits rather than failing the whole header.
+rateLimitsParser :: Parser [(NominalDiffTime, [RateLimitingCategory])]
+rateLimitsParser = catMaybes <$> (groupParser `Atto.sepBy` Atto.char ',') <* Atto.endOfInput
   where
-    -- Parse duration from rate limit string (seconds as integer).
-    parseRateLimitDuration :: String -> NominalDiffTime
-    parseRateLimitDuration str = case readMaybe str of
-      Just seconds -> fromInteger seconds
-      Nothing -> 60
+    groupParser :: Parser (Maybe (NominalDiffTime, [RateLimitingCategory]))
+    groupParser = do
+      raw <- Atto.takeWhile (/= ',')
+      pure $ either (\_ -> Nothing) Just (Atto.parseOnly groupBody raw)
 
--- | Parse semicolon-separated category names; if none are present, that
--- implies the 'Any' category.
-parseCategories :: ByteString -> [RateLimitingCategory]
-parseCategories bs =
-  let categoryStrs = ByteString.Char8.split ';' bs
-      categoryTexts = map (Text.strip . Text.Encoding.decodeUtf8) categoryStrs
-   in if null categoryStrs
-        then [Any]
-        else mapMaybe parseCategoryName categoryTexts
+    groupBody :: Parser (NominalDiffTime, [RateLimitingCategory])
+    groupBody = do
+      Atto.skipSpace
+      seconds <- Atto.double
+      _ <- Atto.char ':'
+      categories <- categoryToken `Atto.sepBy` Atto.char ';'
+      -- Require the scope separator to be present (matching the grammar),
+      -- then ignore the scope, reason, and namespace fields entirely.
+      _ <- Atto.char ':'
+      pure (realToFrac seconds, classifyCategories categories)
+
+    categoryToken :: Parser ByteString
+    categoryToken = Atto.takeWhile \c -> c /= ':' && c /= ';'
+
+-- | Resolve raw category tokens to known 'RateLimitingCategory' values.
+--
+-- An empty token denotes the global 'Any' category; unrecognized tokens are
+-- dropped.
+classifyCategories :: [ByteString] -> [RateLimitingCategory]
+classifyCategories = mapMaybe classify
   where
-    -- Parse a single category name.
-    parseCategoryName :: Text -> Maybe RateLimitingCategory
-    parseCategoryName name = case Text.toLower name of
+    classify :: ByteString -> Maybe RateLimitingCategory
+    classify token = case ByteString.Char8.map toLower token of
       "" -> Just Any
       "error" -> Just Error
       "session" -> Just Session
       "transaction" -> Just Transaction
       "attachment" -> Just Attachment
       "log_item" -> Just LogItem
+      "trace_metric" -> Just TraceMetric
       _ -> Nothing
 
 -- | Update a specific category's expiration time, taking the maximum of the
@@ -234,6 +276,7 @@ updateCategory expiresAt category rateLimiter = case category of
   Transaction -> rateLimiter{transaction = Just $ maxTime rateLimiter.transaction expiresAt}
   Attachment -> rateLimiter{attachment = Just $ maxTime rateLimiter.attachment expiresAt}
   LogItem -> rateLimiter{logItem = Just $ maxTime rateLimiter.logItem expiresAt}
+  TraceMetric -> rateLimiter{traceMetric = Just $ maxTime rateLimiter.traceMetric expiresAt}
 
 -- | Check when a given category is rate limited until.
 --
@@ -250,6 +293,7 @@ isDisabledUntil rateLimiter category =
     Transaction -> select rateLimiter.transaction
     Attachment -> select rateLimiter.attachment
     LogItem -> select rateLimiter.logItem
+    TraceMetric -> select rateLimiter.traceMetric
   where
     select :: Maybe UTCTime -> Maybe UTCTime
     select (Just t) = Just $ maxTime rateLimiter.global t
