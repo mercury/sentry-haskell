@@ -101,7 +101,7 @@ import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.CapturedEvent (CapturedEvent (..))
-import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
+import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Monad (HasClient, askClient)
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
@@ -298,17 +298,14 @@ apply scope ce = scope.eventProcessor ce{event = merged}
 -- trims the oldest entries to stay within
 -- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'.
 --
--- No-ops when no isolation scope is active or for
--- 'Sentry.Client.NON_RECORDING_CLIENT'.
+-- No-ops when no isolation scope is active.
 addBreadcrumb :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Breadcrumb -> m ()
 addBreadcrumb crumb = do
   client <- askClient
-  case client of
-    NON_RECORDING_CLIENT -> pure ()
-    _ -> liftIO do
-      ctx <- ThreadLocal.getContext
-      for_ (lookupIsolation ctx) \scope ->
-        addBreadcrumbToScope client.options scope crumb
+  liftIO do
+    ctx <- ThreadLocal.getContext
+    for_ (lookupIsolation ctx) \scope ->
+      addBreadcrumbToScope client.options scope crumb
 
 -- | Add multiple 'Patrol.Breadcrumb's to the active isolation scope in order.
 --
@@ -317,12 +314,10 @@ addBreadcrumb crumb = do
 addBreadcrumbs :: (MonadIO m, MonadReader env m, HasClient env) => [Patrol.Breadcrumb] -> m ()
 addBreadcrumbs crumbs = do
   client <- askClient
-  case client of
-    NON_RECORDING_CLIENT -> pure ()
-    _ -> liftIO do
-      ctx <- ThreadLocal.getContext
-      for_ (lookupIsolation ctx) \scope ->
-        for_ crumbs (addBreadcrumbToScope client.options scope)
+  liftIO do
+    ctx <- ThreadLocal.getContext
+    for_ (lookupIsolation ctx) \scope ->
+      for_ crumbs (addBreadcrumbToScope client.options scope)
 
 -- | Clear all breadcrumbs from the given 'Scope'.
 clearBreadcrumbs :: (MonadIO m) => Scope -> m ()

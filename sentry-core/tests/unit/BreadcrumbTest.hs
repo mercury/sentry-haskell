@@ -104,12 +104,12 @@ spec_breadcrumbs = do
         [c] -> c.message `shouldBe` "modified"
         cs -> expectationFailure $ "expected 1 crumb, got " <> show (length cs)
 
-    it "is a no-op for NON_RECORDING_CLIENT" do
+    it "still writes to the scope for NON_RECORDING_CLIENT (transport is irrelevant at add-time)" do
       scopeData <- runSentryT NON_RECORDING_CLIENT $
         Scope.IO.withIsolationScope \scope -> do
-          Scope.addBreadcrumb (crumb "ignored")
+          Scope.addBreadcrumb (crumb "present")
           liftIO $ Scope.readScopeRef scope
-      scopeData.breadcrumbs `shouldBe` mempty
+      fmap (.message) scopeData.breadcrumbs `shouldBe` ["present"]
 
   describe "addBreadcrumbs" do
     it "adds multiple crumbs in order" do
@@ -117,7 +117,7 @@ spec_breadcrumbs = do
         Scope.IO.withIsolationScope \scope -> do
           Scope.addBreadcrumbs [crumb "a", crumb "b", crumb "c"]
           liftIO $ Scope.readScopeRef scope
-      map (\c -> c.message) (toList scopeData.breadcrumbs) `shouldBe` ["a", "b", "c"]
+      fmap (.message) scopeData.breadcrumbs `shouldBe` ["a", "b", "c"]
 
   describe "clearBreadcrumbs" do
     it "empties the scope breadcrumbs" do
