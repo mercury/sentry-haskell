@@ -25,6 +25,13 @@ module Sentry
     -- * Client Options
     ClientOptions (..),
     pattern DEFAULT_CLIENT_OPTIONS,
+    disableIntegration,
+
+    -- * Stacktrace integrations
+    AttachAnnotatedExceptionIntegration (..),
+    AttachCallStackIntegration (..),
+    AttachExceptionContextIntegration (..),
+    ProcessStacktraceIntegration (..),
 
     -- * Ambient client capability
     HasClient (..),
@@ -60,10 +67,16 @@ module Sentry
 where
 
 import Sentry.Capture (captureEvent, captureEvent_, captureException, captureException_, captureMessage, captureMessage_)
-import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
+import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Init (withSentry, withSentryM)
+import Sentry.Integration.Stacktrace
+  ( AttachAnnotatedExceptionIntegration (..),
+    AttachCallStackIntegration (..),
+    AttachExceptionContextIntegration (..),
+    ProcessStacktraceIntegration (..),
+  )
 import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT)
 import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs)
 import Sentry.Scope.IO (withIsolationScope, withScope)

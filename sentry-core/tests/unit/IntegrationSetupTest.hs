@@ -3,12 +3,19 @@ module IntegrationSetupTest where
 import Data.Default (def)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Kind (Type)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import Data.Vector qualified as Vector
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Integration (Integration (..), fromIntegration)
+import Sentry.Integration.Context (ContextIntegration (..))
+import Sentry.Integration.Stacktrace
+  ( AttachAnnotatedExceptionIntegration (..),
+    AttachCallStackIntegration (..),
+    AttachExceptionContextIntegration (..),
+    ProcessStacktraceIntegration (..),
+  )
 import Sentry.Test qualified as Test
 import Test.Hspec
 
@@ -44,21 +51,29 @@ spec_integration_setup = do
       client.options.environment `shouldBe` Just "observed-by-second"
 
     it "does not call setup when defaultIntegrations is False and no integrations given" do
-      ref <- newIORef ([] :: [Text])
       let opts = def{defaultIntegrations = False}
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
-      recorded <- readIORef ref
-      recorded `shouldBe` []
       Vector.length client.integrations `shouldBe` 0
+      -- ContextIntegration.setup fills serverName from the hostname; if it ran,
+      -- serverName would be Just <hostname>.  Nothing proves setup never ran.
+      client.options.serverName `shouldBe` Nothing
 
-    it "pins builtinIntegrations count (ContextIntegration is the only builtin)" do
-      -- builtinIntegrations = [ContextIntegration], so True adds 1 integration.
-      -- This test pins the wiring so it fails loudly when builtins change without
-      -- updating the tests.
+    it "defaultIntegrations=False yields zero integrations; =True installs all known builtins" do
       clientTrue <- Client.new def{dsn = Just Test.TEST_DSN, defaultIntegrations = True}
       clientFalse <- Client.new def{dsn = Just Test.TEST_DSN, defaultIntegrations = False}
-      Vector.length clientTrue.integrations `shouldBe` 1
+      -- defaultIntegrations=False must install nothing
       Vector.length clientFalse.integrations `shouldBe` 0
+      -- every expected builtin must be present
+      Client.getIntegration (type ContextIntegration) clientTrue
+        `shouldSatisfy` isJust
+      Client.getIntegration (type AttachExceptionContextIntegration) clientTrue
+        `shouldSatisfy` isJust
+      Client.getIntegration (type AttachAnnotatedExceptionIntegration) clientTrue
+        `shouldSatisfy` isJust
+      Client.getIntegration (type AttachCallStackIntegration) clientTrue
+        `shouldSatisfy` isJust
+      Client.getIntegration (type ProcessStacktraceIntegration) clientTrue
+        `shouldSatisfy` isJust
 
     it "default setup (no override) leaves options unchanged" do
       let opts = def{environment = Just "original"}
@@ -72,13 +87,12 @@ spec_integration_setup = do
           int2 = RecordingIntegration ref
           opts = def{integrations = Vector.fromList [fromIntegration int1, fromIntegration int2]}
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
-      -- ContextIntegration (builtin) + one RecordingIntegration survive
-      Vector.length client.integrations `shouldBe` 2
+      -- builtins + one RecordingIntegration survive (second is deduped)
+      Vector.length client.integrations `shouldBe` Vector.length Client.builtinIntegrations + 1
       -- RecordingIntegration.setup ran exactly once (deduped)
       recorded <- readIORef ref
       length recorded `shouldBe` 1
 
--- ---------------------------------------------------------------------------
 -- Helpers
 
 -- | Records calls to 'setup' (appends current @environment@ to the IORef) and

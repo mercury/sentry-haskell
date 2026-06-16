@@ -4,7 +4,6 @@ import Control.Monad (replicateM)
 import Data.Default (def)
 import Data.Maybe (catMaybes)
 import Kent qualified
-import Patrol qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)

@@ -16,6 +16,8 @@ import Data.HashSet (HashSet)
 import Data.HashSet qualified as HashSet
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (Proxy))
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime)
@@ -104,6 +106,14 @@ data ClientOptions = ClientOptions
     --
     -- Defaults to @True@.
     defaultIntegrations :: Bool,
+    -- | Set of built-in integration types that should /not/ be installed even
+    -- when 'defaultIntegrations' is @True@.
+    --
+    -- Use 'Sentry.Client.disableIntegration' to add entries; it handles the
+    -- 'Type.Reflection.SomeTypeRep' bookkeeping for you.
+    --
+    -- Defaults to an empty 'Data.Set.Set'.
+    disabledIntegrations :: Set SomeTypeRep,
     -- | Callback that is executed before a 'Patrol.Event' is sent.
     --
     -- Receives a 'CapturedEvent' so the callback can inspect contextual
@@ -146,6 +156,7 @@ pattern DEFAULT_CLIENT_OPTIONS <-
       inAppExclude = (HashSet.null -> True),
       integrations = (Vector.null -> True),
       defaultIntegrations = True,
+      disabledIntegrations = (Set.null -> True),
       beforeSend = Nothing,
       beforeBreadcrumb = Nothing,
       transport = Nothing,
@@ -167,6 +178,7 @@ pattern DEFAULT_CLIENT_OPTIONS <-
           inAppExclude = HashSet.empty,
           integrations = Vector.empty,
           defaultIntegrations = True,
+          disabledIntegrations = Set.empty,
           beforeSend = Nothing,
           beforeBreadcrumb = Nothing,
           transport = Nothing,

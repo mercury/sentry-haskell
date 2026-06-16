@@ -25,6 +25,7 @@ import Sentry.Internal (ClientOptions (..))
 -- | Built-in integration that populates host-level context fields.
 type ContextIntegration :: Type
 data ContextIntegration = ContextIntegration
+  deriving stock (Show)
 
 instance Integration ContextIntegration where
   name _ = "ContextIntegration"

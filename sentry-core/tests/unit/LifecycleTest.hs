@@ -60,7 +60,6 @@ spec_lifecycle = do
       flushCount `shouldBe` 1
       shutdownCount `shouldBe` 1
 
--- ---------------------------------------------------------------------------
 -- Helpers
 
 -- | A 'Transport' that records flush and shutdown calls.

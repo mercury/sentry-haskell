@@ -5,7 +5,6 @@ import Data.Default (def)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Patrol qualified
 import Patrol.Type.ClientSdkInfo (ClientSdkInfo (..))
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventId qualified as Patrol.EventId

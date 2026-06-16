@@ -10,9 +10,6 @@
 -- Integrations and 'Sentry.Client.Options.beforeSend' callbacks receive this
 -- wrapper and can use it to enrich the event (e.g. by downcasting the
 -- exception to a library-specific type).
---
--- __Note__: This module replaces the old @Sentry.CapturedEvent@ module, which
--- has been removed.  Import from @Sentry.Event@ going forward.
 module Sentry.Event
   ( -- * In-flight wrapper
     CapturedEvent (..),
@@ -27,6 +24,7 @@ where
 import Control.Exception (SomeException)
 import Data.Kind (Type)
 import Data.Text (Text)
+import GHC.Stack (CallStack)
 import Patrol qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventType qualified as Patrol.EventType
@@ -41,20 +39,59 @@ type CapturedEvent :: Type
 data CapturedEvent = CapturedEvent
   { -- | The wire-format event under construction.
     event :: Patrol.Event,
-    -- | The originating 'SomeException', if the event was constructed via
-    -- 'Sentry.Capture.captureException'.
-    exception :: Maybe SomeException
+    -- | The inner (unwrapped) exception from which the event was built, if the
+    -- event was constructed via 'Sentry.Capture.captureException'.
+    --
+    -- When the originating exception was an
+    -- 'Control.Exception.Annotated.AnnotatedException', this holds the
+    -- /inner/ exception — the same value used to build the 'Patrol.Event'.
+    exception :: Maybe SomeException,
+    -- | The original, unmodified exception exactly as it was passed to
+    -- 'Sentry.Capture.captureException' — before any
+    -- 'Control.Exception.Annotated.AnnotatedException' unwrapping.
+    --
+    -- Integrations that extract 'GHC.Stack.CallStack' annotations (e.g.
+    -- "Sentry.Integration.Stacktrace") read this field so they see the full
+    -- annotation set.  'Nothing' for events built from messages.
+    originalException :: Maybe SomeException,
+    -- | The 'GHC.Stack.CallStack' at the
+    -- 'Sentry.Capture.captureException' \/ 'Sentry.Capture.captureMessage'
+    -- call site.
+    --
+    -- Populated only when those functions are called with a
+    -- 'GHC.Stack.HasCallStack' constraint in scope, which is the case for all
+    -- public entry points in "Sentry.Capture".  Acts as a universal backstop
+    -- when no richer frame source (e.g. 'annotated-exception' annotations or
+    -- GHC 'Control.Exception.Context.ExceptionContext') is available.
+    captureCallStack :: Maybe CallStack
   }
 
 -- | Wrap a 'Patrol.Type.Event.Event' with no extra context.  Use
 -- 'withException' when the event was constructed from a 'SomeException'.
 instance Witch.From Patrol.Event CapturedEvent where
-  from event = CapturedEvent{event, exception = Nothing}
+  from event =
+    CapturedEvent
+      { event,
+        exception = Nothing,
+        originalException = Nothing,
+        captureCallStack = Nothing
+      }
 
 -- | Wrap a 'Patrol.Type.Event.Event' that was constructed from the given
 -- 'SomeException'.
-withException :: Patrol.Event -> SomeException -> CapturedEvent
-withException event exception = CapturedEvent{event, exception = Just exception}
+--
+-- * @exception@ receives the inner (post-unwrap) exception used to build the
+--   event body.
+-- * @originalException@ receives @orig@ — the exception before any
+--   'Control.Exception.Annotated.AnnotatedException' unwrapping.
+withException :: Patrol.Event -> SomeException -> SomeException -> CapturedEvent
+withException event exception originalException =
+  CapturedEvent
+    { event,
+      exception = Just exception,
+      originalException = Just originalException,
+      captureCallStack = Nothing
+    }
 
 -- | Build a minimal 'Patrol.Event' from a 'SomeException'.
 --

@@ -10,11 +10,13 @@ module Sentry.Client
     new,
     builtinIntegrations,
 
-    -- * Internal
+    -- * Helpers
+    disableIntegration,
     resolveOptionDefaults,
   )
 where
 
+import Control.Exception.Backtrace (BacktraceMechanism (..), setBacktraceMechanismState)
 import Data.Function ((&))
 import Data.Kind (Type)
 import Data.Proxy (Proxy (Proxy))
@@ -27,6 +29,12 @@ import Data.Vector qualified as Vector
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Integration (Integration (..), SomeIntegration (..), fromIntegration)
 import Sentry.Integration.Context (ContextIntegration (..))
+import Sentry.Integration.Stacktrace
+  ( AttachAnnotatedExceptionIntegration (..),
+    AttachCallStackIntegration (..),
+    AttachExceptionContextIntegration (..),
+    ProcessStacktraceIntegration (..),
+  )
 import Sentry.Internal qualified as Internal
 import Sentry.Transport (SomeTransport)
 import System.Environment (lookupEnv)
@@ -66,10 +74,48 @@ getIntegration iType client = do
   (SomeIntegration _ i) <- Vector.find (\(SomeIntegration rep _) -> rep == iid) client.integrations
   cast i
 
+-- | Mark a built-in 'Sentry.Integration.Integration' type as disabled,
+-- preventing it from being included in 'builtinIntegrations' when 'new' is
+-- called.
+--
+-- This lets you opt out of a single default integration without turning off
+-- all defaults via @defaultIntegrations = False@.
+--
+-- Example:
+--
+-- @
+-- withSentry
+--   (def & disableIntegration (type ProcessStacktraceIntegration))
+--   \\client -> ...
+-- @
+disableIntegration :: forall i -> (Integration i) => ClientOptions -> ClientOptions
+disableIntegration iType opts =
+  opts
+    { Internal.disabledIntegrations =
+        Set.insert
+          (someTypeRep (Proxy @iType))
+          opts.disabledIntegrations
+    }
+
 -- | Integrations installed automatically when
 -- 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@.
+--
+-- __Ordering is significant for the stacktrace integrations:__
+-- 'AttachExceptionContextIntegration', 'AttachAnnotatedExceptionIntegration',
+-- and 'AttachCallStackIntegration' must all run /before/
+-- 'ProcessStacktraceIntegration' (which classifies in-app after all frame
+-- sources have contributed).
 builtinIntegrations :: Vector SomeIntegration
-builtinIntegrations = Vector.fromList [fromIntegration ContextIntegration]
+builtinIntegrations =
+  Vector.fromList
+    [ fromIntegration ContextIntegration,
+      -- Stacktrace: frame-attachment sources (run first, in priority order)
+      fromIntegration AttachExceptionContextIntegration,
+      fromIntegration AttachAnnotatedExceptionIntegration,
+      fromIntegration AttachCallStackIntegration,
+      -- Stacktrace: in-app classification (must be last)
+      fromIntegration ProcessStacktraceIntegration
+    ]
 
 -- | Construct a 'Client' from 'Sentry.Client.Options.ClientOptions', running
 -- the full initialization lifecycle:
@@ -85,12 +131,18 @@ builtinIntegrations = Vector.fromList [fromIntegration ContextIntegration]
 --    the deduplicated list from step 2.
 new :: ClientOptions -> IO Client
 new initialOpts = do
+  -- Ensure the HasCallStack backtrace mechanism is on so every thrown
+  -- exception carries a CallStack in its ExceptionContext.  We leave
+  -- CostCentre, Execution (DWARF), and IPE untouched — those require
+  -- specific build flags and are opt-in by the user.
+  setBacktraceMechanismState HasCallStackBacktrace True
   resolvedOpts <- resolveOptionDefaults initialOpts
   let typeReps = Set.fromList [r | SomeIntegration r _ <- Vector.toList resolvedOpts.integrations]
       kept
         | resolvedOpts.defaultIntegrations =
             builtinIntegrations & Vector.filter \(SomeIntegration rep _) ->
               rep `Set.notMember` typeReps
+                && rep `Set.notMember` resolvedOpts.disabledIntegrations
         | otherwise = Vector.empty
       installed = dedupByTypeRep (kept <> resolvedOpts.integrations)
       opts' = resolvedOpts{Internal.integrations = installed}
