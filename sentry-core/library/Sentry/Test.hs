@@ -17,6 +17,7 @@ import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Client (Client)
+import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Monad (SentryT, runSentryT)
 import Sentry.Transport (SomeTransport (..), Transport (..))
@@ -79,10 +80,22 @@ withClient = withCustomClient (def @ClientOptions)
 
 -- | Like 'withClient' but uses the given 'ClientOptions' (with 'TEST_DSN' and
 -- the transport always filled in).
+--
+-- Unlike 'mkCustomClient', this runs the full initialization lifecycle via
+-- 'Sentry.Client.new', so 'Sentry.Integration.Integration.setup' is
+-- invoked for every integration and default integrations are prepended when
+-- 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@.
 withCustomClient :: (MonadIO m) => ClientOptions -> (TestTransport -> SentryT m a) -> m (a, TestTransport)
 withCustomClient opts f = do
   transport <- liftIO new
-  result <- runSentryT (mkCustomClient transport opts) (f transport)
+  client <-
+    liftIO $
+      Client.new
+        opts
+          { dsn = opts.dsn <|> Just TEST_DSN,
+            transport = Just (SomeTransport transport)
+          }
+  result <- runSentryT client (f transport)
   pure (result, transport)
 
 -- | Like 'fetchAndClearEnvelopes', but filters the 'Patrol.Type.Envelope.Envelope's

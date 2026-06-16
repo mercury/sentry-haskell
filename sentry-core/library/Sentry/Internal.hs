@@ -200,11 +200,19 @@ class (Typeable t) => Integration t where
   name = Text.show . typeOf @t
 
   -- | A setup hook called whenever the integration is attached to a
-  -- 'Sentry.Client.Client'.
+  -- 'Sentry.Client.Client' via 'Sentry.Client.new'.
   --
-  -- The default implementation is a no-op.
-  setup :: t -> ClientOptions -> IO ()
-  setup _ _ = pure ()
+  -- Receives the current 'ClientOptions' and returns (potentially mutated)
+  -- options, threading the changes through to subsequent integrations and into
+  -- the final 'Sentry.Client.Client'. Typical uses include adjusting
+  -- 'inAppInclude' \/ 'inAppExclude' or setting the 'environment'.
+  --
+  -- The integration's position in the roster is already fixed before @setup@
+  -- runs; only the non-roster fields of 'ClientOptions' should be mutated.
+  --
+  -- The default implementation returns 'ClientOptions' unchanged.
+  setup :: t -> ClientOptions -> IO ClientOptions
+  setup _ opts = pure opts
 
   -- | The event processor hook for the integration that implements this
   -- interface.

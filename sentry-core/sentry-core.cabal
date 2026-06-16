@@ -22,6 +22,7 @@ library
       Sentry.CapturedEvent
       Sentry.Client
       Sentry.Client.Options
+      Sentry.Init
       Sentry.Integration
       Sentry.Internal
       Sentry.Monad
@@ -79,7 +80,10 @@ test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
+      BreadcrumbTest
       CaptureExceptionTest
+      IntegrationSetupTest
+      LifecycleTest
       ScopeDataTest
       ScopeMutationTest
       ScopeTest

@@ -5,18 +5,26 @@ module Sentry.Client
     Client (..),
     pattern NON_RECORDING_CLIENT,
     getIntegration,
+
+    -- * Construction
+    new,
+    builtinIntegrations,
   )
 where
 
+import Data.Function ((&))
 import Data.Kind (Type)
 import Data.Proxy (Proxy (Proxy))
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Integration (Integration (..), SomeIntegration (..))
+import Sentry.Internal qualified as Internal
 import Sentry.Transport (SomeTransport)
-import Type.Reflection (someTypeRep)
+import Type.Reflection (SomeTypeRep, someTypeRep)
 import Witch qualified
 
 -- | The 'Client' is responsible for processing events and sending them to the
@@ -30,6 +38,12 @@ data Client = Client
     integrations :: Vector SomeIntegration
   }
 
+-- | Low-level conversion that copies fields directly, running neither default
+-- integration prepending nor 'Sentry.Integration.Integration.setup'. Useful
+-- in tests or when constructing a 'Client' without the full initialization
+-- lifecycle.
+--
+-- For normal application use, prefer 'new' (or 'Sentry.Init.withSentry').
 instance Witch.From ClientOptions Client where
   from options@ClientOptions{transport, integrations} =
     Client
@@ -45,6 +59,50 @@ getIntegration iType client = do
   let iid = someTypeRep (Proxy @iType)
   (SomeIntegration _ i) <- Vector.find (\(SomeIntegration rep _) -> rep == iid) client.integrations
   cast i
+
+-- | Integrations installed automatically when
+-- 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@.
+builtinIntegrations :: Vector SomeIntegration
+builtinIntegrations = Vector.empty
+
+-- | Construct a 'Client' from 'Sentry.Client.Options.ClientOptions', running
+-- the full initialization lifecycle:
+--
+-- 1. If 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@,
+--    prepend 'builtinIntegrations' (minus any whose type is already present in
+--    the user-provided list, so the user-provided integration wins).
+-- 2. Deduplicate integrations based on 'Type.Reflection.SomeTypeRep'.
+-- 3. Run 'Sentry.Integration.Integration.setup' for each integration in order,
+--    threading the returned 'Sentry.Client.Options.ClientOptions' through to the
+--    next (so later integrations see earlier integrations' changes).
+-- 4. Build the 'Client' from the final options, setting the integrations to
+--    the deduplicated list from step 2.
+new :: ClientOptions -> IO Client
+new initialOpts = do
+  let typeReps = Set.fromList [r | SomeIntegration r _ <- Vector.toList initialOpts.integrations]
+      kept
+        | initialOpts.defaultIntegrations =
+            builtinIntegrations & Vector.filter \(SomeIntegration rep _) ->
+              rep `Set.notMember` typeReps
+        | otherwise = Vector.empty
+      installed = dedupByTypeRep (kept <> initialOpts.integrations)
+      opts' = initialOpts{Internal.integrations = installed}
+  finalOpts <- Vector.foldM (\o i -> setup i o) opts' installed
+  pure
+    Client
+      { options = finalOpts{Internal.integrations = installed},
+        transport = finalOpts.transport,
+        integrations = installed
+      }
+  where
+    -- Keep only the first occurrence of each 'SomeTypeRep' in the vector.
+    dedupByTypeRep :: Vector SomeIntegration -> Vector SomeIntegration
+    dedupByTypeRep = snd . Vector.foldl' step (Set.empty, Vector.empty)
+      where
+        step :: (Set SomeTypeRep, Vector SomeIntegration) -> SomeIntegration -> (Set SomeTypeRep, Vector SomeIntegration)
+        step (seen, acc) si@(SomeIntegration rep _)
+          | rep `Set.member` seen = (seen, acc)
+          | otherwise = (Set.insert rep seen, Vector.snoc acc si)
 
 -- | Any client which does not have a valid 'Transport' is non-recording.
 pattern NON_RECORDING_CLIENT :: Client

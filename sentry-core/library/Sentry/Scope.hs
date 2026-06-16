@@ -249,7 +249,6 @@ readAmbientScope = liftIO do
   currentScope <- maybe (pure mempty) readScopeRef (lookupCurrent context)
   pure $ globalScope <> isolationScope <> currentScope
 
-
 -- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
 -- 'eventProcessor' as the final step.
 --
@@ -283,9 +282,10 @@ apply scope ce = scope.eventProcessor ce{event = merged}
           Patrol.Event.extra = Map.union event.extra scope.extras,
           Patrol.Event.contexts = Map.union event.contexts scope.contexts,
           Patrol.Event.breadcrumbs =
-            let crumbs = foldMap Patrol.Breadcrumbs.values event.breadcrumbs
-                      <> toList scope.breadcrumbs
-            in Patrol.Breadcrumbs.Breadcrumbs crumbs <$ guard (not $ null crumbs)
+            let crumbs =
+                  foldMap Patrol.Breadcrumbs.values event.breadcrumbs
+                    <> toList scope.breadcrumbs
+             in Patrol.Breadcrumbs.Breadcrumbs crumbs <$ guard (not $ null crumbs)
         }
 
 -- * Breadcrumb writers
@@ -345,4 +345,4 @@ addBreadcrumbToScope opts scope crumb0 = liftIO do
     appendAndTrim crumb s =
       let extended = s.breadcrumbs Seq.|> crumb
           len = Seq.length extended
-      in s{breadcrumbs = if len > maxN then Seq.drop (len - maxN) extended else extended}
+       in s{breadcrumbs = if len > maxN then Seq.drop (len - maxN) extended else extended}

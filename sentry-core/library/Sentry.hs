@@ -1,8 +1,9 @@
 -- |  This module re-exports the API that consumers will typically use
 -- when instrumenting: the 'Client' and 'ClientOptions' types, the
--- 'HasClient' capability and 'SentryT' carrier, the capture verbs, and the
+-- 'HasClient' capability and 'SentryT' carrier, the capture verbs, the
 -- 'withScope' \/ 'withIsolationScope' helpers for enriching events with
--- contextual metadata.
+-- contextual metadata, and the 'withSentry' \/ 'withSentryM' lifecycle
+-- brackets for initializing the SDK.
 --
 -- The re-exported 'withScope' \/ 'withIsolationScope' come from
 -- "Sentry.Scope.IO" and require 'Control.Monad.IO.Unlift.MonadUnliftIO'. If
@@ -13,7 +14,11 @@
 -- "Sentry.Scope" operations) are intentionally not re-exported here, and are
 -- intended to be imported with qualification.
 module Sentry
-  ( -- * Client
+  ( -- * Lifecycle
+    withSentry,
+    withSentryM,
+
+    -- * Client
     Client,
     pattern NON_RECORDING_CLIENT,
 
@@ -26,7 +31,7 @@ module Sentry
     askClient,
 
     -- * Concrete monad carrier
-    SentryT (..),
+    SentryT,
     runSentryT,
 
     -- * Capturing Events
@@ -58,6 +63,7 @@ import Sentry.Capture (captureEvent, captureEvent_, captureException, captureExc
 import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Init (withSentry, withSentryM)
 import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT)
 import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs)
 import Sentry.Scope.IO (withIsolationScope, withScope)

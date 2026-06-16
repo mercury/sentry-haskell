@@ -2,7 +2,8 @@
 
 module SentryMonadTest where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Data.Kind (Type)
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, ReaderT (..), runReaderT)
 import Patrol.Type.Level qualified as Patrol.Level
 import Sentry.Capture (captureException, captureMessage)
@@ -11,38 +12,32 @@ import Sentry.Monad (HasClient (..), SentryT (..), askClient, runSentryT)
 import Sentry.Test qualified as Test
 import Test.Hspec
 
--- | A sample application environment that embeds a 'Client' alongside other
--- fields. Demonstrates that 'HasClient' composes with arbitrary environments.
-data AppEnv = AppEnv
-  { appClient :: Client,
-    appName :: String
+type Env :: Type
+data Env = Env
+  { client :: Client,
+    name :: String
   }
 
-instance HasClient AppEnv where
-  clientL f env = (\c -> env{appClient = c}) <$> f env.appClient
+instance HasClient Env where
+  clientL f env = (\client -> env{client}) <$> f env.client
 
--- | Like 'Test.withClient' but runs in a @'ReaderT' 'AppEnv' IO@ context.
-withAppEnv :: ReaderT AppEnv IO a -> IO (a, Test.TestTransport)
-withAppEnv action = do
+-- | Like 'Test.withClient' but runs in a @'ReaderT' 'Env' IO@ context.
+withEnv :: ReaderT Env IO a -> IO (a, Test.TestTransport)
+withEnv action = do
   transport <- Test.new
-  let env = AppEnv{appClient = Test.mkClient transport, appName = "test"}
+  let env = Env{client = Test.mkClient transport, name = "test"}
   result <- runReaderT action env
   pure (result, transport)
 
--- | A newtype over 'ReaderT Client IO' that derives its 'MonadReader' instance
--- via 'SentryT IO'. This verifies that the two newtypes are coercible and
--- that @DerivingVia@ through 'SentryT' compiles correctly.
---
--- Note: 'HasClient' is for /environments/ (kind 'Type'), not monads
--- (kind @Type -> Type@). @captureMessage@ works here because 'MyApp' gets
--- @MonadReader Client@ (which @askClient@ uses) and 'HasClient Client' is
--- the pre-existing base instance.
-newtype MyApp a = MyApp {unMyApp :: ReaderT Client IO a}
+type App :: Type -> Type
+newtype App a = App {unApp :: ReaderT Client IO a}
   deriving newtype (Functor, Applicative, Monad, MonadIO)
   deriving (MonadReader Client) via (SentryT IO)
 
-runMyApp :: Test.TestTransport -> MyApp a -> IO a
-runMyApp transport (MyApp action) = runReaderT action (Test.mkClient transport)
+type role App nominal
+
+runApp :: Test.TestTransport -> App a -> IO a
+runApp transport (App action) = runReaderT action (Test.mkClient transport)
 
 spec_sentryMonad :: Spec
 spec_sentryMonad = describe "Sentry.Monad" do
@@ -67,17 +62,17 @@ spec_sentryMonad = describe "Sentry.Monad" do
       length events `shouldBe` 1
 
   describe "HasClient for a custom env via MonadReader" do
-    it "captureMessage works in ReaderT AppEnv IO" do
+    it "captureMessage works in ReaderT Env IO" do
       (_, transport) <-
-        withAppEnv $
-          captureMessage Patrol.Level.Info "hello from AppEnv"
+        withEnv $
+          captureMessage Patrol.Level.Info "hello from Env"
       events <- Test.fetchAndClearEvents transport
       length events `shouldBe` 1
 
-    it "captureException works in ReaderT AppEnv IO" do
+    it "captureException works in ReaderT Env IO" do
       (_, transport) <-
-        withAppEnv $
-          captureException (userError "boom via AppEnv")
+        withEnv $
+          captureException (userError "boom via Env")
       events <- Test.fetchAndClearEvents transport
       length events `shouldBe` 1
 
@@ -85,7 +80,7 @@ spec_sentryMonad = describe "Sentry.Monad" do
     it "a newtype over ReaderT Client IO can derive MonadReader Client via SentryT IO" do
       transport <- Test.new
       _ <-
-        runMyApp transport $
-          captureMessage Patrol.Level.Debug "via MyApp"
+        runApp transport $
+          captureMessage Patrol.Level.Debug "via App"
       events <- Test.fetchAndClearEvents transport
       length events `shouldBe` 1
