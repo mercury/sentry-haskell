@@ -56,6 +56,11 @@ module Sentry.Scope
     removeContext,
     clearContexts,
 
+    -- *** Breadcrumbs
+    addBreadcrumb,
+    addBreadcrumbs,
+    clearBreadcrumbs,
+
     -- ** Thread-local Context Manipulation
     lookupCurrent,
     insertCurrent,
@@ -73,21 +78,32 @@ module Sentry.Scope
 where
 
 import Control.Applicative ((<|>))
+import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Reader (MonadReader)
 import Data.Aeson qualified as Aeson
 import Data.Default (def)
+import Data.Foldable (for_, toList)
 import Data.IORef (newIORef, readIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
+import Data.Sequence qualified as Seq
 import Data.Text (Text)
+import Data.Time.Clock (getCurrentTime)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import OpenTelemetry.Context (Context, Key)
 import OpenTelemetry.Context qualified as Context
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Patrol qualified
+import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
+import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
+import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.CapturedEvent (CapturedEvent (..))
+import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
+import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Monad (HasClient, askClient)
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -233,6 +249,7 @@ readAmbientScope = liftIO do
   currentScope <- maybe (pure mempty) readScopeRef (lookupCurrent context)
   pure $ globalScope <> isolationScope <> currentScope
 
+
 -- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
 -- 'eventProcessor' as the final step.
 --
@@ -246,6 +263,8 @@ readAmbientScope = liftIO do
 --   prefill defaults that scope is expected to override.
 -- * Collection fields ('tags', 'extras', 'contexts'): unioned, with the
 --   event's keys overriding the scope's on conflicts.
+-- * 'breadcrumbs': the event's own breadcrumbs come first; scope breadcrumbs
+--   are appended. The field is omitted entirely when both sides are empty.
 --
 -- Returns 'Nothing' when the scope's 'eventProcessor' drops the event.
 apply :: ScopeData -> CapturedEvent -> Maybe Patrol.Event
@@ -262,5 +281,68 @@ apply scope ce = scope.eventProcessor ce{event = merged}
           Patrol.Event.user = scope.user <|> event.user,
           Patrol.Event.tags = Map.union event.tags scope.tags,
           Patrol.Event.extra = Map.union event.extra scope.extras,
-          Patrol.Event.contexts = Map.union event.contexts scope.contexts
+          Patrol.Event.contexts = Map.union event.contexts scope.contexts,
+          Patrol.Event.breadcrumbs =
+            let crumbs = foldMap Patrol.Breadcrumbs.values event.breadcrumbs
+                      <> toList scope.breadcrumbs
+            in Patrol.Breadcrumbs.Breadcrumbs crumbs <$ guard (not $ null crumbs)
         }
+
+-- * Breadcrumb writers
+
+-- | Add a 'Patrol.Breadcrumb' to the active isolation scope.
+--
+-- Defaults 'Patrol.Type.Breadcrumb.timestamp' to 'getCurrentTime' and
+-- 'Patrol.Type.Breadcrumb.type_' to 'Patrol.Type.BreadcrumbType.Default' when
+-- absent, enforces 'Sentry.Client.Options.ClientOptions.beforeBreadcrumb', and
+-- trims the oldest entries to stay within
+-- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'.
+--
+-- No-ops when no isolation scope is active or for
+-- 'Sentry.Client.NON_RECORDING_CLIENT'.
+addBreadcrumb :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Breadcrumb -> m ()
+addBreadcrumb crumb = do
+  client <- askClient
+  case client of
+    NON_RECORDING_CLIENT -> pure ()
+    _ -> liftIO do
+      ctx <- ThreadLocal.getContext
+      for_ (lookupIsolation ctx) \scope ->
+        addBreadcrumbToScope client.options scope crumb
+
+-- | Add multiple 'Patrol.Breadcrumb's to the active isolation scope in order.
+--
+-- Equivalent to calling 'addBreadcrumb' on each element; each crumb is
+-- independently filtered and trimmed.
+addBreadcrumbs :: (MonadIO m, MonadReader env m, HasClient env) => [Patrol.Breadcrumb] -> m ()
+addBreadcrumbs crumbs = do
+  client <- askClient
+  case client of
+    NON_RECORDING_CLIENT -> pure ()
+    _ -> liftIO do
+      ctx <- ThreadLocal.getContext
+      for_ (lookupIsolation ctx) \scope ->
+        for_ crumbs (addBreadcrumbToScope client.options scope)
+
+-- | Clear all breadcrumbs from the given 'Scope'.
+clearBreadcrumbs :: (MonadIO m) => Scope -> m ()
+clearBreadcrumbs scope = modifyScopeData scope \s -> s{breadcrumbs = mempty}
+
+-- | Enforce 'ClientOptions.beforeBreadcrumb' and trim to
+-- 'ClientOptions.maxBreadcrumbs', then append to the scope.
+addBreadcrumbToScope :: (MonadIO m) => ClientOptions -> Scope -> Patrol.Breadcrumb -> m ()
+addBreadcrumbToScope opts scope crumb0 = liftIO do
+  now <- getCurrentTime
+  -- Default timestamp and type_ when absent.
+  let crumb1 = crumb0{Patrol.Breadcrumb.timestamp = crumb0.timestamp <|> Just now}
+      crumb2 = crumb1{Patrol.Breadcrumb.type_ = crumb1.type_ <|> Just Patrol.BreadcrumbType.Default}
+  -- Run beforeBreadcrumb; Nothing from the callback drops the crumb.
+  case maybe (Just crumb2) ($ crumb2) opts.beforeBreadcrumb of
+    Nothing -> pure ()
+    Just crumb3 -> modifyScopeData scope (appendAndTrim crumb3)
+  where
+    maxN = fromIntegral opts.maxBreadcrumbs :: Int
+    appendAndTrim crumb s =
+      let extended = s.breadcrumbs Seq.|> crumb
+          len = Seq.length extended
+      in s{breadcrumbs = if len > maxN then Seq.drop (len - maxN) extended else extended}

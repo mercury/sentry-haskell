@@ -177,3 +177,4 @@ removeContext k = edit \s -> s{contexts = Map.delete k s.contexts}
 -- | Clear all contexts.
 clearContexts :: ScopeUpdate
 clearContexts = edit \s -> s{contexts = Map.empty}
+

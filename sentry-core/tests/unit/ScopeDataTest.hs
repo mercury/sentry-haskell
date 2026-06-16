@@ -4,8 +4,10 @@ import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
+import Data.Text (Text)
 import Data.Vector qualified as Vector
 import Patrol qualified
+import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
@@ -59,9 +61,9 @@ spec_ScopeData_Semigroup = describe "ScopeData Semigroup" do
     (old <> def).user `shouldBe` Just testUser1
 
   it "concatenates breadcrumbs (old ++ new)" do
-    let old = def{breadcrumbs = Seq.fromList ["a", "b"]}
-        new = def{breadcrumbs = Seq.fromList ["c"]}
-    (old <> new).breadcrumbs `shouldBe` Seq.fromList ["a", "b", "c"]
+    let old = def{breadcrumbs = Seq.fromList [crumb "a", crumb "b"]}
+        new = def{breadcrumbs = Seq.fromList [crumb "c"]}
+    (old <> new).breadcrumbs `shouldBe` Seq.fromList [crumb "a", crumb "b", crumb "c"]
 
   it "unions tags with right bias" do
     let old = def{tags = Map.fromList [("env", "staging"), ("shared", "old")]}
@@ -128,15 +130,19 @@ spec_ScopeData_Monoid = describe "ScopeData Monoid" do
     lhs.transaction `shouldBe` rhs.transaction
 
   it "associativity: (a <> b) <> c == a <> (b <> c) for collection fields" do
-    let a = def{breadcrumbs = Seq.fromList ["1"], tags = Map.singleton "x" "a"}
-        b = def{breadcrumbs = Seq.fromList ["2"], tags = Map.singleton "x" "b"}
-        c = def{breadcrumbs = Seq.fromList ["3"], tags = Map.singleton "y" "c"}
+    let a = def{breadcrumbs = Seq.fromList [crumb "1"], tags = Map.singleton "x" "a"}
+        b = def{breadcrumbs = Seq.fromList [crumb "2"], tags = Map.singleton "x" "b"}
+        c = def{breadcrumbs = Seq.fromList [crumb "3"], tags = Map.singleton "y" "c"}
         lhs = (a <> b) <> c
         rhs = a <> (b <> c)
     lhs.breadcrumbs `shouldBe` rhs.breadcrumbs
     lhs.tags `shouldBe` rhs.tags
 
 -- Helpers
+
+-- | Minimal breadcrumb with a distinguishable message.
+crumb :: Text -> Patrol.Breadcrumb
+crumb msg = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = msg}
 
 testUser1 :: Patrol.User
 testUser1 =

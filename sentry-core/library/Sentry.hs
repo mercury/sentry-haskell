@@ -46,6 +46,11 @@ module Sentry
     ScopeType (..),
     withScope,
     withIsolationScope,
+
+    -- * Breadcrumbs
+    addBreadcrumb,
+    addBreadcrumbs,
+    clearBreadcrumbs,
   )
 where
 
@@ -54,5 +59,5 @@ import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT)
-import Sentry.Scope (Scope, ScopeData (..), ScopeType (..))
+import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs)
 import Sentry.Scope.IO (withIsolationScope, withScope)

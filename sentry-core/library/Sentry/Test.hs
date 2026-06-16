@@ -2,6 +2,7 @@
 
 module Sentry.Test where
 
+import Control.Applicative ((<|>))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Atomics (atomicModifyIORefCAS, atomicModifyIORefCAS_)
 import Data.Default (def)
@@ -55,10 +56,16 @@ instance Transport TestTransport where
 
 -- | Build a 'Client' backed by the given 'TestTransport' with the 'TEST_DSN'.
 mkClient :: TestTransport -> Client
-mkClient transport =
+mkClient = flip mkCustomClient (def @ClientOptions)
+
+-- | Like 'mkClient' but accepts custom 'ClientOptions'. The transport is
+-- always set to the given 'TestTransport'; 'TEST_DSN' is used as a fallback
+-- when the options do not already include a 'dsn'.
+mkCustomClient :: TestTransport -> ClientOptions -> Client
+mkCustomClient transport opts =
   Witch.from @ClientOptions @Client
-    (def @ClientOptions)
-      { dsn = Just TEST_DSN,
+    opts
+      { dsn = opts.dsn <|> Just TEST_DSN,
         transport = Just (SomeTransport transport)
       }
 
@@ -67,10 +74,15 @@ mkClient transport =
 -- can be inspected (e.g. via 'fetchAndClearEvents') after the action returns.
 --
 -- Returns both the action result and the transport.
-withTestClient :: (MonadIO m) => (TestTransport -> SentryT m a) -> m (a, TestTransport)
-withTestClient f = do
+withClient :: (MonadIO m) => (TestTransport -> SentryT m a) -> m (a, TestTransport)
+withClient = withCustomClient (def @ClientOptions)
+
+-- | Like 'withClient' but uses the given 'ClientOptions' (with 'TEST_DSN' and
+-- the transport always filled in).
+withCustomClient :: (MonadIO m) => ClientOptions -> (TestTransport -> SentryT m a) -> m (a, TestTransport)
+withCustomClient opts f = do
   transport <- liftIO new
-  result <- runSentryT (mkClient transport) (f transport)
+  result <- runSentryT (mkCustomClient transport opts) (f transport)
   pure (result, transport)
 
 -- | Like 'fetchAndClearEnvelopes', but filters the 'Patrol.Type.Envelope.Envelope's

@@ -63,7 +63,7 @@ data ScopeData = ScopeData
     level :: Maybe Patrol.Level,
     fingerprint :: Maybe (Vector Text),
     transaction :: Maybe Text,
-    breadcrumbs :: Seq Text,
+    breadcrumbs :: Seq Patrol.Breadcrumb,
     user :: Maybe Patrol.User,
     extras :: Map Text Aeson.Value,
     tags :: Map Text Text,

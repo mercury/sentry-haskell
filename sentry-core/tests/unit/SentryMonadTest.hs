@@ -21,7 +21,7 @@ data AppEnv = AppEnv
 instance HasClient AppEnv where
   clientL f env = (\c -> env{appClient = c}) <$> f env.appClient
 
--- | Like 'Test.withTestClient' but runs in a @'ReaderT' 'AppEnv' IO@ context.
+-- | Like 'Test.withClient' but runs in a @'ReaderT' 'AppEnv' IO@ context.
 withAppEnv :: ReaderT AppEnv IO a -> IO (a, Test.TestTransport)
 withAppEnv action = do
   transport <- Test.new
@@ -55,13 +55,13 @@ spec_sentryMonad = describe "Sentry.Monad" do
       length events `shouldBe` 1
 
     it "captureMessage reaches the transport" do
-      (_, transport) <- Test.withTestClient \_ ->
+      (_, transport) <- Test.withClient \_ ->
         captureMessage Patrol.Level.Warning "watch out"
       events <- Test.fetchAndClearEvents transport
       length events `shouldBe` 1
 
     it "captureException reaches the transport" do
-      (_, transport) <- Test.withTestClient \_ ->
+      (_, transport) <- Test.withClient \_ ->
         captureException (userError "boom in SentryT")
       events <- Test.fetchAndClearEvents transport
       length events `shouldBe` 1

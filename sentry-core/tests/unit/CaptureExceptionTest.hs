@@ -18,7 +18,7 @@ import Test.Hspec
 spec_captureException :: Spec
 spec_captureException = describe "captureException" do
   it "captures a plain exception with no annotation as an event" do
-    (_, transport) <- Test.withTestClient \_ ->
+    (_, transport) <- Test.withClient \_ ->
       captureException (userError "boom")
     events <- Test.fetchAndClearEvents transport
     length events `shouldBe` 1
@@ -29,7 +29,7 @@ spec_captureException = describe "captureException" do
           AnnotatedException
             [Annotation scopeData]
             (toException $ userError "boom")
-    (_, transport) <- Test.withTestClient \_ ->
+    (_, transport) <- Test.withClient \_ ->
       captureException annotated
     events <- Test.fetchAndClearEvents transport
     case events of
@@ -42,14 +42,14 @@ spec_captureException = describe "captureException" do
           AnnotatedException
             [Annotation scopeData]
             (toException $ userError "boom")
-    (result, transport) <- Test.withTestClient \_ ->
+    (result, transport) <- Test.withClient \_ ->
       captureException annotated
     result `shouldBe` Nothing
     events <- Test.fetchAndClearEvents transport
     events `shouldSatisfy` null
 
   it "uses ambient thread-local scope when no annotation is present" do
-    (_, transport) <- Test.withTestClient \_ ->
+    (_, transport) <- Test.withClient \_ ->
       Scope.IO.withScope \scope -> do
         Scope.setLevel scope Patrol.Level.Warning
         captureException (userError "boom")
@@ -59,7 +59,7 @@ spec_captureException = describe "captureException" do
       _ -> expectationFailure $ "expected one event, got " <> show (length events)
 
   it "preserves throw-site scope when an exception escapes withScope" do
-    (_, transport) <- Test.withTestClient \_ -> do
+    (_, transport) <- Test.withClient \_ -> do
       result <- Safe.try @_ @(AnnotatedException SomeException) $ Scope.IO.withScope \scope -> do
         Scope.setLevel scope Patrol.Level.Warning
         Safe.throwIO $ userError "escapes scope"
@@ -72,7 +72,7 @@ spec_captureException = describe "captureException" do
       _ -> expectationFailure $ "expected one event, got " <> show (length events)
 
   it "captures an async exception value as an event" do
-    (_, transport) <- Test.withTestClient \_ ->
+    (_, transport) <- Test.withClient \_ ->
       captureException ThreadKilled
     events <- Test.fetchAndClearEvents transport
     length events `shouldBe` 1
