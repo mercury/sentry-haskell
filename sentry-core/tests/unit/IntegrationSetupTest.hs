@@ -21,7 +21,8 @@ spec_integration_setup = do
           opts = def{integrations = Vector.fromList [fromIntegration int]}
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
       recorded <- readIORef ref
-      recorded `shouldBe` [""]
+      -- resolveOptionDefaults fills environment = "production" before setup runs
+      recorded `shouldBe` ["production"]
       client.options.environment `shouldBe` Just "set-by-setup"
 
     it "threads options through integrations in roster order" do
@@ -35,9 +36,10 @@ spec_integration_setup = do
               }
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
       recorded <- readIORef ref
-      -- int1 sees "" (no environment yet), then sets environment = "set-by-setup"
-      -- int2 sees "set-by-setup" (the value left by int1)
-      recorded `shouldBe` ["", "set-by-setup"]
+      -- resolveOptionDefaults fills "production"; ContextIntegration (builtin) runs first
+      -- but doesn't write to `ref`.  int1 sees "production", sets "set-by-setup".
+      -- int2 sees "set-by-setup", sets "observed-by-second".
+      recorded `shouldBe` ["production", "set-by-setup"]
       -- the last write wins in the chain
       client.options.environment `shouldBe` Just "observed-by-second"
 
@@ -49,13 +51,13 @@ spec_integration_setup = do
       recorded `shouldBe` []
       Vector.length client.integrations `shouldBe` 0
 
-    it "pins the defaultIntegrations = True flag (no builtins today, count stays 0)" do
-      -- builtinIntegrations is currently empty, so True vs False makes no difference
-      -- to the count; this test pins the wiring so it fails loudly when real
-      -- defaults are added without updating the tests.
+    it "pins builtinIntegrations count (ContextIntegration is the only builtin)" do
+      -- builtinIntegrations = [ContextIntegration], so True adds 1 integration.
+      -- This test pins the wiring so it fails loudly when builtins change without
+      -- updating the tests.
       clientTrue <- Client.new def{dsn = Just Test.TEST_DSN, defaultIntegrations = True}
       clientFalse <- Client.new def{dsn = Just Test.TEST_DSN, defaultIntegrations = False}
-      Vector.length clientTrue.integrations `shouldBe` 0
+      Vector.length clientTrue.integrations `shouldBe` 1
       Vector.length clientFalse.integrations `shouldBe` 0
 
     it "default setup (no override) leaves options unchanged" do
@@ -70,9 +72,9 @@ spec_integration_setup = do
           int2 = RecordingIntegration ref
           opts = def{integrations = Vector.fromList [fromIntegration int1, fromIntegration int2]}
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
-      -- Only one RecordingIntegration should survive dedupByType
-      Vector.length client.integrations `shouldBe` 1
-      -- setup ran exactly once
+      -- ContextIntegration (builtin) + one RecordingIntegration survive
+      Vector.length client.integrations `shouldBe` 2
+      -- RecordingIntegration.setup ran exactly once (deduped)
       recorded <- readIORef ref
       length recorded `shouldBe` 1
 

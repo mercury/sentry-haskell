@@ -12,7 +12,7 @@ import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
-import Sentry.CapturedEvent (CapturedEvent (..))
+import Sentry.Event (CapturedEvent (..))
 import Sentry.Scope (ScopeData (..), ScopeType (..))
 import Test.Hspec
 import Witch qualified

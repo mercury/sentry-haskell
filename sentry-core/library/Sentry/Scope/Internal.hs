@@ -26,7 +26,7 @@ import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Vector (Vector)
 import Patrol qualified
-import Sentry.CapturedEvent (CapturedEvent (..))
+import Sentry.Event (CapturedEvent (..))
 
 -- | A mutable reference to 'ScopeData' that lives on thread-local context.
 --

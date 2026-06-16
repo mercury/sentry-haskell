@@ -19,11 +19,12 @@ library
   exposed-modules:
       Sentry
       Sentry.Capture
-      Sentry.CapturedEvent
       Sentry.Client
       Sentry.Client.Options
+      Sentry.Event
       Sentry.Init
       Sentry.Integration
+      Sentry.Integration.Context
       Sentry.Internal
       Sentry.Monad
       Sentry.Scope
@@ -31,6 +32,7 @@ library
       Sentry.Scope.IO
       Sentry.Scope.Monad
       Sentry.Scope.Update
+      Sentry.Sdk
       Sentry.Test
       Sentry.Transport
   other-modules:
@@ -63,6 +65,7 @@ library
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
     , mtl
+    , network-bsd
     , network-uri
     , patrol ==1.2.*
     , random
@@ -81,6 +84,7 @@ test-suite unit
   main-is: Driver.hs
   other-modules:
       BreadcrumbTest
+      CaptureDefaultsTest
       CaptureExceptionTest
       IntegrationSetupTest
       LifecycleTest
@@ -120,6 +124,7 @@ test-suite unit
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , mtl
+    , network-bsd
     , network-uri
     , patrol ==1.2.*
     , random
@@ -170,6 +175,7 @@ benchmark space
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
     , mtl
+    , network-bsd
     , network-uri
     , patrol ==1.2.*
     , random
@@ -218,6 +224,7 @@ benchmark time
     , hs-opentelemetry-api
     , hs-opentelemetry-instrumentation-http-client
     , mtl
+    , network-bsd
     , network-uri
     , patrol ==1.2.*
     , random

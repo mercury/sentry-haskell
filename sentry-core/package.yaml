@@ -29,6 +29,7 @@ dependencies:
   - transformers
   - unliftio-core
   - unordered-containers
+  - network-bsd
   - witch
 
 library:

@@ -2,9 +2,9 @@
 
 module SentryMonadTest where
 
-import Data.Kind (Type)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, ReaderT (..), runReaderT)
+import Data.Kind (Type)
 import Patrol.Type.Level qualified as Patrol.Level
 import Sentry.Capture (captureException, captureMessage)
 import Sentry.Client (Client)

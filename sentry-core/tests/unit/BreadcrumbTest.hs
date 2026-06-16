@@ -10,9 +10,9 @@ import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
-import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Client (pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Event (CapturedEvent (..))
 import Sentry.Monad (runSentryT)
 import Sentry.Scope (ScopeData (..))
 import Sentry.Scope qualified as Scope
@@ -109,7 +109,7 @@ spec_breadcrumbs = do
         Scope.IO.withIsolationScope \scope -> do
           Scope.addBreadcrumb (crumb "present")
           liftIO $ Scope.readScopeRef scope
-      fmap (.message) scopeData.breadcrumbs `shouldBe` ["present"]
+      map (.message) (toList scopeData.breadcrumbs) `shouldBe` ["present"]
 
   describe "addBreadcrumbs" do
     it "adds multiple crumbs in order" do
@@ -117,7 +117,7 @@ spec_breadcrumbs = do
         Scope.IO.withIsolationScope \scope -> do
           Scope.addBreadcrumbs [crumb "a", crumb "b", crumb "c"]
           liftIO $ Scope.readScopeRef scope
-      fmap (.message) scopeData.breadcrumbs `shouldBe` ["a", "b", "c"]
+      map (.message) (toList scopeData.breadcrumbs) `shouldBe` ["a", "b", "c"]
 
   describe "clearBreadcrumbs" do
     it "empties the scope breadcrumbs" do

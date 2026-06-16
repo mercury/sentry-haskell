@@ -24,7 +24,7 @@ import Data.Vector qualified as Vector
 import Network.URI (URI)
 import Patrol qualified
 import Patrol.Type.Dsn qualified as Patrol.Dsn
-import Sentry.CapturedEvent (CapturedEvent (..))
+import Sentry.Event (CapturedEvent (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
 import Witch qualified
@@ -51,8 +51,11 @@ data ClientOptions = ClientOptions
     --
     -- Defaults to @Nothing@.
     release :: Maybe Text,
-    -- | The environment name, such as @production@ or @staging@; the default
-    -- value should be @production@.
+    -- | The environment name, such as @production@ or @staging@.
+    --
+    -- Defaults to @Nothing@; resolved to @"production"@ (or
+    -- @SENTRY_ENVIRONMENT@ if set) by 'Sentry.Client.new' at initialisation
+    -- time.
     environment :: Maybe Text,
     -- | Error event sample rate; defaults to @1.0@.
     --
@@ -71,8 +74,15 @@ data ClientOptions = ClientOptions
     sendDefaultPII :: Bool,
     -- | The server name to be reported.
     --
-    -- Defaults to @Nothing@.
+    -- Defaults to @Nothing@; filled in from the OS hostname by
+    -- 'Sentry.Integration.Context.ContextIntegration' when
+    -- 'defaultIntegrations' is @True@.
     serverName :: Maybe Text,
+    -- | An optional build distribution identifier that disambiguates builds
+    -- sharing the same 'release' (e.g. release @"1.0"@, dist @"42"@).
+    --
+    -- Defaults to @Nothing@.
+    dist :: Maybe Text,
     -- | Module prefixes that are always considered @in_app@.
     --
     -- Defaults to an empty 'Data.HashSet.HashSet'.
@@ -131,6 +141,7 @@ pattern DEFAULT_CLIENT_OPTIONS <-
       maxBreadcrumbs = 100,
       sendDefaultPII = False,
       serverName = Nothing,
+      dist = Nothing,
       inAppInclude = (HashSet.null -> True),
       inAppExclude = (HashSet.null -> True),
       integrations = (Vector.null -> True),
@@ -151,6 +162,7 @@ pattern DEFAULT_CLIENT_OPTIONS <-
           maxBreadcrumbs = 100,
           sendDefaultPII = False,
           serverName = Nothing,
+          dist = Nothing,
           inAppInclude = HashSet.empty,
           inAppExclude = HashSet.empty,
           integrations = Vector.empty,

@@ -100,9 +100,9 @@ import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
-import Sentry.CapturedEvent (CapturedEvent (..))
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Event (CapturedEvent (..))
 import Sentry.Monad (HasClient, askClient)
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
 import System.IO.Unsafe (unsafePerformIO)

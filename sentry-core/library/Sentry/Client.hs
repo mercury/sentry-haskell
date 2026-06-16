@@ -9,6 +9,9 @@ module Sentry.Client
     -- * Construction
     new,
     builtinIntegrations,
+
+    -- * Internal
+    resolveOptionDefaults,
   )
 where
 
@@ -17,13 +20,16 @@ import Data.Kind (Type)
 import Data.Proxy (Proxy (Proxy))
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
-import Sentry.Integration (Integration (..), SomeIntegration (..))
+import Sentry.Integration (Integration (..), SomeIntegration (..), fromIntegration)
+import Sentry.Integration.Context (ContextIntegration (..))
 import Sentry.Internal qualified as Internal
 import Sentry.Transport (SomeTransport)
+import System.Environment (lookupEnv)
 import Type.Reflection (SomeTypeRep, someTypeRep)
 import Witch qualified
 
@@ -63,7 +69,7 @@ getIntegration iType client = do
 -- | Integrations installed automatically when
 -- 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@.
 builtinIntegrations :: Vector SomeIntegration
-builtinIntegrations = Vector.empty
+builtinIntegrations = Vector.fromList [fromIntegration ContextIntegration]
 
 -- | Construct a 'Client' from 'Sentry.Client.Options.ClientOptions', running
 -- the full initialization lifecycle:
@@ -79,14 +85,15 @@ builtinIntegrations = Vector.empty
 --    the deduplicated list from step 2.
 new :: ClientOptions -> IO Client
 new initialOpts = do
-  let typeReps = Set.fromList [r | SomeIntegration r _ <- Vector.toList initialOpts.integrations]
+  resolvedOpts <- resolveOptionDefaults initialOpts
+  let typeReps = Set.fromList [r | SomeIntegration r _ <- Vector.toList resolvedOpts.integrations]
       kept
-        | initialOpts.defaultIntegrations =
+        | resolvedOpts.defaultIntegrations =
             builtinIntegrations & Vector.filter \(SomeIntegration rep _) ->
               rep `Set.notMember` typeReps
         | otherwise = Vector.empty
-      installed = dedupByTypeRep (kept <> initialOpts.integrations)
-      opts' = initialOpts{Internal.integrations = installed}
+      installed = dedupByTypeRep (kept <> resolvedOpts.integrations)
+      opts' = resolvedOpts{Internal.integrations = installed}
   finalOpts <- Vector.foldM (\o i -> setup i o) opts' installed
   pure
     Client
@@ -114,3 +121,25 @@ pattern NON_RECORDING_CLIENT <- Client{transport = Nothing}
           transport = Nothing,
           integrations = Vector.empty
         }
+
+-- | Resolve environment-variable and other computed defaults into
+-- 'ClientOptions' once, at client construction time.
+--
+-- Fields that are already set to a @'Just'@ value by the caller are left
+-- untouched — explicit configuration always wins.
+--
+-- * 'release': falls back to @SENTRY_RELEASE@ if unset.
+-- * 'environment': falls back to @SENTRY_ENVIRONMENT@, then @"production"@.
+resolveOptionDefaults :: ClientOptions -> IO ClientOptions
+resolveOptionDefaults opts = do
+  release <- case opts.release of
+    Just r -> pure (Just r)
+    Nothing -> do
+      mval <- lookupEnv "SENTRY_RELEASE"
+      pure $ Text.pack <$> mval
+  environment <- case opts.environment of
+    Just e -> pure (Just e)
+    Nothing -> do
+      mval <- lookupEnv "SENTRY_ENVIRONMENT"
+      pure . Just $ maybe "production" Text.pack mval
+  pure opts{release, environment}
