@@ -1,14 +1,11 @@
-packages:
-    sentry
-  , sentry-core
+-- Inherit packages, the patrol source-repository-package, constraints, and
+-- allow-newer from the base project so this file can't drift out of sync.
+import: cabal.project
 
 optimization: 2
 
 profiling: True
 
-constraints:
-  hs-opentelemetry-api >= 0.3.0.0
-
-allow-newer:
-    hs-opentelemetry-instrumentation-http-client:hs-opentelemetry-api
-  , hs-opentelemetry-instrumentation-conduit:hs-opentelemetry-api
+-- Insert cost centres after optimization (-fprof-late) so the .prof attributes
+-- time/allocation accurately without perturbing the optimizer.
+profiling-detail: late-toplevel

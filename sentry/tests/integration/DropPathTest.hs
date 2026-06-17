@@ -2,12 +2,12 @@ module DropPathTest where
 
 import Control.Monad (replicateM, void)
 import Data.Default (def)
-import Kent qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Monad (runSentryT)
+import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
@@ -43,9 +43,9 @@ deliveredUnder tweak =
 spec_dropPaths :: Spec
 spec_dropPaths = describe "events dropped before the wire" do
   it "delivers nothing when the sample rate is 0" do
-    delivered <- deliveredUnder \opts -> opts {sampleRate = 0}
+    delivered <- deliveredUnder \opts -> opts{sampleRate = 0}
     delivered `shouldBe` 0
 
   it "delivers nothing when beforeSend rejects every event" do
-    delivered <- deliveredUnder \opts -> opts {beforeSend = Just (const Nothing)}
+    delivered <- deliveredUnder \opts -> opts{beforeSend = Just (const Nothing)}
     delivered `shouldBe` 0

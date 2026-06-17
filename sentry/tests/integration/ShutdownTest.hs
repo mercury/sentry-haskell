@@ -2,12 +2,12 @@ module ShutdownTest where
 
 import Control.Monad (replicateM, void)
 import Data.Default (def)
-import Kent qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Monad (runSentryT)
+import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (ShutdownResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport

@@ -13,6 +13,9 @@ cabal/*
 
 # GHC profiling artifacts
 **/*.prof*
+**/*.hp
+**/*.eventlog
+**/*.eventlog.html
 
 # local claude settings
 .claude/settings.local.json

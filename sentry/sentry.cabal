@@ -63,6 +63,97 @@ library
     , zlib
   default-language: GHC2024
 
+library testkit
+  exposed-modules:
+      Sentry.TestKit.Gen
+      Sentry.TestKit.Kent
+  other-modules:
+      Paths_sentry
+  autogen-modules:
+      Paths_sentry
+  hs-source-dirs:
+      testkit
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      MultiWayIf
+      OverloadedRecordDot
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
+  build-depends:
+      aeson
+    , async
+    , atomic-primops
+    , attoparsec
+    , base
+    , bytestring
+    , containers
+    , directory
+    , hs-opentelemetry-instrumentation-http-client
+    , http-client
+    , http-types
+    , network
+    , patrol
+    , sentry-core
+    , stm
+    , text
+    , time
+    , transformers
+    , typed-process
+    , unagi-chan
+    , unliftio
+    , witch
+  default-language: GHC2024
+
+executable sentry-profile
+  main-is: Main.hs
+  other-modules:
+      Paths_sentry
+  autogen-modules:
+      Paths_sentry
+  hs-source-dirs:
+      profile
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      MultiWayIf
+      OverloadedRecordDot
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
+  build-depends:
+      aeson
+    , async
+    , atomic-primops
+    , attoparsec
+    , base
+    , bytestring
+    , containers
+    , hs-opentelemetry-instrumentation-http-client
+    , http-client
+    , http-types
+    , patrol
+    , sentry
+    , sentry-core
+    , stm
+    , testkit
+    , text
+    , time
+    , transformers
+    , unagi-chan
+    , unliftio
+    , witch
+  default-language: GHC2024
+
 test-suite integration
   type: exitcode-stdio-1.0
   main-is: Driver.hs
@@ -70,7 +161,6 @@ test-suite integration
       CaptureEventTest
       ClientReportTest
       DropPathTest
-      Kent
       ShutdownTest
       Paths_sentry
   autogen-modules:
@@ -100,12 +190,9 @@ test-suite integration
     , bytestring
     , containers
     , data-default
-    , directory
     , hs-opentelemetry-instrumentation-http-client
     , hspec
-    , http-client
     , http-types
-    , network
     , patrol
     , sentry
     , sentry-core
@@ -113,10 +200,10 @@ test-suite integration
     , tasty
     , tasty-discover
     , tasty-hspec
+    , testkit
     , text
     , time
     , transformers
-    , typed-process
     , unagi-chan
     , unliftio
     , witch
