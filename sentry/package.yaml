@@ -71,6 +71,7 @@ tests:
       - data-default
       - directory
       - http-client
+      - network
       - patrol
       - typed-process
       - witch

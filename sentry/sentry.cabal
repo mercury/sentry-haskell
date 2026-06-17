@@ -68,7 +68,10 @@ test-suite integration
   main-is: Driver.hs
   other-modules:
       CaptureEventTest
+      ClientReportTest
+      DropPathTest
       Kent
+      ShutdownTest
       Paths_sentry
   autogen-modules:
       Paths_sentry
@@ -102,6 +105,7 @@ test-suite integration
     , hspec
     , http-client
     , http-types
+    , network
     , patrol
     , sentry
     , sentry-core

@@ -1,0 +1,51 @@
+module DropPathTest where
+
+import Control.Monad (replicateM, void)
+import Data.Default (def)
+import Kent qualified
+import Patrol.Type.Event qualified as Patrol.Event
+import Sentry.Capture (captureEvent)
+import Sentry.Client (Client)
+import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Monad (runSentryT)
+import Sentry.Transport (FlushResponse (..), SomeTransport (..))
+import Sentry.Transport qualified as Transport
+import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
+import Test.Hspec
+import UnliftIO.Exception (SomeException (..))
+import Witch qualified
+
+-- | Capture exceptions through a client built from the given options, flush,
+-- and return the number of events kent received.
+deliveredUnder :: (ClientOptions -> ClientOptions) -> IO Int
+deliveredUnder tweak =
+  Kent.withKent \kent -> do
+    Kent.flushKent kent
+    let dsn = Kent.dsnFor kent "1"
+    transport <- AsyncHttpTransport.new def 100 False kent.manager Nothing dsn
+    let opts =
+          tweak
+            (def @ClientOptions)
+              { dsn = Just dsn,
+                transport = Just (SomeTransport transport),
+                sendClientReports = False
+              }
+        client = Witch.from @ClientOptions @Client opts
+    events <-
+      replicateM 10 $
+        Patrol.Event.fromSomeException $
+          SomeException (userError "boom")
+    void $ traverse (\e -> runSentryT client $ captureEvent e) events
+    flushResult <- Transport.flush transport 5
+    flushResult `shouldBe` FlushSucceeded
+    length <$> Kent.listEvents kent
+
+spec_dropPaths :: Spec
+spec_dropPaths = describe "events dropped before the wire" do
+  it "delivers nothing when the sample rate is 0" do
+    delivered <- deliveredUnder \opts -> opts {sampleRate = 0}
+    delivered `shouldBe` 0
+
+  it "delivers nothing when beforeSend rejects every event" do
+    delivered <- deliveredUnder \opts -> opts {beforeSend = Just (const Nothing)}
+    delivered `shouldBe` 0
