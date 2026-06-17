@@ -11,18 +11,20 @@
 --
 -- > sentry-profile <sync|async> [count] [queueSize] [payloadBytes]
 --
--- Backend selection:
+-- Backend selection (via @SENTRY_PROFILE_BACKEND@):
 --
---   * If @SENTRY_PROFILE_KENT_PORT@ is set, the harness talks to an
---     already-running kent on that port and does /not/ manage its lifecycle —
---     this is what @hyperfine@ drives, so kent boot\/teardown stays out of the
---     timed region.
---   * Otherwise it spawns its own kent via 'Kent.withKent' and verifies
---     delivery at the end.
+--   * @sink@ — an in-process keep-alive @warp@ server that discards requests
+--     ('Sink.withSink'). Use this to measure the transport's steady-state send
+--     path without per-request connection churn.
+--   * unset \/ @kent@ — spawn a kent-server and verify delivery at the end. If
+--     @SENTRY_PROFILE_KENT_PORT@ is set, instead talk to an already-running
+--     kent on that port without managing its lifecycle (so @hyperfine@ can keep
+--     kent boot\/teardown out of the timed region).
 module Main where
 
 import Control.Concurrent (threadDelay)
-import Control.Monad (when)
+import Data.Default (def)
+import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Network.HTTP.Client qualified as HttpClient
@@ -30,6 +32,7 @@ import Patrol qualified
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Kent (KentHandle (..))
 import Sentry.TestKit.Kent qualified as Kent
+import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttp
 import Sentry.Transport.HTTP.Sync qualified as SyncHttp
@@ -69,19 +72,30 @@ defaultCount = 5000
 main :: IO ()
 main = do
   cfg <- parseArgs =<< getArgs
-  externalPort <- (>>= readMaybe) <$> lookupEnv "SENTRY_PROFILE_KENT_PORT"
-  case externalPort of
-    Just port -> do
-      manager <- HttpClient.newManager HttpClient.defaultManagerSettings
-      run cfg KentHandle{port, manager} False
-    Nothing ->
-      Kent.withKent \kent -> run cfg kent True
+  backend <- lookupEnv "SENTRY_PROFILE_BACKEND"
+  case backend of
+    -- Keep-alive in-process sink: no event store, so nothing to verify.
+    Just "sink" ->
+      Sink.withSink \sink ->
+        run cfg sink.manager (Sink.dsnFor sink "1") Nothing
+    -- kent, either an externally-managed instance or one we spawn + verify.
+    _ -> do
+      externalPort <- (>>= readMaybe) <$> lookupEnv "SENTRY_PROFILE_KENT_PORT"
+      case externalPort of
+        Just port -> do
+          manager <- HttpClient.newManager HttpClient.defaultManagerSettings
+          run cfg manager (Kent.dsnFor KentHandle{port, manager} "1") Nothing
+        Nothing ->
+          Kent.withKent \kent ->
+            -- kent retains only a bounded, most-recent window, so this is a
+            -- sanity check that delivery happened, not a full count.
+            run cfg kent.manager (Kent.dsnFor kent "1") (Just (length <$> Kent.listEvents kent))
 
--- | Construct the configured transport, drive the run, and report.
-run :: Config -> KentHandle -> Bool -> IO ()
-run cfg kent verify = do
-  let dsn = Kent.dsnFor kent "1"
-      envelope = mkEnvelope cfg dsn
+-- | Construct the configured transport, drive the run, and report. @verify@, if
+-- present, is run after shutdown to report how many events the backend saw.
+run :: Config -> HttpClient.Manager -> Patrol.Dsn -> Maybe (IO Int) -> IO ()
+run cfg manager dsn verify = do
+  let envelope = mkEnvelope cfg dsn
   putStrLn $
     "sentry-profile: "
       <> modeLabel cfg.mode
@@ -93,14 +107,14 @@ run cfg kent verify = do
   start <- getCurrentTime
   counts <- case cfg.mode of
     Sync -> do
-      transport <- SyncHttp.new False kent.manager Nothing dsn
+      transport <- SyncHttp.new def False manager Nothing dsn
       counts <- drive transport cfg.count envelope
       -- Generous timeouts: flush must drain the whole queue through real HTTP.
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300
       pure counts
     Async -> do
-      transport <- AsyncHttp.new cfg.queueSize False kent.manager Nothing dsn
+      transport <- AsyncHttp.new def cfg.queueSize False manager Nothing dsn
       counts <- drive transport cfg.count envelope
       -- Generous timeouts: flush must drain the whole queue through real HTTP.
       _ <- Transport.flush transport 300
@@ -109,11 +123,10 @@ run cfg kent verify = do
   end <- getCurrentTime
   let elapsed = realToFrac (diffUTCTime end start) :: Double
   report counts elapsed
-  when verify do
-    -- kent retains only a bounded, most-recent window in memory, so this is a
-    -- sanity check that delivery happened.
-    retained <- length <$> Kent.listEvents kent
-    putStrLn $ "  kent retained (bounded window): " <> show retained
+  for_ verify \countSeen -> do
+    seen <- countSeen
+    putStrLn $ "  backend saw: " <> show seen
+
 
 -- | Push @total@ envelopes all the way through the transport, applying
 -- backpressure on a full queue so every event traverses the worker rather than
@@ -186,6 +199,8 @@ usage =
       "  payloadBytes  if > 0, send a message event of this size instead of the",
       "                default exception event (default 0)",
       "",
+      "  env SENTRY_PROFILE_BACKEND    'sink' for an in-process keep-alive warp",
+      "                                server, otherwise kent (default)",
       "  env SENTRY_PROFILE_KENT_PORT  talk to an already-running kent on this",
       "                                port instead of spawning one"
     ]

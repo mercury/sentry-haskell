@@ -67,6 +67,7 @@ library testkit
   exposed-modules:
       Sentry.TestKit.Gen
       Sentry.TestKit.Kent
+      Sentry.TestKit.Sink
   other-modules:
       Paths_sentry
   autogen-modules:
@@ -107,6 +108,8 @@ library testkit
     , typed-process
     , unagi-chan
     , unliftio
+    , wai
+    , warp
     , witch
   default-language: GHC2024
 
@@ -138,6 +141,7 @@ executable sentry-profile
     , base
     , bytestring
     , containers
+    , data-default
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , http-types
