@@ -59,9 +59,9 @@ profile-run mode count="5000" queue="1000" payload="0":
 # (.hp), and eventlog artifacts, then render them. Uses cabal.project.profiling
 # (-O2, -fprof-late). Note: profiling perturbs timing — use `profile-bench` for
 # wall-clock numbers.
-profile-prof mode count="5000" queue="1000" payload="0":
+profile-prof mode count="5000" queue="1000" payload="0" backend="kent":
   mkdir -p profiles
-  cabal run sentry:exe:sentry-profile \
+  SENTRY_PROFILE_BACKEND={{backend}} cabal run sentry:exe:sentry-profile \
     -j{{jobs}} \
     --project-file cabal.project.profiling \
     --builddir '{{bench_dir}}' \

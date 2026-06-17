@@ -42,9 +42,12 @@ internal-libraries:
       - sentry-core
       - directory
       - http-client
+      - http-types
       - network
       - patrol
       - typed-process
+      - wai
+      - warp
 
 executables:
   # End-to-end profiling harness: pushes envelopes through the sync/async HTTP
@@ -62,6 +65,7 @@ executables:
       - sentry
       - sentry-core
       - testkit
+      - data-default
       - http-client
       - patrol
 
