@@ -137,7 +137,17 @@ data ClientOptions = ClientOptions
     -- Defaults to @Nothing@.
     transport :: Maybe SomeTransport,
     -- | The timeout given to the client to drain events on shutdown.
-    shutdownTimeout :: NominalDiffTime
+    shutdownTimeout :: NominalDiffTime,
+    -- | Whether to send client reports to Sentry.
+    --
+    -- Client reports are SDK self-telemetry that inform Sentry about locally
+    -- discarded events (sampling, event processors, 'beforeSend', rate-limit
+    -- backoff, queue overflow) so that event-loss dashboards remain accurate.
+    --
+    -- Defaults to @True@.
+    --
+    -- <https://develop.sentry.dev/sdk/telemetry/client-reports/>
+    sendClientReports :: Bool
   }
 
 pattern DEFAULT_CLIENT_OPTIONS :: ClientOptions
@@ -160,7 +170,8 @@ pattern DEFAULT_CLIENT_OPTIONS <-
       beforeSend = Nothing,
       beforeBreadcrumb = Nothing,
       transport = Nothing,
-      shutdownTimeout = 2 -- seconds
+      shutdownTimeout = 2, -- seconds
+      sendClientReports = True
     }
   where
     DEFAULT_CLIENT_OPTIONS =
@@ -182,7 +193,8 @@ pattern DEFAULT_CLIENT_OPTIONS <-
           beforeSend = Nothing,
           beforeBreadcrumb = Nothing,
           transport = Nothing,
-          shutdownTimeout = 2 -- seconds
+          shutdownTimeout = 2, -- seconds
+          sendClientReports = True
         }
 
 instance Default ClientOptions where

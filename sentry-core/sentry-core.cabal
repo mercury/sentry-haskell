@@ -21,6 +21,7 @@ library
       Sentry.Capture
       Sentry.Client
       Sentry.Client.Options
+      Sentry.ClientReport
       Sentry.Event
       Sentry.Init
       Sentry.Integration
@@ -87,7 +88,9 @@ test-suite unit
   other-modules:
       BreadcrumbTest
       CaptureDefaultsTest
+      CaptureDropTest
       CaptureExceptionTest
+      ClientReportTest
       IntegrationSetupTest
       LifecycleTest
       ScopeDataTest

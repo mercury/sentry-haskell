@@ -12,6 +12,7 @@ import Data.Kind (Type)
 import Data.Maybe (mapMaybe)
 import Data.Monoid (Endo (..))
 import Patrol qualified
+import Patrol.Type.DataCategory (DataCategory)
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Item qualified as Patrol.Item
@@ -19,6 +20,7 @@ import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Client (Client)
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.ClientReport (DiscardReason)
 import Sentry.Monad (SentryT, runSentryT)
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Transport
@@ -37,23 +39,28 @@ pattern TEST_DSN =
     }
 
 -- | A type whose 'Sentry.Transport.Transport' instance collects events instead
--- of sending them.
+-- of sending them, and records any 'Transport.recordLostEvent' calls so that
+-- tests can assert on drop-site instrumentation.
 --
 -- We use 'Endo' for fast appends since this is mostly going to be written many
 -- times and read in batches.
 type TestTransport :: Type
-newtype TestTransport = TestTransport
-  { collected :: IORef (Endo [Patrol.Envelope])
+data TestTransport = TestTransport
+  { collected :: IORef (Endo [Patrol.Envelope]),
+    recordedDrops :: IORef (Endo [(DiscardReason, DataCategory, Int)])
   }
 
 -- | Create a new, empty, 'TestTransport'.
 new :: IO TestTransport
-new = TestTransport <$> newIORef mempty
+new = TestTransport <$> newIORef mempty <*> newIORef mempty
 
 instance Transport TestTransport where
   send transport envelope =
     Transport.SendProcessed
       <$ atomicModifyIORefCAS_ transport.collected (<> (Endo (envelope :)))
+
+  recordLostEvent transport reason cat n =
+    atomicModifyIORefCAS_ transport.recordedDrops (<> Endo ((reason, cat, n) :))
 
 -- | Build a 'Client' backed by the given 'TestTransport' with the 'TEST_DSN'.
 mkClient :: TestTransport -> Client
@@ -117,3 +124,11 @@ fetchAndClearEnvelopes transport =
   atomicModifyIORefCAS
     transport.collected
     \envelopes -> (mempty, envelopes `appEndo` [])
+
+-- | Drains the given 'TestTransport' of any drop records accumulated via
+-- 'Transport.recordLostEvent', returning them oldest-first.
+fetchAndClearDrops :: TestTransport -> IO [(DiscardReason, DataCategory, Int)]
+fetchAndClearDrops transport =
+  atomicModifyIORefCAS
+    transport.recordedDrops
+    \drops -> (mempty, drops `appEndo` [])

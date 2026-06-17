@@ -14,10 +14,12 @@ where
 import Control.Applicative ((<|>))
 import Control.Exception (Exception (toException), SomeException, fromException)
 import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
-import Control.Monad (guard, void)
+import Control.Monad (unless, void, when)
+import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Reader (MonadReader)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
+import Data.Foldable (for_)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -28,12 +30,16 @@ import Data.Vector qualified as Vector
 import GHC.Stack (HasCallStack, callStack)
 import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
+import Patrol.Type.DataCategory qualified as Patrol.DataCategory
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventId qualified as Patrol.EventId
+import Patrol.Type.EventType qualified as Patrol.EventType
 import Patrol.Type.Platform qualified as Patrol.Platform
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.ClientReport (DiscardReason)
+import Sentry.ClientReport qualified as ClientReport
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Event qualified as Event
 import Sentry.Integration (Integration (..), SomeIntegration)
@@ -43,6 +49,7 @@ import Sentry.Scope qualified as Scope
 import Sentry.Sdk qualified as Sdk
 import Sentry.Transport (SendResponse (..))
 import Sentry.Transport qualified as Transport
+import System.IO (hPutStrLn, stderr)
 import System.Random (randomRIO)
 import Witch qualified
 
@@ -90,8 +97,9 @@ captureException (toException -> orig) = do
           { captureCallStack = Just callStack
           }
   case scope `Scope.apply` captured of
-    Nothing -> pure Nothing
     Just event -> captureWith client captured{event}
+    Nothing ->
+      Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
 
 -- | Convenience alias for a 'captureException' call that discards its result.
 captureException_ :: (HasCallStack, MonadIO m, MonadReader env m, HasClient env, Exception e) => e -> m ()
@@ -116,8 +124,9 @@ captureMessage lvl msg = do
           { captureCallStack = Just callStack
           }
   case scope `Scope.apply` captured of
-    Nothing -> pure Nothing
     Just event' -> captureWith client captured{event = event'}
+    Nothing ->
+      Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
 
 -- | Convenience alias for a 'captureMessage' call that discards its result.
 captureMessage_ :: (HasCallStack, MonadIO m, MonadReader env m, HasClient env) => Patrol.Level -> Text -> m ()
@@ -125,29 +134,44 @@ captureMessage_ lvl = void . captureMessage lvl
 
 -- | Internal event processing utility; performs the following steps:
 --
---     1. Check for a valid transport and DSN (short-circuit for non-recording clients)
+--     1. Check for a valid DSN and transport (short-circuit for non-recording clients)
 --     2. Apply sampling ('ClientOptions.sampleRate')
 --     3. Run each integration's 'Sentry.Integration.processEvent'
 --     4. Apply SDK defaults via 'applyClientDefaults'
 --     5. Run 'ClientOptions.beforeSend'
 --     6. Wrap the event in an envelope and send it via the transport
 captureWith :: (MonadIO m) => Client -> CapturedEvent -> m (Maybe Patrol.EventId)
-captureWith client captured = runMaybeT do
-  dsn <- MaybeT . pure $ client.options.dsn
-  transport <- MaybeT . pure $ client.transport
-  guard =<< sample client.options.sampleRate
-  event <- MaybeT . liftIO $ runIntegrations client.options captured client.integrations
-  enriched <- liftIO $ applyClientDefaults client.options client.integrations event
-  let processed = captured{event = enriched}
-  finalEvent <- MaybeT . pure $ case client.options.beforeSend of
-    Nothing -> Just processed.event
-    Just callback -> callback processed
-  let envelope = Patrol.Envelope.fromEvent dsn finalEvent
-  response <- liftIO $ Transport.send transport envelope
-  MaybeT . pure $ case response of
-    SendFailed_Shutdown -> Nothing
-    SendFailed_QueueFull -> Nothing
-    SendProcessed -> Just finalEvent.eventId
+captureWith client captured =
+  case (client.options.dsn, client.transport) of
+    -- Non-recording client: SDK is disabled; nothing to report (no transport
+    -- to hold the client-report accumulator either).
+    (Nothing, _) -> pure Nothing
+    (_, Nothing) -> pure Nothing
+    (Just dsn, Just transport) -> do
+      result <- runExceptT do
+        sampled <- liftIO $ sample client.options.sampleRate
+        unless sampled $ throwError ClientReport.SampleRate
+        maybeEvent <- liftIO $ runIntegrations client.options captured client.integrations
+        event <- maybe (throwError ClientReport.EventProcessor) pure maybeEvent
+        enriched <- liftIO $ applyClientDefaults client.options client.integrations event
+        let processed = captured{event = enriched}
+        finalEvent <- case client.options.beforeSend of
+          Nothing -> pure processed.event
+          Just callback ->
+            maybe (throwError ClientReport.BeforeSend) pure (callback processed)
+        let envelope = Patrol.Envelope.fromEvent dsn finalEvent
+        response <- liftIO $ Transport.send transport envelope
+        pure (finalEvent, response)
+      case result of
+        Left reason ->
+          Nothing <$ noteDrop client reason (eventCategory captured.event)
+        Right (finalEvent, response) ->
+          pure $ case response of
+            -- Executor records QueueOverflow itself; don't double-count here.
+            SendFailed_QueueFull -> Nothing
+            -- SDK is shutting down; nothing useful to report.
+            SendFailed_Shutdown -> Nothing
+            SendProcessed -> Just finalEvent.eventId
   where
     sample :: (MonadIO m) => Float -> m Bool
     sample rate
@@ -156,6 +180,23 @@ captureWith client captured = runMaybeT do
       | otherwise = do
           roll <- randomRIO (0.0, 1.0)
           pure $ roll < rate
+
+-- | Determine the 'Patrol.DataCategory.DataCategory' a dropped event should be
+-- attributed to in client reports, derived from the event's @type_@.
+eventCategory :: Patrol.Event -> Patrol.DataCategory.DataCategory
+eventCategory event = case event.type_ of
+  Just Patrol.EventType.Transaction -> Patrol.DataCategory.Transaction
+  _ -> Patrol.DataCategory.Error
+
+-- | Record a drop via the transport and emit a debug log line when
+-- 'ClientOptions.debug' is 'True'.
+noteDrop :: (MonadIO m) => Client -> DiscardReason -> Patrol.DataCategory.DataCategory -> m ()
+noteDrop client reason cat = liftIO do
+  for_ client.transport \t ->
+    Transport.recordLostEvent t reason cat 1
+  when client.options.debug $
+    hPutStrLn stderr $
+      "[sentry] event dropped: " <> Text.unpack (ClientReport.reasonText reason)
 
 -- | Apply SDK-owned defaults to a 'Patrol.Event' at capture time.
 --
@@ -172,36 +213,27 @@ applyClientDefaults opts integrations event = do
     if event.eventId == Patrol.EventId.empty
       then Patrol.EventId.random
       else pure event.eventId
-  timestamp <- case event.timestamp of
-    Nothing -> Just <$> getCurrentTime
-    Just t -> pure (Just t)
+  timestamp <- Just <$> maybe getCurrentTime pure event.timestamp
   pure
     event
       { Patrol.Event.eventId = eventId,
         Patrol.Event.timestamp = timestamp,
-        Patrol.Event.release =
-          if Text.null event.release
-            then fromMaybe Text.empty opts.release
-            else event.release,
-        Patrol.Event.environment =
-          if Text.null event.environment
-            then fromMaybe Text.empty opts.environment
-            else event.environment,
-        Patrol.Event.serverName =
-          if Text.null event.serverName
-            then fromMaybe Text.empty opts.serverName
-            else event.serverName,
-        Patrol.Event.dist =
-          if Text.null event.dist
-            then fromMaybe Text.empty opts.dist
-            else event.dist,
+        Patrol.Event.release = event.release `orOpt` opts.release,
+        Patrol.Event.environment = event.environment `orOpt` opts.environment,
+        Patrol.Event.serverName = event.serverName `orOpt` opts.serverName,
+        Patrol.Event.dist = event.dist `orOpt` opts.dist,
         Patrol.Event.platform = event.platform <|> Just Patrol.Platform.Haskell,
         Patrol.Event.sdk = event.sdk <|> Just (Sdk.sdkInfo integrations),
-        Patrol.Event.version =
-          if Text.null event.version
-            then Patrol.Constant.sentryVersion
-            else event.version
+        Patrol.Event.version = event.version `orElse` Patrol.Constant.sentryVersion
       }
+  where
+    -- | Use @t@ if non-empty; otherwise use the option value (defaulting to @""@).
+    orOpt :: Text -> Maybe Text -> Text
+    t `orOpt` opt = t `orElse` fromMaybe Text.empty opt
+
+    -- | Use @t@ if non-empty; otherwise use @def@.
+    orElse :: Text -> Text -> Text
+    t `orElse` def = if Text.null t then def else t
 
 -- | Run each integration's 'Sentry.Integration.processEvent' in sequence.
 --

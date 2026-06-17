@@ -2,6 +2,11 @@ packages:
     sentry
   , sentry-core
 
+source-repository-package
+    type: git
+    location: https://github.com/jkachmar/patrol
+    branch: main
+
 constraints:
   hs-opentelemetry-api >= 0.3.0.0
 
