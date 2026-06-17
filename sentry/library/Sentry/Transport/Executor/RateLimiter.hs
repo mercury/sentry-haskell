@@ -53,7 +53,7 @@ import Data.Attoparsec.ByteString.Char8 (Parser)
 import Data.Attoparsec.ByteString.Char8 qualified as Atto
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString.Char8
-import Data.Char (isSpace, toLower)
+import Data.Char (toLower)
 import Data.Foldable (asum)
 import Data.Kind (Type)
 import Data.List qualified as List
@@ -188,6 +188,7 @@ defaultDelay = 60
 parseHttpDate :: String -> Maybe UTCTime
 parseHttpDate str = asum [parseTimeM True defaultTimeLocale fmt str | fmt <- formats]
   where
+    formats :: [String]
     formats =
       [ -- IMF-fixdate: Sun, 06 Nov 1994 08:49:37 GMT
         "%a, %d %b %Y %H:%M:%S GMT",
@@ -353,6 +354,9 @@ filterItems rateLimiter now = \case
 categoryFromItem :: Patrol.Item -> RateLimitingCategory
 categoryFromItem = \case
   Patrol.Item.Event _ -> Error
+  -- Client reports are meta-telemetry; as such, gate them on the global limit
+  -- rather than a specific data budget.
+  Patrol.Item.ClientReport _ -> Any
   Patrol.Item.Raw -> Any
 
 -- | Helper to get the maximum of an optional and provided 'UTCTime'.

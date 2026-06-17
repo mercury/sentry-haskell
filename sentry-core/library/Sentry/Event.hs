@@ -97,7 +97,7 @@ withException event exception originalException =
 --
 -- Sets 'exception', 'level', and 'type_'; leaves 'eventId', 'timestamp',
 -- 'sdk', 'platform', and all option-derived fields ('release', 'environment',
--- 'serverName', 'dist') to sentinal values that
+-- 'serverName', 'dist') to sentinel values that
 -- 'Sentry.Capture.applyClientDefaults' can match on and fill at capture time.
 --
 -- __NOTE__: This replaces 'Patrol.Type.Event.fromSomeException' as the SDK's
