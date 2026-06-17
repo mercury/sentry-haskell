@@ -32,15 +32,15 @@ class Transport t where
   shutdown :: t -> NominalDiffTime -> IO ShutdownResponse
   shutdown transport timeout = ShutdownSucceeded <$ flush transport timeout
 
-  -- | Record that @n@ events of the given 'DataCategory' were discarded for
+  -- | Record that @n@ items of the given 'DataCategory' were discarded for
   -- the given 'DiscardReason'.
   --
   -- The default implementation is a no-op, making client reports optional for
   -- custom transport authors (per the Sentry SDK specification).
   --
   -- <https://develop.sentry.dev/sdk/telemetry/client-reports/>
-  recordLostEvent :: t -> DiscardReason -> DataCategory -> Int -> IO ()
-  recordLostEvent _ _ _ _ = pure ()
+  recordDiscards :: t -> DiscardReason -> DataCategory -> Int -> IO ()
+  recordDiscards _ _ _ _ = pure ()
 
 -- | Potential responses from a call to 'send'.
 type SendResponse :: Type
@@ -111,4 +111,4 @@ instance Transport SomeTransport where
   send (SomeTransport t) = send t
   flush (SomeTransport t) = flush t
   shutdown (SomeTransport t) = shutdown t
-  recordLostEvent (SomeTransport t) = recordLostEvent t
+  recordDiscards (SomeTransport t) = recordDiscards t

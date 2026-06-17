@@ -39,7 +39,7 @@ pattern TEST_DSN =
     }
 
 -- | A type whose 'Sentry.Transport.Transport' instance collects events instead
--- of sending them, and records any 'Transport.recordLostEvent' calls so that
+-- of sending them, and records any 'Transport.recordDiscards' calls so that
 -- tests can assert on drop-site instrumentation.
 --
 -- We use 'Endo' for fast appends since this is mostly going to be written many
@@ -59,7 +59,7 @@ instance Transport TestTransport where
     Transport.SendProcessed
       <$ atomicModifyIORefCAS_ transport.collected (<> (Endo (envelope :)))
 
-  recordLostEvent transport reason category n =
+  recordDiscards transport reason category n =
     atomicModifyIORefCAS_ transport.recordedDrops (<> Endo ((reason, category, n) :))
 
 -- | Build a 'Client' backed by the given 'TestTransport' with the 'TEST_DSN'.
@@ -126,7 +126,7 @@ fetchAndClearEnvelopes transport =
     \envelopes -> (mempty, envelopes `appEndo` [])
 
 -- | Drains the given 'TestTransport' of any drop records accumulated via
--- 'Transport.recordLostEvent', returning them oldest-first.
+-- 'Transport.recordDiscards', returning them oldest-first.
 fetchAndClearDrops :: TestTransport -> IO [(DiscardReason, DataCategory, Int)]
 fetchAndClearDrops transport =
   atomicModifyIORefCAS

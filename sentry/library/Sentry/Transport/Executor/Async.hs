@@ -25,7 +25,7 @@ module Sentry.Transport.Executor.Async
     send,
     flush,
     shutdown,
-    recordLostEvent,
+    recordDiscards,
   )
 where
 
@@ -86,7 +86,7 @@ defaultQueueSize = 30
 -- | Client-report piggybacking configuration for an 'AsyncExecutor'.
 type ClientReportConfig :: Type
 data ClientReportConfig = ClientReportConfig
-  { -- | The shared discard accumulator, written to by 'recordLostEvent' and
+  { -- | The shared discard accumulator, written to by 'recordDiscards' and
     -- the worker and drained to piggyback reports onto outgoing envelopes.
     accumulator :: ClientReports,
     -- | Builds a standalone envelope from a drained client report, used for the
@@ -221,8 +221,8 @@ instance Sentry.Transport.Transport AsyncExecutor where
         Async.cancel executor.handle
         pure $ Sentry.Transport.ShutdownFailed_TimedOut timeout
 
-  recordLostEvent :: AsyncExecutor -> DiscardReason -> DataCategory -> Int -> IO ()
-  recordLostEvent executor reason category n =
+  recordDiscards :: AsyncExecutor -> DiscardReason -> DataCategory -> Int -> IO ()
+  recordDiscards executor reason category n =
     for_ executor.clientReports \reports ->
       ClientReport.record reports reason category n
 

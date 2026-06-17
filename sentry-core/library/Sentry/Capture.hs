@@ -193,7 +193,7 @@ eventCategory event = case event.type_ of
 noteDrop :: (MonadIO m) => Client -> DiscardReason -> Patrol.DataCategory.DataCategory -> m ()
 noteDrop client reason category = liftIO do
   for_ client.transport \t ->
-    Transport.recordLostEvent t reason category 1
+    Transport.recordDiscards t reason category 1
   when client.options.debug $
     hPutStrLn stderr $
       "[sentry] event dropped: " <> Text.unpack (ClientReport.reasonText reason)
