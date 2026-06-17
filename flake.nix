@@ -39,12 +39,18 @@
                 specify-cli
                 # integration test server
                 kent-server
+                # end-to-end wall-clock benchmarking for the profile harness
+                hyperfine
                 # C library dependencies
                 zlib.dev
               ])
               ++ (with pkgs.haskell.packages.ghc910; [
+                # cost-centre (.prof) analysis
                 profiterole
                 profiteur
+                ghc-prof-flamegraph
+                # eventlog + heap-profile rendering (browser-based, cross-platform)
+                eventlog2html
               ]);
           };
         }

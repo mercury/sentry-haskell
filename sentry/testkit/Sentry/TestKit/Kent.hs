@@ -3,7 +3,7 @@
 -- This module spawns @kent@ as a subprocess on a known port, waits for it to
 -- become ready, and exposes helpers to construct DSNs that point at it and to
 -- inspect/clear the events it has received.
-module Kent
+module Sentry.TestKit.Kent
   ( KentHandle (..),
     withKent,
     dsnFor,
@@ -49,12 +49,6 @@ newtype KentNotFound = KentNotFound String
 
 -- | Spawn @kent-server@ on an automatically-chosen free port, wait for it to
 -- become ready, run the action, then terminate the subprocess.
---
--- The port is picked by 'getFreePort' rather than supplied by the caller, so
--- concurrently-running tests never collide on a fixed port.
---
--- Errors fast with 'KentNotFound' if the binary is missing — no point
--- polling readiness on a server that will never start.
 withKent :: (KentHandle -> IO a) -> IO a
 withKent action = do
   bin <-
@@ -95,10 +89,6 @@ waitReady handle = go (50 :: Int)
 
 -- | Ask the OS for an unused TCP port by binding to port 0 and reading back the
 -- assignment, then closing the socket so kent can claim it.
---
--- There is a small window between closing the socket and kent binding, but the
--- ephemeral port range makes a collision between concurrent tests very
--- unlikely — and 'waitReady' surfaces the failure if it ever happens.
 getFreePort :: IO Int
 getFreePort =
   bracket (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol) Socket.close \sock -> do
@@ -108,9 +98,6 @@ getFreePort =
       _ -> fail "freePort: expected an IPv4 socket address"
 
 -- | A DSN pointing at this kent instance for the given project ID.
---
--- Kent accepts any integer project ID; the public key value is also
--- arbitrary, kent does not validate it.
 dsnFor :: KentHandle -> Text -> Patrol.Dsn
 dsnFor handle pid =
   Patrol.Dsn.Dsn

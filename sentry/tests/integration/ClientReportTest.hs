@@ -6,12 +6,12 @@ import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
-import Kent qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Monad (runSentryT)
+import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport

@@ -33,6 +33,38 @@ library:
     - data-default
     - zlib
 
+# Shared test/bench support: the kent driver and event generators, used by both
+# the integration suite and the sentry-profile harness.
+internal-libraries:
+  testkit:
+    source-dirs: testkit
+    dependencies:
+      - sentry-core
+      - directory
+      - http-client
+      - network
+      - patrol
+      - typed-process
+
+executables:
+  # End-to-end profiling harness: pushes envelopes through the sync/async HTTP
+  # transports against kent. Build under cabal.project.profiling and run with
+  # +RTS flags, or measure wall-clock with hyperfine. See `just profile-*`.
+  sentry-profile:
+    source-dirs: profile
+    main: Main.hs
+    ghc-options:
+      - -g
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-A32M -N"'
+    dependencies:
+      - sentry
+      - sentry-core
+      - testkit
+      - http-client
+      - patrol
+
 tests:
   unit:
     source-dirs: tests/unit
@@ -67,14 +99,11 @@ tests:
       # library under test
       - sentry
       - sentry-core
-      # extra runtime dependencies for spawning and querying kent
+      # kent driver + event generators
+      - testkit
+      # extra runtime dependencies used directly by the tests
       - data-default
-      - directory
-      - http-client
-      - network
       - patrol
-      - typed-process
-      - witch
       # test frameworks
       - hspec
       - tasty
