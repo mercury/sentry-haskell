@@ -93,4 +93,4 @@ instance Transport AsyncHttpTransport where
   send t = AsyncExecutor.send t.executor
   flush t = AsyncExecutor.flush t.executor
   shutdown t = AsyncExecutor.shutdown t.executor
-  recordLostEvent t = AsyncExecutor.recordLostEvent t.executor
+  recordDiscards t = AsyncExecutor.recordDiscards t.executor

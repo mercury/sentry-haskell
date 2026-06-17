@@ -174,7 +174,7 @@ instance Transport SyncHttpTransport where
           RateLimiter.updateFromResponse current now result
         pure Sentry.Transport.SendProcessed
 
-  recordLostEvent :: SyncHttpTransport -> DiscardReason -> DataCategory -> Int -> IO ()
-  recordLostEvent transport reason category n =
+  recordDiscards :: SyncHttpTransport -> DiscardReason -> DataCategory -> Int -> IO ()
+  recordDiscards transport reason category n =
     for_ transport.clientReports \reports ->
       ClientReport.record reports reason category n
