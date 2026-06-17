@@ -45,15 +45,15 @@ spec_send = parallel $ describe "sending envelopes" do
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env rl = readMVar var *> testSendFn q id env rl
-        cap = 1
-        attempts = cap + 2
-    executor <- AsyncExecutor.new cap Nothing sendFn
+        capacity = 1 :: Int
+        attempts = capacity + 2
+    executor <- AsyncExecutor.new capacity Nothing sendFn
     -- Saturate the executor faster than the worker can drain:
     --
-    -- \* the worker is blocked in sendFn, so it dequeues at most one envelope
-    -- \* at most cap+1 envelopes can ever be pending
-    -- \* out of cap+2 rapid attempts, at least one is therefore guaranteed to
-    --   hit a full queue and return SendFailed_QueueFull
+    -- * the worker is blocked in sendFn, so it dequeues at most one envelope
+    -- * at most capacity+1 envelopes can ever be pending
+    -- * out of capacity+2 rapid attempts, at least one is therefore
+    --   guaranteed to hit a full queue and return SendFailed_QueueFull
     results <- replicateM attempts (Transport.send executor testEnvelope)
     -- The first write always succeeds (queue is empty when it runs).
     head results `shouldBe` Transport.SendProcessed

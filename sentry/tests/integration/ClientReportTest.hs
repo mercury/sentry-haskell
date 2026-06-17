@@ -1,0 +1,71 @@
+module ClientReportTest where
+
+import Control.Monad (replicateM)
+import Data.Aeson ((.=))
+import Data.Aeson qualified as Aeson
+import Data.Default (def)
+import Data.Maybe (catMaybes)
+import Data.Text (Text)
+import Kent qualified
+import Patrol.Type.Event qualified as Patrol.Event
+import Sentry.Capture (captureEvent)
+import Sentry.Client (Client)
+import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Monad (runSentryT)
+import Sentry.Transport (FlushResponse (..), SomeTransport (..))
+import Sentry.Transport qualified as Transport
+import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
+import Test.Hspec
+import UnliftIO.Exception (SomeException (..))
+import Witch qualified
+
+spec_clientReport :: Spec
+spec_clientReport = describe "client report delivery" do
+  it "reports locally dropped events to the server on flush" $
+    Kent.withKent \kent -> do
+      Kent.flushKent kent
+      let dsn = Kent.dsnFor kent "1"
+      -- Client reports enabled on the transport; beforeSend drops every event,
+      -- so each capture records a 'before_send' discard but sends no event.
+      transport <- AsyncHttpTransport.new def 100 True kent.manager Nothing dsn
+      let opts =
+            (def @ClientOptions)
+              { dsn = Just dsn,
+                transport = Just (SomeTransport transport),
+                sendClientReports = True,
+                beforeSend = Just (const Nothing)
+              }
+          client = Witch.from @ClientOptions @Client opts
+          n = 3 :: Int
+      events <-
+        replicateM n $
+          Patrol.Event.fromSomeException $
+            SomeException (userError "boom")
+      sentIds <- traverse (\e -> runSentryT client $ captureEvent e) events
+      -- Nothing was delivered as an event.
+      catMaybes sentIds `shouldBe` []
+      -- Flush force-drains the accumulator, sending a standalone client report.
+      flushResult <- Transport.flush transport 5
+      flushResult `shouldBe` FlushSucceeded
+      stored <- Kent.eventIds kent >>= traverse (Kent.getEvent kent)
+      let clientReports =
+            [ report
+            | report <- stored,
+              Kent.dig ["payload", "header", "type"] report
+                == Just (Aeson.String "client_report")
+            ]
+      case clientReports of
+        [report] ->
+          Kent.dig ["payload", "body", "discarded_events"] report
+            `shouldBe` Just
+              ( Aeson.toJSON
+                  [ Aeson.object
+                      [ "reason" .= ("before_send" :: Text),
+                        "category" .= ("error" :: Text),
+                        "quantity" .= (n :: Int)
+                      ]
+                  ]
+              )
+        _ ->
+          expectationFailure $
+            "expected exactly one client report, got " <> show (length clientReports)
