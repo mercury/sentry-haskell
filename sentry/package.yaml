@@ -10,6 +10,7 @@ dependencies:
   - base
   - async
   - bytestring
+  - containers
   - stm
   - text
   - time

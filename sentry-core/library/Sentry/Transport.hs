@@ -1,7 +1,9 @@
 module Sentry.Transport
-  ( -- * TODO: Documentation.
+  ( -- * Transport
     Transport (..),
     SomeTransport (..),
+
+    -- * Responses
     SendResponse (..),
     FlushResponse (..),
     ShutdownResponse (..),
@@ -15,10 +17,10 @@ import Patrol qualified
 import Patrol.Type.DataCategory (DataCategory)
 import Sentry.ClientReport (DiscardReason)
 
--- | TODO: Documentation.
+-- | A backend capable of delivering 'Patrol.Type.Envelope.Envelope's to Sentry.
 type Transport :: Type -> Constraint
 class Transport t where
-  -- | TODO: Documentation.
+  -- | Hand an envelope to the transport for delivery.
   send :: t -> Patrol.Envelope -> IO SendResponse
 
   -- | Signal the transport to flush all enqueued messages, blocking for up to

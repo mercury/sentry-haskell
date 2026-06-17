@@ -59,8 +59,8 @@ instance Transport TestTransport where
     Transport.SendProcessed
       <$ atomicModifyIORefCAS_ transport.collected (<> (Endo (envelope :)))
 
-  recordLostEvent transport reason cat n =
-    atomicModifyIORefCAS_ transport.recordedDrops (<> Endo ((reason, cat, n) :))
+  recordLostEvent transport reason category n =
+    atomicModifyIORefCAS_ transport.recordedDrops (<> Endo ((reason, category, n) :))
 
 -- | Build a 'Client' backed by the given 'TestTransport' with the 'TEST_DSN'.
 mkClient :: TestTransport -> Client

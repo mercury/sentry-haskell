@@ -11,6 +11,9 @@
 -- * @Retry-After@: Global rate limit
 -- * HTTP 429: Default (60 second) rate limit
 --
+-- Categories map to patrol's 'DataCategory', the same vocabulary used for
+-- client-report discard accounting.
+--
 -- Example usage:
 --
 -- > let initialLimiter = RateLimiter.new
@@ -18,20 +21,17 @@
 -- > -- After receiving response with rate limit headers
 -- > let limiter = RateLimiter.updateFromSentryHeader initialLimiter currentTime headers
 --
--- > -- Check if category is rate limited
--- > when (RateLimiter.isEnabled currentTime limiter RateLimitingCategory.Error) $
+-- > -- Check if a category is rate limited
+-- > when (RateLimiter.isEnabled currentTime (Just DataCategory.Error) limiter) $
 -- >   sendEvent event
 --
--- > -- Or filter envelope items
--- > whenJust (RateLimiter.filterEnvelope currentTime limiter envelope) \filtered ->
--- >   sendEnvelope filtered
+-- > -- Or filter against the current limits, sending only what survives
+-- > let filtered = RateLimiter.filterEnvelope limiter currentTime envelope
+-- > for_ filtered.kept sendEnvelope
 module Sentry.Transport.Executor.RateLimiter
   ( -- * Rate Limiter
     RateLimiter (..),
     new,
-
-    -- * Rate Limiting Categories
-    RateLimitingCategory (..),
 
     -- * Updating Rate Limits
     updateFromResponse,
@@ -45,6 +45,7 @@ module Sentry.Transport.Executor.RateLimiter
     isEnabled,
 
     -- * Filtering payloads
+    FilteredEnvelope (..),
     filterEnvelope,
   )
 where
@@ -55,70 +56,45 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Char (toLower)
 import Data.Foldable (asum)
+import Data.Function ((&))
 import Data.Kind (Type)
 import Data.List qualified as List
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, isNothing, mapMaybe)
+import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Network.HTTP.Types qualified as HttpTypes
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
+import Patrol.Type.DataCategory (DataCategory)
+import Patrol.Type.DataCategory qualified as DataCategory
 import Patrol.Type.Envelope qualified as Patrol.Envelope
-import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
+import Sentry.ClientReport (categoryFromItem)
 
--- | Categories for rate limiting in Sentry.
+-- | Rate limiter tracking active rate limits per data category.
 --
--- Each category can be rate limited independently based on server responses.
-type RateLimitingCategory :: Type
-data RateLimitingCategory
-  = -- | Applies globally to all event types.
-    Any
-  | -- | Error events (exceptions, crashes, etc.).
-    Error
-  | -- | Session health data.
-    Session
-  | -- | Performance monitoring transactions.
-    Transaction
-  | -- | File attachments.
-    Attachment
-  | -- | Log messages.
-    LogItem
-  | -- | Metric buckets emitted on the trace metrics protocol.
-    TraceMetric
-  deriving stock (Eq, Ord, Show, Read, Enum, Bounded)
-
--- | Rate limiter tracking active rate limits per category.
+-- 'global' is the catch-all limit applied by an empty @X-Sentry-Rate-Limits@
+-- category token, @Retry-After@, or HTTP 429.  'categories' holds
+-- per-category expiry times.
 --
 -- This is a pure value that gets threaded through the transport worker loop.
 --
 -- Use 'new' to create an initial instance and 'updateFromRetryAfter' as well
--- as 'updateFromSentryHeader' to incorporate  rate limit information from
+-- as 'updateFromSentryHeader' to incorporate rate limit information from
 -- server responses.
 type RateLimiter :: Type
 data RateLimiter = RateLimiter
   { global :: Maybe UTCTime,
-    error_ :: Maybe UTCTime,
-    session :: Maybe UTCTime,
-    transaction :: Maybe UTCTime,
-    attachment :: Maybe UTCTime,
-    logItem :: Maybe UTCTime,
-    traceMetric :: Maybe UTCTime
+    categories :: Map DataCategory UTCTime
   }
   deriving stock (Show)
 
 -- | Create a new rate limiter with no active limits.
 new :: RateLimiter
-new =
-  RateLimiter
-    { global = Nothing,
-      error_ = Nothing,
-      session = Nothing,
-      transaction = Nothing,
-      attachment = Nothing,
-      logItem = Nothing,
-      traceMetric = Nothing
-    }
+new = RateLimiter{global = Nothing, categories = Map.empty}
 
 -- | Update rate limits from an HTTP response.
 --
@@ -216,10 +192,10 @@ updateFromSentryHeader rateLimiter now value =
     Left _ -> rateLimiter
     Right groups -> List.foldl' applyGroup rateLimiter groups
   where
-    applyGroup :: RateLimiter -> (NominalDiffTime, [RateLimitingCategory]) -> RateLimiter
+    applyGroup :: RateLimiter -> (NominalDiffTime, [Maybe DataCategory]) -> RateLimiter
     applyGroup rl (duration, categories) =
       List.foldl'
-        (\accum category -> updateCategory (duration `addUTCTime` now) category accum)
+        (\accum m -> updateCategory (duration `addUTCTime` now) m accum)
         rl
         categories
 
@@ -227,89 +203,77 @@ updateFromSentryHeader rateLimiter now value =
 --
 -- Each group is consumed up to the next comma and parsed independently, so a
 -- malformed group yields no limits rather than failing the whole header.
-rateLimitsParser :: Parser [(NominalDiffTime, [RateLimitingCategory])]
+rateLimitsParser :: Parser [(NominalDiffTime, [Maybe DataCategory])]
 rateLimitsParser = catMaybes <$> (groupParser `Atto.sepBy` Atto.char ',') <* Atto.endOfInput
   where
-    groupParser :: Parser (Maybe (NominalDiffTime, [RateLimitingCategory]))
+    groupParser :: Parser (Maybe (NominalDiffTime, [Maybe DataCategory]))
     groupParser = do
       raw <- Atto.takeWhile (/= ',')
       pure $ either (\_ -> Nothing) Just (Atto.parseOnly groupBody raw)
 
-    groupBody :: Parser (NominalDiffTime, [RateLimitingCategory])
+    groupBody :: Parser (NominalDiffTime, [Maybe DataCategory])
     groupBody = do
       Atto.skipSpace
       seconds <- Atto.double
       _ <- Atto.char ':'
-      categories <- categoryToken `Atto.sepBy` Atto.char ';'
+      cats <- categoryToken `Atto.sepBy` Atto.char ';'
       -- Require the scope separator to be present (matching the grammar),
       -- then ignore the scope, reason, and namespace fields entirely.
       _ <- Atto.char ':'
-      pure (realToFrac seconds, classifyCategories categories)
+      pure (realToFrac seconds, classifyCategories cats)
 
     categoryToken :: Parser ByteString
     categoryToken = Atto.takeWhile \c -> c /= ':' && c /= ';'
 
--- | Resolve raw category tokens to known 'RateLimitingCategory' values.
+-- | Resolve raw category tokens to 'DataCategory' values.
 --
--- An empty token denotes the global 'Any' category; unrecognized tokens are
--- dropped.
-classifyCategories :: [ByteString] -> [RateLimitingCategory]
+-- An empty token denotes the global catch-all (@Nothing@); unrecognized
+-- tokens are dropped.
+classifyCategories :: [ByteString] -> [Maybe DataCategory]
 classifyCategories = mapMaybe classify
   where
-    classify :: ByteString -> Maybe RateLimitingCategory
-    classify token = case ByteString.Char8.map toLower token of
-      "" -> Just Any
-      "error" -> Just Error
-      "session" -> Just Session
-      "transaction" -> Just Transaction
-      "attachment" -> Just Attachment
-      "log_item" -> Just LogItem
-      "trace_metric" -> Just TraceMetric
-      _ -> Nothing
+    classify :: ByteString -> Maybe (Maybe DataCategory)
+    classify token = case ByteString.Char8.unpack (ByteString.Char8.map toLower token) of
+      "" -> Just Nothing -- global catch-all
+      s -> fmap Just $ DataCategory.fromText (Text.pack s)
 
 -- | Update a specific category's expiration time, taking the maximum of the
--- existing value or the given time to update it with.
-updateCategory :: UTCTime -> RateLimitingCategory -> RateLimiter -> RateLimiter
-updateCategory expiresAt category rateLimiter = case category of
-  Any -> rateLimiter{global = Just $ maxTime rateLimiter.global expiresAt}
-  Error -> rateLimiter{error_ = Just $ maxTime rateLimiter.error_ expiresAt}
-  Session -> rateLimiter{session = Just $ maxTime rateLimiter.session expiresAt}
-  Transaction -> rateLimiter{transaction = Just $ maxTime rateLimiter.transaction expiresAt}
-  Attachment -> rateLimiter{attachment = Just $ maxTime rateLimiter.attachment expiresAt}
-  LogItem -> rateLimiter{logItem = Just $ maxTime rateLimiter.logItem expiresAt}
-  TraceMetric -> rateLimiter{traceMetric = Just $ maxTime rateLimiter.traceMetric expiresAt}
+-- existing value or the given time.
+--
+-- 'Nothing' updates the global limit; 'Just cat' updates the per-category
+-- limit for @cat@.
+updateCategory :: UTCTime -> Maybe DataCategory -> RateLimiter -> RateLimiter
+updateCategory expiresAt Nothing rl =
+  rl{global = Just $ maxTime rl.global expiresAt}
+updateCategory expiresAt (Just category) rl =
+  rl
+    { categories =
+        Map.insertWith max category expiresAt rl.categories
+    }
 
 -- | Check when a given category is rate limited until.
 --
--- Returns @Just utcTime@ if rate limited, where @utcTime@ is the time at which
--- rate limiting expires; returns @Nothing@ if not rate limited.
+-- 'Nothing' checks only the global limit.  'Just cat' folds both the
+-- per-category limit and the global limit, returning the later of the two.
 --
--- Checks global rate limit first, then category-specific limit.
-isDisabledUntil :: RateLimiter -> RateLimitingCategory -> Maybe UTCTime
-isDisabledUntil rateLimiter category =
-  case category of
-    Any -> rateLimiter.global
-    Error -> select rateLimiter.error_
-    Session -> select rateLimiter.session
-    Transaction -> select rateLimiter.transaction
-    Attachment -> select rateLimiter.attachment
-    LogItem -> select rateLimiter.logItem
-    TraceMetric -> select rateLimiter.traceMetric
-  where
-    select :: Maybe UTCTime -> Maybe UTCTime
-    select (Just t) = Just $ maxTime rateLimiter.global t
-    select mt = case rateLimiter.global of
-      Nothing -> mt
-      Just t -> Just $ maxTime mt t
+-- Returns @Just utcTime@ if rate limited, where @utcTime@ is the time at
+-- which rate limiting expires; returns @Nothing@ if not rate limited.
+isDisabledUntil :: RateLimiter -> Maybe DataCategory -> Maybe UTCTime
+isDisabledUntil rl Nothing = rl.global
+isDisabledUntil rl (Just category) =
+  case (rl.global, Map.lookup category rl.categories) of
+    (Nothing, mc) -> mc
+    (mg, Nothing) -> mg
+    (Just g, Just c) -> Just (max g c)
 
--- | Check how many seconds a given 'RateLimitingCategory' is disabled for.
+-- | Check how many seconds a given category is disabled for.
 --
 -- Returns @Just duration@ if rate limited, where @duration@ is the number of
 -- seconds until rate limiting expires with respect to the provided 'UTCTime'.
 --
 -- Returns @Nothing@ if not rate limited.
-isDisabledFor :: UTCTime -> RateLimitingCategory -> RateLimiter -> Maybe NominalDiffTime
-isDisabledFor now category rateLimiter = checkExpiry =<< isDisabledUntil rateLimiter category
+isDisabledFor :: UTCTime -> Maybe DataCategory -> RateLimiter -> Maybe NominalDiffTime
+isDisabledFor now m rl = checkExpiry =<< isDisabledUntil rl m
   where
     checkExpiry expiresAt =
       if now < expiresAt
@@ -318,46 +282,50 @@ isDisabledFor now category rateLimiter = checkExpiry =<< isDisabledUntil rateLim
 {-# INLINEABLE isDisabledFor #-}
 
 -- | Check if a category is currently allowed (not rate limited).
-isEnabled :: UTCTime -> RateLimitingCategory -> RateLimiter -> Bool
-isEnabled now category rateLimiter =
-  isNothing $ isDisabledFor now category rateLimiter
+isEnabled :: UTCTime -> Maybe DataCategory -> RateLimiter -> Bool
+isEnabled now m rl = isNothing $ isDisabledFor now m rl
 {-# INLINEABLE isEnabled #-}
+
+-- | The result of filtering an envelope against the current rate limits.
+type FilteredEnvelope :: Type
+data FilteredEnvelope = FilteredEnvelope
+  { -- | Rateable items removed because their category is currently rate
+    -- limited. Items with no rate-limit category (see 'categoryFromItem') are
+    -- never listed, since they cannot be charged to a client report.
+    dropped :: [Patrol.Item],
+    -- | The envelope restricted to the items that may still be sent, or
+    -- 'Nothing' when every item was filtered out (including when a global rate
+    -- limit applies).
+    kept :: Maybe Patrol.Envelope
+  }
 
 -- | Filter envelope items based on current rate limits.
 --
--- Removes items whose categories are currently rate limited (leaving any items
--- whose types cannot be determined) and returns 'Nothing' if all items were
--- filtered out.
+-- Items whose categories are currently rate limited are removed and surfaced
+-- in 'dropped' (so callers can account for them); the rest are returned in
+-- 'kept'.
 --
--- Returns @Nothing@ if all items are filtered out.
-filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> Maybe Patrol.Envelope
-filterEnvelope rateLimiter now envelope = do
-  filteredItems <- filterItems rateLimiter now envelope.items
-  Just envelope{Patrol.Envelope.items = filteredItems}
-{-# INLINEABLE filterEnvelope #-}
-
--- | Filter items based on their rate limit status.
-filterItems :: RateLimiter -> UTCTime -> Patrol.Items.Items -> Maybe Patrol.Items.Items
-filterItems rateLimiter now = \case
-  payload@(Patrol.Items.Raw _) ->
-    if isEnabled now Any rateLimiter
-      then Just payload
-      else Nothing
+-- Items with no associated category (e.g. 'Patrol.Item.Raw',
+-- 'Patrol.Item.ClientReport') are subject only to the global rate limit.
+filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> FilteredEnvelope
+filterEnvelope rl now envelope = case envelope.items of
+  Patrol.Items.Raw _ ->
+    -- Raw payloads are subject only to the global limit, and carry no per-item
+    -- categories, so nothing can be attributed to a client report either way.
+    if isEnabled now Nothing rl
+      then FilteredEnvelope{dropped = [], kept = Just envelope}
+      else FilteredEnvelope{dropped = [], kept = Nothing}
   Patrol.Items.EnvelopeItems items ->
-    let filtered = flip filter items \item -> isEnabled now (categoryFromItem item) rateLimiter
-     in case filtered of
-          [] -> Nothing
-          remaining -> Just $ Patrol.Items.EnvelopeItems remaining
-{-# INLINEABLE filterItems #-}
-
--- | Extract the rate limiting category from an envelope item's type header.
-categoryFromItem :: Patrol.Item -> RateLimitingCategory
-categoryFromItem = \case
-  Patrol.Item.Event _ -> Error
-  -- Client reports are meta-telemetry; as such, gate them on the global limit
-  -- rather than a specific data budget.
-  Patrol.Item.ClientReport _ -> Any
-  Patrol.Item.Raw -> Any
+    let (keptItems, droppedItems) =
+          items & List.partition \item -> isEnabled now (categoryFromItem item) rl
+     in FilteredEnvelope
+          { dropped = droppedItems,
+            kept = case keptItems of
+              [] -> Nothing
+              remaining ->
+                Just envelope{Patrol.Envelope.items = Patrol.Items.EnvelopeItems remaining}
+          }
+{-# INLINEABLE filterEnvelope #-}
 
 -- | Helper to get the maximum of an optional and provided 'UTCTime'.
 maxTime :: Maybe UTCTime -> UTCTime -> UTCTime
