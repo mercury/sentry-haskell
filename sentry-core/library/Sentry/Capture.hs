@@ -191,9 +191,9 @@ eventCategory event = case event.type_ of
 -- | Record a drop via the transport and emit a debug log line when
 -- 'ClientOptions.debug' is 'True'.
 noteDrop :: (MonadIO m) => Client -> DiscardReason -> Patrol.DataCategory.DataCategory -> m ()
-noteDrop client reason cat = liftIO do
+noteDrop client reason category = liftIO do
   for_ client.transport \t ->
-    Transport.recordLostEvent t reason cat 1
+    Transport.recordLostEvent t reason category 1
   when client.options.debug $
     hPutStrLn stderr $
       "[sentry] event dropped: " <> Text.unpack (ClientReport.reasonText reason)
@@ -227,11 +227,11 @@ applyClientDefaults opts integrations event = do
         Patrol.Event.version = event.version `orElse` Patrol.Constant.sentryVersion
       }
   where
-    -- | Use @t@ if non-empty; otherwise use the option value (defaulting to @""@).
+    -- \| Use @t@ if non-empty; otherwise use the option value (defaulting to @""@).
     orOpt :: Text -> Maybe Text -> Text
     t `orOpt` opt = t `orElse` fromMaybe Text.empty opt
 
-    -- | Use @t@ if non-empty; otherwise use @def@.
+    -- \| Use @t@ if non-empty; otherwise use @def@.
     orElse :: Text -> Text -> Text
     t `orElse` def = if Text.null t then def else t
 

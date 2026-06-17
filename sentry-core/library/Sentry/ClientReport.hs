@@ -23,6 +23,12 @@ module Sentry.ClientReport
     record,
     takePending,
 
+    -- * Envelope drop accounting
+    categoryFromItem,
+    recordItemDrops,
+    recordEnvelopeDrop,
+    attach,
+
     -- * Constants
     maxDistinctKeys,
     piggybackInterval,
@@ -33,15 +39,20 @@ import Control.Monad (guard)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Atomics (atomicModifyIORefCAS_)
+import Data.Foldable (for_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory (..))
 import Patrol.Type.DiscardedEvent qualified as Patrol.DiscardedEvent
+import Patrol.Type.Envelope qualified as Patrol.Envelope
+import Patrol.Type.Item qualified as Patrol.Item
+import Patrol.Type.Items qualified as Patrol.Items
 
 -- | The reason an event was discarded by the SDK.
 --
@@ -149,3 +160,41 @@ takePending cr now force = runMaybeT $ do
           | ((reason, category), quantity) <- Map.toList m
           ]
       }
+
+-- | Resolve the 'DataCategory' an envelope item is accounted under, if any.
+categoryFromItem :: Patrol.Item -> Maybe DataCategory
+categoryFromItem = \case
+  Patrol.Item.Event _ -> Just Error
+  Patrol.Item.ClientReport _ -> Nothing
+  Patrol.Item.Raw -> Nothing
+
+-- | Record one drop per rateable item in a list of envelope items.
+--
+-- Items whose 'categoryFromItem' is 'Nothing' are skipped, so self-reporting
+-- items are never counted.
+recordItemDrops :: ClientReports -> DiscardReason -> [Patrol.Item] -> IO ()
+recordItemDrops cr reason items =
+  for_ items \item ->
+    for_ (categoryFromItem item) \category ->
+      record cr reason category 1
+
+-- | Record one drop per rateable item in an envelope.
+--
+-- Raw payloads carry no per-item categories and are ignored.
+recordEnvelopeDrop :: ClientReports -> DiscardReason -> Patrol.Envelope -> IO ()
+recordEnvelopeDrop cr reason envelope = case envelope.items of
+  Patrol.Items.Raw _ -> pure ()
+  Patrol.Items.EnvelopeItems items -> recordItemDrops cr reason items
+
+-- | Append a client report as an item on an outgoing envelope (piggybacking).
+--
+-- Envelopes carrying a raw payload cannot take additional items and are
+-- returned unchanged.
+attach :: Patrol.ClientReport.ClientReport -> Patrol.Envelope -> Patrol.Envelope
+attach report envelope = case envelope.items of
+  Patrol.Items.EnvelopeItems items ->
+    envelope
+      { Patrol.Envelope.items =
+          Patrol.Items.EnvelopeItems (items ++ [Patrol.Item.ClientReport report])
+      }
+  Patrol.Items.Raw _ -> envelope

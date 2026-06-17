@@ -47,6 +47,7 @@ library
     , attoparsec
     , base
     , bytestring
+    , containers
     , data-default
     , hs-opentelemetry-instrumentation-http-client
     , http-types
@@ -94,6 +95,7 @@ test-suite integration
     , attoparsec
     , base
     , bytestring
+    , containers
     , data-default
     , directory
     , hs-opentelemetry-instrumentation-http-client
@@ -148,6 +150,7 @@ test-suite unit
     , attoparsec
     , base
     , bytestring
+    , containers
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , http-types
@@ -194,6 +197,7 @@ benchmark time
     , attoparsec
     , base
     , bytestring
+    , containers
     , hs-opentelemetry-instrumentation-http-client
     , http-types
     , patrol ==1.2.*
