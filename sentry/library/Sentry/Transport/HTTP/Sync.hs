@@ -16,7 +16,7 @@ module Sentry.Transport.HTTP.Sync
     new,
     build,
     sendEnvelope,
-    httpDiscardReason,
+    toOutcome,
 
     -- * Re-exports
     Compression (..),
@@ -27,10 +27,11 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Atomics (atomicModifyIORefCAS_)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Default (Default (def))
-import Data.Foldable (fold, for_)
+import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.Kind (Type)
+import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Client.TLS (getGlobalManager)
 import Network.HTTP.Types qualified as HttpTypes
@@ -47,6 +48,7 @@ import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..), PreparedRequest)
 import Sentry.Transport.HTTP.Request qualified as Request
+import Sentry.Transport.Delivery qualified as Delivery
 import UnliftIO.Exception (handle, toException)
 import Witch qualified
 
@@ -162,24 +164,25 @@ exceptionContent = \case
   HttpClient.HttpExceptionRequest _ content -> content
   e@HttpClient.InvalidUrlException{} -> HttpClient.InternalException (toException e)
 
--- | Map an envelope send result to the 'DiscardReason' that should be recorded
--- for its items, if any.
+-- | Convert an @http-client@ result to a transport-neutral 'Outcome'.
 --
---   * A 429 records nothing: the rate limiter accounts for it via
---     'RateLimiter.updateFromResponse', and the items are retried, not dropped.
---   * Any other non-2xx status is a 'ClientReport.SendError'.
---   * A transport\/network failure is a 'ClientReport.NetworkError'.
---   * A successful send records nothing.
-httpDiscardReason ::
+-- Both @2xx@ and non-2xx responses fold into 'Responded'; connection-level
+-- errors become 'NetworkFailure'.
+toOutcome ::
   Either HttpClient.HttpExceptionContent (HttpClient.Response ()) ->
-  Maybe DiscardReason
-httpDiscardReason = \case
-  Right _ -> Nothing
-  Left (HttpClient.StatusCodeException resp _)
-    | HttpClient.responseStatus resp == HttpTypes.tooManyRequests429 -> Nothing
-    | otherwise -> Just ClientReport.SendError
-  Left _ -> Just ClientReport.NetworkError
-{-# INLINEABLE httpDiscardReason #-}
+  Delivery.Outcome
+toOutcome = \case
+  Right response ->
+    Delivery.Responded
+      (HttpClient.responseStatus response)
+      (HttpClient.responseHeaders response)
+  Left (HttpClient.StatusCodeException response _) ->
+    Delivery.Responded
+      (HttpClient.responseStatus response)
+      (HttpClient.responseHeaders response)
+  Left other ->
+    Delivery.NetworkFailure (Text.pack (show other))
+{-# INLINEABLE toOutcome #-}
 
 instance Transport SyncHttpTransport where
   send transport envelope = do
@@ -199,14 +202,14 @@ instance Transport SyncHttpTransport where
           Just cr -> do
             mReport <- ClientReport.takePending cr now True
             pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
-        result <- transport.sendFn piggybacked
+        outcome <- toOutcome <$> transport.sendFn piggybacked
         -- Record send/network failures (a 429 is accounted for by the rate
         -- limiter, not as a drop) against the pre-piggyback envelope.
-        for_ (httpDiscardReason result) \reason ->
+        for_ (Delivery.discardReason outcome) \reason ->
           for_ transport.clientReports \cr ->
             ClientReport.recordEnvelopeDrop cr reason filteredEnvelope
         atomicModifyIORefCAS_ transport.rateLimiter \current ->
-          RateLimiter.updateFromResponse current now result
+          RateLimiter.updateFromResponse current now outcome
         pure Sentry.Transport.SendProcessed
 
   recordDiscards :: SyncHttpTransport -> DiscardReason -> DataCategory -> Int -> IO ()

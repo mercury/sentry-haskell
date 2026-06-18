@@ -66,13 +66,13 @@ import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Network.HTTP.Types qualified as HttpTypes
-import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
 import Patrol.Type.DataCategory (DataCategory)
 import Patrol.Type.DataCategory qualified as DataCategory
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.ClientReport (categoryFromItem)
+import Sentry.Transport.Delivery qualified as Delivery
 
 -- | Rate limiter tracking active rate limits per data category.
 --
@@ -96,30 +96,30 @@ data RateLimiter = RateLimiter
 new :: RateLimiter
 new = RateLimiter{global = Nothing, categories = Map.empty}
 
--- | Update rate limits from an HTTP response.
+-- | Update rate limits from a send 'Outcome'.
 --
--- * On success: parses @X-Sentry-Rate-Limits@ and @Retry-After@ headers
+-- * On 2xx: parses @X-Sentry-Rate-Limits@ and @Retry-After@ headers
 -- * On HTTP 429: applies a default 60-second global rate limit
--- * On other errors: returns the rate limiter unchanged
+-- * On other non-2xx or network failure: returns the rate limiter unchanged
 updateFromResponse ::
   RateLimiter ->
   UTCTime ->
-  Either HttpClient.HttpExceptionContent (HttpClient.Response ()) ->
+  Delivery.Outcome ->
   RateLimiter
 updateFromResponse rl now = \case
-  Right response ->
-    let headers = HttpClient.responseHeaders response
-        rl' = case lookup "X-Sentry-Rate-Limits" headers of
-          Just value -> updateFromSentryHeader rl now value
-          Nothing -> rl
-        rl'' = case lookup "Retry-After" headers of
-          Just value -> updateFromRetryAfter rl' now value
-          Nothing -> rl'
-     in rl''
-  Left (HttpClient.StatusCodeException response _)
-    | HttpClient.responseStatus response == HttpTypes.tooManyRequests429 ->
+  Delivery.NetworkFailure _ -> rl
+  Delivery.Responded status headers
+    | status == HttpTypes.tooManyRequests429 ->
         updateFrom429 rl now
-  Left _ -> rl
+    | let sc = HttpTypes.statusCode status in 200 <= sc && sc < 300 ->
+        let rl' = case lookup "X-Sentry-Rate-Limits" headers of
+              Just value -> updateFromSentryHeader rl now value
+              Nothing -> rl
+            rl'' = case lookup "Retry-After" headers of
+              Just value -> updateFromRetryAfter rl' now value
+              Nothing -> rl'
+         in rl''
+    | otherwise -> rl
 
 -- | Update the global rate limit to end 1 minute after the provided time, in
 -- response to a HTTP 429 status code.

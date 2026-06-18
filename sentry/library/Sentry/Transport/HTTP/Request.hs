@@ -10,11 +10,13 @@ module Sentry.Transport.HTTP.Request
     PreparedRequest,
     prepare,
     attach,
+    serializeBody,
   )
 where
 
 import Codec.Compression.GZip qualified as GZip
 import Data.ByteString.Builder qualified as Builder
+import Data.ByteString.Lazy qualified as LBS
 import Data.Default (Default (def))
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
@@ -73,15 +75,21 @@ prepare compression dsn =
       | dsn.protocol == "https" = 443
       | otherwise = 80
 
+-- | Serialise an envelope to a (possibly gzip-compressed) lazy 'LBS.ByteString'.
+--
+-- Shared by both the HTTP\/1.1 and HTTP\/2 transport backends so that body
+-- construction is not duplicated.
+serializeBody :: Compression -> Patrol.Envelope -> LBS.ByteString
+serializeBody compression envelope =
+  let raw = Builder.toLazyByteString . Patrol.Envelope.serialize $ envelope
+   in case compression of
+        None -> raw
+        Gzip ->
+          GZip.compressWith
+            GZip.defaultCompressParams{GZip.compressLevel = GZip.bestCompression}
+            raw
+
 -- | Attach the serialized (and optionally compressed) envelope as the request body.
 attach :: PreparedRequest -> Patrol.Envelope -> HttpClient.Request
 attach (PreparedRequest compression template) envelope =
-  template{HttpClient.requestBody = HttpClient.RequestBodyLBS body}
-  where
-    raw = Builder.toLazyByteString . Patrol.Envelope.serialize $ envelope
-    body = case compression of
-      None -> raw
-      Gzip ->
-        GZip.compressWith
-          GZip.defaultCompressParams{GZip.compressLevel = GZip.bestCompression}
-          raw
+  template{HttpClient.requestBody = HttpClient.RequestBodyLBS (serializeBody compression envelope)}

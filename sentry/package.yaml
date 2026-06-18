@@ -32,6 +32,11 @@ library:
   source-dirs: library
   dependencies:
     - http-client-tls
+    - http-semantics
+    - http2
+    - http2-tls
+    - network
+    - network-run
     - zlib
 
 # Shared test/bench support: the kent driver and event generators, used by both

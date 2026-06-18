@@ -17,11 +17,14 @@ tested-with:
 
 library
   exposed-modules:
+      Sentry.Transport.Delivery
       Sentry.Transport.Executor.Async
       Sentry.Transport.Executor.RateLimiter
       Sentry.Transport.HTTP.Async
       Sentry.Transport.HTTP.Request
       Sentry.Transport.HTTP.Sync
+      Sentry.Transport.HTTP2.Async
+      Sentry.Transport.HTTP2.Connection
   other-modules:
       Paths_sentry
   autogen-modules:
@@ -51,7 +54,12 @@ library
     , data-default
     , hs-opentelemetry-instrumentation-http-client
     , http-client-tls
+    , http-semantics
     , http-types
+    , http2
+    , http2-tls
+    , network
+    , network-run
     , patrol ==1.2.*
     , sentry-core
     , stm
