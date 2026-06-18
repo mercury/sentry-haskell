@@ -22,7 +22,7 @@ spec_captureEvent = describe "captureEvent against kent" do
     Kent.withKent 5001 \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      transport <- AsyncHttpTransport.new 100 kent.manager Nothing dsn
+      transport <- AsyncHttpTransport.new def 100 kent.manager Nothing dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,

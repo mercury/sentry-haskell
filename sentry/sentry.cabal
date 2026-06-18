@@ -47,6 +47,7 @@ library
     , attoparsec
     , base
     , bytestring
+    , data-default
     , hs-opentelemetry-instrumentation-http-client
     , http-types
     , patrol ==1.2.*
@@ -58,6 +59,7 @@ library
     , unagi-chan
     , unliftio
     , witch
+    , zlib
   default-language: GHC2024
 
 test-suite integration

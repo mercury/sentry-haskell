@@ -7,6 +7,8 @@ module Sentry.Transport.HTTP.Async
   ( -- * Async HTTP Transport
     AsyncHttpTransport (..),
     new,
+    -- * Re-exports
+    Compression (..),
   )
 where
 
@@ -20,6 +22,7 @@ import Sentry.Transport (Transport (..))
 import Sentry.Transport.Executor.Async (AsyncExecutor)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
+import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
 import Sentry.Transport.HTTP.Sync (sendEnvelope)
 
@@ -33,14 +36,17 @@ data AsyncHttpTransport = AsyncHttpTransport
 --
 -- If OpenTelemetry instrumentation is not needed, pass 'Nothing' for the
 -- configuration and the default (no-op) instrumentation will be used.
+--
+-- Pass 'def' for 'Compression' to use the default ('Gzip').
 new ::
+  Compression ->
   Int ->
   HttpClient.Manager ->
   Maybe HttpClientInstrumentationConfig ->
   Patrol.Dsn ->
   IO AsyncHttpTransport
-new queueSize manager otelConfig dsn = do
-  let template = Request.prepare dsn
+new compression queueSize manager otelConfig dsn = do
+  let template = Request.prepare compression dsn
       sendFn envelope rateLimiter = do
         now <- getCurrentTime
         result <- sendEnvelope manager (fold otelConfig) template envelope
