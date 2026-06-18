@@ -94,12 +94,13 @@ library testkit
     , base
     , bytestring
     , containers
+    , data-default
     , directory
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , http-types
     , network
-    , patrol
+    , patrol ==1.2.*
     , sentry-core
     , stm
     , text
@@ -145,7 +146,7 @@ executable sentry-profile
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , http-types
-    , patrol
+    , patrol ==1.2.*
     , sentry
     , sentry-core
     , stm
@@ -197,7 +198,7 @@ test-suite integration
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , http-types
-    , patrol
+    , patrol ==1.2.*
     , sentry
     , sentry-core
     , stm
@@ -246,6 +247,7 @@ test-suite unit
     , base
     , bytestring
     , containers
+    , data-default
     , hs-opentelemetry-instrumentation-http-client
     , hspec
     , http-types
@@ -293,6 +295,7 @@ benchmark time
     , base
     , bytestring
     , containers
+    , data-default
     , hs-opentelemetry-instrumentation-http-client
     , http-types
     , patrol ==1.2.*
