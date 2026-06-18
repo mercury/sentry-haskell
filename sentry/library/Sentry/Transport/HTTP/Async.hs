@@ -34,7 +34,8 @@ import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
-import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), httpDiscardReason, sendEnvelope)
+import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope, toOutcome)
+import Sentry.Transport.Delivery qualified as Delivery
 
 -- | An asynchronous HTTP transport backed by an 'AsyncExecutor'.
 type AsyncHttpTransport :: Type
@@ -82,13 +83,13 @@ build opts clientReports queueSize manager dsn = do
       template = Request.prepare opts.compression dsn
       sendFn envelope rateLimiter = do
         now <- getCurrentTime
-        result <- sendEnvelope manager opts.instrumentation template envelope
+        outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
         -- Record send/network failures as drops (a 429 is accounted for by the
         -- rate limiter via updateFromResponse, not as a drop).
-        for_ (httpDiscardReason result) \reason ->
+        for_ (Delivery.discardReason outcome) \reason ->
           for_ (fmap (.accumulator) reportConfig) \cr ->
             ClientReport.recordEnvelopeDrop cr reason envelope
-        pure $ RateLimiter.updateFromResponse rateLimiter now result
+        pure $ RateLimiter.updateFromResponse rateLimiter now outcome
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
   pure AsyncHttpTransport{executor}
 
