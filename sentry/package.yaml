@@ -18,6 +18,7 @@ dependencies:
   - aeson
   - atomic-primops
   - attoparsec
+  - data-default
   - hs-opentelemetry-instrumentation-http-client
   - http-types
   - patrol ^>= 1.2
@@ -30,7 +31,6 @@ dependencies:
 library:
   source-dirs: library
   dependencies:
-    - data-default
     - zlib
 
 # Shared test/bench support: the kent driver and event generators, used by both
@@ -42,9 +42,7 @@ internal-libraries:
       - sentry-core
       - directory
       - http-client
-      - http-types
       - network
-      - patrol
       - typed-process
       - wai
       - warp
@@ -63,11 +61,8 @@ executables:
       - '"-with-rtsopts=-A32M -N"'
     dependencies:
       - sentry
-      - sentry-core
       - testkit
-      - data-default
       - http-client
-      - patrol
 
 tests:
   unit:
@@ -102,12 +97,8 @@ tests:
     dependencies:
       # library under test
       - sentry
-      - sentry-core
       # kent driver + event generators
       - testkit
-      # extra runtime dependencies used directly by the tests
-      - data-default
-      - patrol
       # test frameworks
       - hspec
       - tasty

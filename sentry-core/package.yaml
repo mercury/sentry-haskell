@@ -43,7 +43,6 @@ tests:
     build-tools: ["tasty-discover:tasty-discover"]
     dependencies:
       - hspec
-      - mtl
       - sentry-core
       - tasty
       - tasty-discover
