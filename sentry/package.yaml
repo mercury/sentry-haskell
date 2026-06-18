@@ -28,6 +28,9 @@ dependencies:
 
 library:
   source-dirs: library
+  dependencies:
+    - data-default
+    - zlib
 
 tests:
   unit:

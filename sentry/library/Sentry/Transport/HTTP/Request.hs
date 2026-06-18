@@ -3,17 +3,19 @@
 -- Rather than parsing a URL from the DSN, inserting headers, etc. per-send,
 -- we can preconstruct it for the lifetime of the HTTP transport:
 --
---     * 'prepare' runs at transport construction to produce a'PreparedRequest'
+--     * 'prepare' runs at transport construction to produce a 'PreparedRequest'
 --     * 'attach' runs before send and attaches the serialized envelope body
 module Sentry.Transport.HTTP.Request
-  ( PreparedRequest,
+  ( Compression (..),
+    PreparedRequest,
     prepare,
     attach,
   )
 where
 
+import Codec.Compression.GZip qualified as GZip
 import Data.ByteString.Builder qualified as Builder
-import Data.ByteString.Lazy qualified as LBS
+import Data.Default (Default (def))
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Text.Encoding qualified as Encoding
@@ -24,14 +26,31 @@ import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 
+-- | How to encode the request body on the wire.
+--
+-- Sentry's ingest endpoint accepts gzip-compressed envelope bodies via the
+-- @Content-Encoding: gzip@ header, which is the default.
+type Compression :: Type
+data Compression
+  = -- | Send the envelope body uncompressed.
+    None
+  | -- | Compress the envelope body with gzip (level 9) and set
+    -- @Content-Encoding: gzip@.
+    Gzip
+  deriving stock (Bounded, Enum, Eq, Ord, Show)
+
+-- | Defaults to 'Gzip'.
+instance Default Compression where
+  def = Gzip
+
 -- | An 'HttpClient.Request' template constructed from a 'Patrol.Dsn'.
 type PreparedRequest :: Type
-newtype PreparedRequest = PreparedRequest HttpClient.Request
+data PreparedRequest = PreparedRequest Compression HttpClient.Request
 
 -- | Build the request template for the given DSN.
-prepare :: Patrol.Dsn -> PreparedRequest
-prepare dsn =
-  PreparedRequest $
+prepare :: Compression -> Patrol.Dsn -> PreparedRequest
+prepare compression dsn =
+  PreparedRequest compression $
     HttpClient.defaultRequest
       { HttpClient.method = HttpTypes.methodPost,
         HttpClient.secure = dsn.protocol == "https",
@@ -45,19 +64,24 @@ prepare dsn =
             (HttpTypes.hUserAgent, Encoding.encodeUtf8 Patrol.Constant.userAgent),
             (Patrol.Constant.xSentryAuth, Patrol.Dsn.intoAuthorization dsn)
           ]
+            <> case compression of
+              None -> []
+              Gzip -> [(HttpTypes.hContentEncoding, "gzip")]
       }
   where
     defaultPort
       | dsn.protocol == "https" = 443
       | otherwise = 80
 
--- | Attach the serialized envelope as the request body.
+-- | Attach the serialized (and optionally compressed) envelope as the request body.
 attach :: PreparedRequest -> Patrol.Envelope -> HttpClient.Request
-attach (PreparedRequest template) envelope =
-  template{HttpClient.requestBody = HttpClient.RequestBodyBS body}
+attach (PreparedRequest compression template) envelope =
+  template{HttpClient.requestBody = HttpClient.RequestBodyLBS body}
   where
-    body =
-      LBS.toStrict
-        . Builder.toLazyByteString
-        . Patrol.Envelope.serialize
-        $ envelope
+    raw = Builder.toLazyByteString . Patrol.Envelope.serialize $ envelope
+    body = case compression of
+      None -> raw
+      Gzip ->
+        GZip.compressWith
+          GZip.defaultCompressParams{GZip.compressLevel = GZip.bestCompression}
+          raw

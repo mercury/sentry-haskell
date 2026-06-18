@@ -14,6 +14,8 @@ module Sentry.Transport.HTTP.Sync
     SyncHttpTransport (..),
     new,
     sendEnvelope,
+    -- * Re-exports
+    Compression (..),
   )
 where
 
@@ -33,7 +35,7 @@ import Sentry.Transport (Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import Sentry.Transport.HTTP.Request (PreparedRequest)
+import Sentry.Transport.HTTP.Request (Compression (..), PreparedRequest)
 import Sentry.Transport.HTTP.Request qualified as Request
 
 -- | A synchronous HTTP transport that blocks on each send.
@@ -50,14 +52,17 @@ data SyncHttpTransport = SyncHttpTransport
 --
 -- If OpenTelemetry instrumentation is not needed, pass 'Nothing' for the
 -- configuration and the default (no-op) instrumentation will be used.
+--
+-- Pass 'def' for 'Compression' to use the default ('Gzip').
 new ::
+  Compression ->
   HttpClient.Manager ->
   Maybe HttpClientInstrumentationConfig ->
   Patrol.Dsn ->
   IO SyncHttpTransport
-new manager otelConfig dsn = do
+new compression manager otelConfig dsn = do
   rateLimiter <- newIORef RateLimiter.new
-  let template = Request.prepare dsn
+  let template = Request.prepare compression dsn
       sendFn = sendEnvelope manager (fold otelConfig) template
   pure SyncHttpTransport{rateLimiter, sendFn}
 
