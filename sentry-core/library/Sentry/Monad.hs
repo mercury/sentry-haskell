@@ -7,6 +7,7 @@ module Sentry.Monad
 
     -- * Helpers
     askClient,
+    withClient,
 
     -- * Concrete carrier
     SentryT (..),
@@ -17,8 +18,9 @@ where
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import Control.Monad.Reader (MonadReader, ReaderT (..), asks)
+import Control.Monad.Reader (MonadReader, ReaderT (..), asks, local)
 import Data.Functor.Const (Const (..))
+import Data.Functor.Identity (Identity (..))
 import Data.Kind (Constraint, Type)
 import Sentry.Client (Client)
 
@@ -45,6 +47,17 @@ instance HasClient Client where
 -- | Retrieve the 'Client' from the ambient reader environment.
 askClient :: (MonadReader env m, HasClient env) => m Client
 askClient = asks (view clientL)
+
+-- | Run an action with a different ambient 'Client', restoring the previous
+-- one on return.
+--
+-- @
+-- withSentry opts{dsn = Just otherDsn} \\c ->
+--   withClient c do
+--     captureMessage "routed to otherDsn"
+-- @
+withClient :: (MonadReader env m, HasClient env) => Client -> m a -> m a
+withClient client = local (set clientL client)
 
 -- | A concrete 'ReaderT'-based monad transformer that carries a 'Client'.
 type SentryT :: (Type -> Type) -> Type -> Type
@@ -74,3 +87,7 @@ type Lens' s a = forall f. (Functor f) => (a -> f a) -> s -> f s
 -- | Project the focus of a 'Lens''.
 view :: Lens' s a -> s -> a
 view l s = getConst (l Const s)
+
+-- | Replace the focus of a 'Lens''.
+set :: Lens' s a -> a -> s -> s
+set l a s = runIdentity (l (const (Identity a)) s)

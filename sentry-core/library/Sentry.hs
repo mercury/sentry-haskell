@@ -41,6 +41,7 @@ module Sentry
     -- * Concrete monad carrier
     SentryT,
     runSentryT,
+    withClient,
 
     -- * Capturing Events
     captureEvent,
@@ -78,6 +79,6 @@ import Sentry.Integration.Stacktrace
     AttachExceptionContextIntegration (..),
     ProcessStacktraceIntegration (..),
   )
-import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT)
+import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT, withClient)
 import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs)
 import Sentry.Scope.IO (withIsolationScope, withScope)

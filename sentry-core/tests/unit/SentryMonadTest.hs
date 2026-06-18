@@ -8,7 +8,7 @@ import Data.Kind (Type)
 import Patrol.Type.Level qualified as Patrol.Level
 import Sentry.Capture (captureException, captureMessage)
 import Sentry.Client (Client)
-import Sentry.Monad (HasClient (..), SentryT (..), askClient, runSentryT)
+import Sentry.Monad (HasClient (..), SentryT (..), askClient, runSentryT, withClient)
 import Sentry.Test qualified as Test
 import Test.Hspec
 
@@ -75,6 +75,36 @@ spec_sentryMonad = describe "Sentry.Monad" do
           captureException (userError "boom via Env")
       events <- Test.fetchAndClearEvents transport
       length events `shouldBe` 1
+
+  describe "withClient" do
+    it "routes captures inside withClient to the swapped client's transport" do
+      transportA <- Test.new
+      transportB <- Test.new
+      let clientA = Test.mkClient transportA
+          clientB = Test.mkClient transportB
+      _ <-
+        runSentryT clientA $
+          withClient clientB $
+            captureMessage Patrol.Level.Info "goes to B"
+      eventsA <- Test.fetchAndClearEvents transportA
+      eventsB <- Test.fetchAndClearEvents transportB
+      length eventsA `shouldBe` 0
+      length eventsB `shouldBe` 1
+
+    it "restores the original client after withClient returns" do
+      transportA <- Test.new
+      transportB <- Test.new
+      let clientA = Test.mkClient transportA
+          clientB = Test.mkClient transportB
+      _ <- runSentryT clientA do
+        _ <-
+          withClient clientB $
+            captureMessage Patrol.Level.Info "goes to B"
+        captureMessage Patrol.Level.Info "goes to A"
+      eventsA <- Test.fetchAndClearEvents transportA
+      eventsB <- Test.fetchAndClearEvents transportB
+      length eventsA `shouldBe` 1
+      length eventsB `shouldBe` 1
 
   describe "DerivingVia SentryT" do
     it "a newtype over ReaderT Client IO can derive MonadReader Client via SentryT IO" do
