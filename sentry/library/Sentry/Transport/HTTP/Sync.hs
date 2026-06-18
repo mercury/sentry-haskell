@@ -12,9 +12,12 @@
 module Sentry.Transport.HTTP.Sync
   ( -- * Sync HTTP Transport
     SyncHttpTransport (..),
+    HttpTransportOptions (..),
     new,
+    build,
     sendEnvelope,
     httpDiscardReason,
+
     -- * Re-exports
     Compression (..),
   )
@@ -23,69 +26,100 @@ where
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Atomics (atomicModifyIORefCAS_)
 import Data.ByteString.Lazy qualified as LBS
+import Data.Default (Default (def))
 import Data.Foldable (fold, for_)
 import Data.Functor (void)
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.Kind (Type)
 import Data.Time.Clock (getCurrentTime)
+import Network.HTTP.Client.TLS (getGlobalManager)
 import Network.HTTP.Types qualified as HttpTypes
 import OpenTelemetry.Instrumentation.HttpClient (HttpClientInstrumentationConfig)
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
 import Patrol.Type.DataCategory (DataCategory)
+import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports, DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
-import Sentry.Transport (Transport (..))
+import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..), PreparedRequest)
 import Sentry.Transport.HTTP.Request qualified as Request
 import UnliftIO.Exception (handle, toException)
+import Witch qualified
 
 -- | A synchronous HTTP transport that blocks on each send.
 type SyncHttpTransport :: Type
 data SyncHttpTransport = SyncHttpTransport
   { rateLimiter :: IORef RateLimiter,
     sendFn :: Patrol.Envelope -> IO (Either HttpClient.HttpExceptionContent (HttpClient.Response ())),
-    -- | Per-envelope drop accumulator; 'Nothing' when client reports are
-    -- disabled (constructed with @sendClientReports = False@).
     clientReports :: Maybe ClientReports
   }
 
--- | Create a new 'SyncHttpTransport' with a fresh 'RateLimiter'.
+-- | Shared configuration options for HTTP transports.
 --
--- When @sendClientReports@ is @True@ the transport will piggyback a
--- 'Patrol.Type.ClientReport.ClientReport' item onto every outgoing envelope
--- (using a forced drain so that even one-shot CLI processes flush their
--- report). Set to @False@ to opt out entirely.
+-- Use 'def' to get the defaults and override individual fields as needed, or
+-- use 'Witch.from' to start from an existing 'HttpClient.Manager':
 --
--- Note: @sendClientReports@ is a separate parameter from
--- 'Sentry.Client.Options.ClientOptions.sendClientReports'; callers are
--- responsible for keeping the two consistent.
+-- > SyncHttpTransport.new def
+-- > SyncHttpTransport.new (Witch.from manager)
+-- > SyncHttpTransport.new def{compression = NoCompression}
+-- > AsyncHttpTransport.new def AsyncExecutor.defaultQueueSize
+type HttpTransportOptions :: Type
+data HttpTransportOptions = HttpTransportOptions
+  { -- | Body encoding for outgoing envelopes.
+    compression :: Compression,
+    -- | HTTP client connection manager.
+    manager :: Maybe HttpClient.Manager,
+    -- | OpenTelemetry instrumentation config.
+    instrumentation :: HttpClientInstrumentationConfig
+  }
+
+-- | Defaults: 'Gzip' compression, global HTTP manager, no OTel instrumentation.
+instance Default HttpTransportOptions where
+  def =
+    HttpTransportOptions
+      { compression = def,
+        manager = Nothing,
+        instrumentation = mempty
+      }
+
+-- | Construct 'HttpTransportOptions' from an existing 'HttpClient.Manager'.
+instance Witch.From HttpClient.Manager HttpTransportOptions where
+  from manager = def{manager = Just manager}
+
+-- | Create a 'TransportProvider' that will build a 'SyncHttpTransport' when
+-- called as part of 'Client.new'
 --
--- The HTTP request template (URL, auth, content-type, user-agent) is built
--- once here and reused for every envelope; only the body is swapped per send.
---
--- If OpenTelemetry instrumentation is not needed, pass 'Nothing' for the
--- configuration and the default (no-op) instrumentation will be used.
---
--- Pass 'def' for 'Compression' to use the default ('Gzip').
-new ::
-  Compression ->
-  Bool ->
-  HttpClient.Manager ->
-  Maybe HttpClientInstrumentationConfig ->
-  Patrol.Dsn ->
-  IO SyncHttpTransport
-new compression sendClientReports manager otelConfig dsn = do
-  rateLimiter <- newIORef RateLimiter.new
+-- When no 'HttpClient.Manager' is provided, fall back to the global manager.
+new :: HttpTransportOptions -> TransportProvider
+new httpOpts = DeferredTransport \dsn clientOpts -> do
+  manager <- maybe getGlobalManager pure httpOpts.manager
   clientReports <-
-    if sendClientReports
+    if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  let template = Request.prepare compression dsn
-      sendFn = sendEnvelope manager (fold otelConfig) template
+  SomeTransport <$> build httpOpts clientReports manager dsn
+
+-- | Build a 'SyncHttpTransport' directly, bypassing 'TransportProvider'.
+--
+-- Use this when you need a transport handle directly (e.g. for testing,
+-- profiling, or as the send function for an async executor).
+--
+-- The HTTP request template is built once from @dsn@ and reused for every
+-- envelope; the body is attached on each send call.
+build ::
+  HttpTransportOptions ->
+  Maybe ClientReports ->
+  HttpClient.Manager ->
+  Patrol.Dsn ->
+  IO SyncHttpTransport
+build opts clientReports manager dsn = do
+  rateLimiter <- newIORef RateLimiter.new
+  let template = Request.prepare opts.compression dsn
+      sendFn = sendEnvelope manager opts.instrumentation template
   pure SyncHttpTransport{rateLimiter, sendFn, clientReports}
 
 -- | Send an envelope via HTTP, returning the response.
@@ -102,9 +136,10 @@ sendEnvelope ::
 sendEnvelope manager otelConfig prepared envelope =
   -- Network-level failures (connection refused, DNS, timeout, TLS) throw an
   -- 'HttpException'; fold them into the 'Left' branch so callers (notably the
-  -- async worker thread) never see a thrown exception. Status-code errors are
-  -- already values because the prepared request leaves @http-client@'s
-  -- status-code checking as a no-op.
+  -- async worker thread) never see a thrown exception.
+  --
+  -- Status-code errors are already values because the prepared request sets
+  -- @http-client@'s status-code check to a no-op.
   liftIO . handle (pure . Left . exceptionContent) $ do
     let request = Request.attach prepared envelope
     response <- HttpClient.httpLbs otelConfig request manager

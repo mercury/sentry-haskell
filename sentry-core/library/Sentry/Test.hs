@@ -74,7 +74,7 @@ mkCustomClient transport opts =
   Witch.from @ClientOptions @Client
     opts
       { dsn = opts.dsn <|> Just TEST_DSN,
-        transport = Just (SomeTransport transport)
+        transport = Just (Witch.from (SomeTransport transport))
       }
 
 -- | Create a fresh 'TestTransport', build a 'Client' from it, and run the
@@ -100,7 +100,7 @@ withCustomClient opts f = do
       Client.new
         opts
           { dsn = opts.dsn <|> Just TEST_DSN,
-            transport = Just (SomeTransport transport)
+            transport = Just (Witch.from (SomeTransport transport))
           }
   result <- runSentryT client (f transport)
   pure (result, transport)

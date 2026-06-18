@@ -10,6 +10,7 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.ClientReport qualified as ClientReport
 import Sentry.Monad (runSentryT)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
@@ -27,11 +28,12 @@ spec_clientReport = describe "client report delivery" do
       let dsn = Kent.dsnFor kent "1"
       -- Client reports enabled on the transport; beforeSend drops every event,
       -- so each capture records a 'before_send' discard but sends no event.
-      transport <- AsyncHttpTransport.new def 100 True kent.manager Nothing dsn
+      clientReports <- ClientReport.new
+      transport <- AsyncHttpTransport.build def (Just clientReports) 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,
-                transport = Just (SomeTransport transport),
+                transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = True,
                 beforeSend = Just (const Nothing)
               }
@@ -48,13 +50,13 @@ spec_clientReport = describe "client report delivery" do
       flushResult <- Transport.flush transport 5
       flushResult `shouldBe` FlushSucceeded
       stored <- Kent.eventIds kent >>= traverse (Kent.getEvent kent)
-      let clientReports =
+      let receivedReports =
             [ report
             | report <- stored,
               Kent.dig ["payload", "header", "type"] report
                 == Just (Aeson.String "client_report")
             ]
-      case clientReports of
+      case receivedReports of
         [report] ->
           Kent.dig ["payload", "body", "discarded_events"] report
             `shouldBe` Just
@@ -68,4 +70,4 @@ spec_clientReport = describe "client report delivery" do
               )
         _ ->
           expectationFailure $
-            "expected exactly one client report, got " <> show (length clientReports)
+            "expected exactly one client report, got " <> show (length receivedReports)

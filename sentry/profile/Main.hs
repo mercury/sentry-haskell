@@ -107,14 +107,14 @@ run cfg manager dsn verify = do
   start <- getCurrentTime
   counts <- case cfg.mode of
     Sync -> do
-      transport <- SyncHttp.new def False manager Nothing dsn
+      transport <- SyncHttp.build def Nothing manager dsn
       counts <- drive transport cfg.count envelope
       -- Generous timeouts: flush must drain the whole queue through real HTTP.
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300
       pure counts
     Async -> do
-      transport <- AsyncHttp.new def cfg.queueSize False manager Nothing dsn
+      transport <- AsyncHttp.build def Nothing cfg.queueSize manager dsn
       counts <- drive transport cfg.count envelope
       -- Generous timeouts: flush must drain the whole queue through real HTTP.
       _ <- Transport.flush transport 300
@@ -126,7 +126,6 @@ run cfg manager dsn verify = do
   for_ verify \countSeen -> do
     seen <- countSeen
     putStrLn $ "  backend saw: " <> show seen
-
 
 -- | Push @total@ envelopes all the way through the transport, applying
 -- backpressure on a full queue so every event traverses the worker rather than

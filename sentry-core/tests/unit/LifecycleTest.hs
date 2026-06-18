@@ -13,13 +13,14 @@ import Sentry.Monad (askClient)
 import Sentry.Test qualified as Test
 import Sentry.Transport (FlushResponse (..), SendResponse (..), ShutdownResponse (..), SomeTransport (..), Transport (..))
 import Test.Hspec
+import Witch qualified
 
 spec_lifecycle :: Spec
 spec_lifecycle = do
   describe "withSentry" do
     it "flushes and shuts down the transport on normal exit" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (SomeTransport lt), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
       withSentry opts \_ -> pure ()
       flushCount <- readIORef lt.flushes
       shutdownCount <- readIORef lt.shutdowns
@@ -28,7 +29,7 @@ spec_lifecycle = do
 
     it "flushes and shuts down the transport on exception, and rethrows" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (SomeTransport lt), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
       result <- try @SomeException $ withSentry opts \_ -> throwIO TestError
       case result of
         Right _ -> expectationFailure "expected exception to propagate"
@@ -46,14 +47,14 @@ spec_lifecycle = do
   describe "withSentryM" do
     it "provides the client via askClient inside SentryT" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (SomeTransport lt), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
       client <- withSentryM opts askClient
       -- The client should have a transport installed
       isJust client.transport `shouldBe` True
 
     it "flushes and shuts down on exit from withSentryM" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (SomeTransport lt), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
       withSentryM opts (pure ())
       flushCount <- readIORef lt.flushes
       shutdownCount <- readIORef lt.shutdowns
