@@ -5,6 +5,9 @@ module Sentry.Internal
     ClientOptions (..),
     pattern DEFAULT_CLIENT_OPTIONS,
 
+    -- * Transport provider
+    TransportProvider (..),
+
     -- * Integration
     Integration (..),
     SomeIntegration (..),
@@ -30,6 +33,16 @@ import Sentry.Event (CapturedEvent (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
 import Witch qualified
+
+-- | How a 'Sentry.Client.Client' obtains its transport from 'ClientOptions'.
+type TransportProvider :: Type
+data TransportProvider
+  = PrebuiltTransport SomeTransport
+  | DeferredTransport (Patrol.Dsn -> ClientOptions -> IO SomeTransport)
+
+-- | Any 'SomeTransport' is trivially a 'TransportProvider' (prebuilt).
+instance Witch.From SomeTransport TransportProvider where
+  from = PrebuiltTransport
 
 -- | Configuration settings for 'Sentry.Client.Client'.
 type ClientOptions :: Type
@@ -131,11 +144,11 @@ data ClientOptions = ClientOptions
     --
     -- <https://develop.sentry.dev/sdk/foundations/client/hooks/>
     beforeBreadcrumb :: Maybe (Patrol.Breadcrumb -> Maybe Patrol.Breadcrumb),
-    -- | The 'Sentry.Transport.Transport' that the 'Sentry.Client.Client'
-    -- constructed from these options will use.
+    -- | How the 'Sentry.Client.Client' constructed from these options should
+    -- obtain its transport.
     --
-    -- Defaults to @Nothing@.
-    transport :: Maybe SomeTransport,
+    -- Defaults to @Nothing@ (non-recording client).
+    transport :: Maybe TransportProvider,
     -- | The timeout given to the client to drain events on shutdown.
     shutdownTimeout :: NominalDiffTime,
     -- | Whether to send client reports to Sentry.

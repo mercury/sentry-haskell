@@ -12,6 +12,7 @@ module Sentry.Client
 
     -- * Helpers
     disableIntegration,
+    realizePrebuilt,
     resolveOptionDefaults,
   )
 where
@@ -35,6 +36,7 @@ import Sentry.Integration.Stacktrace
     AttachExceptionContextIntegration (..),
     ProcessStacktraceIntegration (..),
   )
+import Sentry.Internal (TransportProvider (..))
 import Sentry.Internal qualified as Internal
 import Sentry.Transport (SomeTransport)
 import System.Environment (lookupEnv)
@@ -52,17 +54,30 @@ data Client = Client
     integrations :: Vector SomeIntegration
   }
 
+-- | Realize a prebuilt transport from options, DSN-gated.
+--
+-- A 'DeferredTransport' cannot run without 'IO', so it yields 'Nothing'
+-- (a non-recording client). Use 'new' to realize deferred providers.
+realizePrebuilt :: ClientOptions -> Maybe SomeTransport
+realizePrebuilt opts = case (opts.dsn, opts.transport) of
+  (Just _, Just (PrebuiltTransport t)) -> Just t
+  _ -> Nothing
+
 -- | Low-level conversion that copies fields directly, running neither default
 -- integration prepending nor 'Sentry.Integration.Integration.setup'. Useful
 -- in tests or when constructing a 'Client' without the full initialization
 -- lifecycle.
 --
+-- 'PrebuiltTransport' providers are realized (DSN-gated).
+-- 'DeferredTransport' providers cannot run without 'IO' and yield a
+-- non-recording client; use 'new' for those.
+--
 -- For normal application use, prefer 'new' (or 'Sentry.Init.withSentry').
 instance Witch.From ClientOptions Client where
-  from options@ClientOptions{transport, integrations} =
+  from options@ClientOptions{integrations} =
     Client
       { options,
-        transport,
+        transport = realizePrebuilt options,
         integrations
       }
 
@@ -147,10 +162,14 @@ new initialOpts = do
       installed = dedupByTypeRep (kept <> resolvedOpts.integrations)
       opts' = resolvedOpts{Internal.integrations = installed}
   finalOpts <- Vector.foldM (\o i -> setup i o) opts' installed
+  realized <- case (finalOpts.dsn, finalOpts.transport) of
+    (Just _, Just (PrebuiltTransport t)) -> pure (Just t)
+    (Just dsn, Just (DeferredTransport mk)) -> Just <$> mk dsn finalOpts
+    _ -> pure Nothing
   pure
     Client
       { options = finalOpts{Internal.integrations = installed},
-        transport = finalOpts.transport,
+        transport = realized,
         integrations = installed
       }
   where

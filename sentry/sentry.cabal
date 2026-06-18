@@ -50,6 +50,7 @@ library
     , containers
     , data-default
     , hs-opentelemetry-instrumentation-http-client
+    , http-client-tls
     , http-types
     , patrol ==1.2.*
     , sentry-core

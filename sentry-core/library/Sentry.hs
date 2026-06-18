@@ -25,6 +25,7 @@ module Sentry
     -- * Client Options
     ClientOptions (..),
     pattern DEFAULT_CLIENT_OPTIONS,
+    TransportProvider (..),
     disableIntegration,
 
     -- * Stacktrace integrations
@@ -68,7 +69,7 @@ where
 
 import Sentry.Capture (captureEvent, captureEvent_, captureException, captureException_, captureMessage, captureMessage_)
 import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
-import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options (ClientOptions (..), TransportProvider (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Init (withSentry, withSentryM)
 import Sentry.Integration.Stacktrace

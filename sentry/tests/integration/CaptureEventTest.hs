@@ -24,11 +24,11 @@ spec_captureEvent = describe "captureEvent against kent (async transport)" do
     Kent.withKent \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      transport <- AsyncHttpTransport.new def 100 False kent.manager Nothing dsn
+      transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,
-                transport = Just (SomeTransport transport),
+                transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
           client = Witch.from @ClientOptions @Client opts
@@ -50,11 +50,11 @@ spec_captureEventSync = describe "captureEvent against kent (sync transport)" do
     Kent.withKent \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      transport <- SyncHttpTransport.new def False kent.manager Nothing dsn
+      transport <- SyncHttpTransport.build def Nothing kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,
-                transport = Just (SomeTransport transport),
+                transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
           client = Witch.from @ClientOptions @Client opts
@@ -76,11 +76,11 @@ spec_eventPayload = describe "event payload delivered to kent" do
     Kent.withKent \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      transport <- SyncHttpTransport.new def False kent.manager Nothing dsn
+      transport <- SyncHttpTransport.build def Nothing kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,
-                transport = Just (SomeTransport transport),
+                transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
           client = Witch.from @ClientOptions @Client opts
