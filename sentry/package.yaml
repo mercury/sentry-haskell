@@ -4,6 +4,10 @@ name:               sentry
 version:            0.0.0
 build-type:         Simple
 
+extra-source-files:
+  - testkit/certs/localhost.crt
+  - testkit/certs/localhost.key
+
 # common dependencies, shared between all targets
 dependencies:
   # core libraries
@@ -36,7 +40,6 @@ library:
     - http2
     - http2-tls
     - network
-    - network-run
     - zlib
 
 # Shared test/bench support: the kent driver and event generators, used by both
@@ -47,11 +50,14 @@ internal-libraries:
     dependencies:
       - sentry-core
       - directory
+      - file-embed
       - http-client
       - network
       - typed-process
       - wai
       - warp
+      - warp-tls
+      - zlib
 
 executables:
   # End-to-end profiling harness: pushes envelopes through the sync/async HTTP

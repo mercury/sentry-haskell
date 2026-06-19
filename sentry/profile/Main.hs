@@ -30,12 +30,15 @@ import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Network.HTTP.Client qualified as HttpClient
 import Patrol qualified
 import Sentry.TestKit.Gen qualified as Gen
+import Sentry.TestKit.Http2Sink qualified as Http2Sink
 import Sentry.TestKit.Kent (KentHandle (..))
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttp
 import Sentry.Transport.HTTP.Sync qualified as SyncHttp
+import Sentry.Transport.HTTP2.Async (Http2TransportOptions (..))
+import Sentry.Transport.HTTP2.Async qualified as AsyncHttp2
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (die)
 import Text.Printf (printf)
@@ -78,6 +81,12 @@ main = do
     Just "sink" ->
       Sink.withSink \sink ->
         run cfg sink.manager (Sink.dsnFor sink "1") Nothing
+    -- In-process HTTP/2 TLS sink (ALPN h2 over self-signed cert).
+    -- Measures the pure serialize→frame→send path without a real network hop.
+    -- Mode arg is ignored; the HTTP/2 transport is always async.
+    Just "http2" ->
+      Http2Sink.withHttp2Sink \sink ->
+        runH2 cfg (Http2Sink.dsnFor sink "1")
     -- kent, either an externally-managed instance or one we spawn + verify.
     _ -> do
       externalPort <- (>>= readMaybe) <$> lookupEnv "SENTRY_PROFILE_KENT_PORT"
@@ -90,6 +99,30 @@ main = do
             -- kent retains only a bounded, most-recent window, so this is a
             -- sanity check that delivery happened, not a full count.
             run cfg kent.manager (Kent.dsnFor kent "1") (Just (length <$> Kent.listEvents kent))
+
+-- | Drive a profiling run against an HTTP\/2 sink.
+--
+-- The HTTP\/2 transport is always asynchronous; the 'Mode' argument is ignored.
+-- No event-store verification is performed (the sink discards bodies).
+runH2 :: Config -> Patrol.Dsn -> IO ()
+runH2 cfg dsn = do
+  let envelope = mkEnvelope cfg dsn
+      opts = def{validateCert = False}
+  putStrLn $
+    "sentry-profile: h2 count="
+      <> show cfg.count
+      <> " queue="
+      <> show cfg.queueSize
+      <> " payloadBytes="
+      <> show cfg.payloadBytes
+  start <- getCurrentTime
+  transport <- AsyncHttp2.build opts Nothing cfg.queueSize dsn
+  counts <- drive transport cfg.count envelope
+  _ <- Transport.flush transport 300
+  _ <- Transport.shutdown transport 300
+  end <- getCurrentTime
+  let elapsed = realToFrac (diffUTCTime end start) :: Double
+  report counts elapsed
 
 -- | Construct the configured transport, drive the run, and report. @verify@, if
 -- present, is run after shutdown to report how many events the backend saw.
@@ -198,8 +231,10 @@ usage =
       "  payloadBytes  if > 0, send a message event of this size instead of the",
       "                default exception event (default 0)",
       "",
-      "  env SENTRY_PROFILE_BACKEND    'sink' for an in-process keep-alive warp",
-      "                                server, otherwise kent (default)",
+      "  env SENTRY_PROFILE_BACKEND    backend to use:",
+      "    'sink'      in-process HTTP/1.1 keep-alive warp server",
+      "    'http2'     in-process HTTP/2 TLS sink (ALPN h2, self-signed cert)",
+      "    unset/other spawn a kent-server and verify delivery at the end",
       "  env SENTRY_PROFILE_KENT_PORT  talk to an already-running kent on this",
       "                                port instead of spawning one"
     ]
