@@ -97,3 +97,35 @@ spec_captureDrop = describe "drop-site instrumentation" do
       result `shouldBe` Nothing
       drops <- liftIO $ Test.fetchAndClearDrops transport
       drops `shouldBe` [(EventProcessor, Error, 1)]
+
+  describe "drop precedence (sampling runs last)" do
+    it "attributes to BeforeSend, not SampleRate, when both would drop" do
+      -- Sampling is the final gate, so a 'beforeSend' rejection is recorded
+      -- even when 'sampleRate = 0' would also have dropped the event. This
+      -- guards the spec-mandated filter order (processors -> beforeSend ->
+      -- sampling) against regressing to sample-first.
+      let opts =
+            (def @ClientOptions)
+              { sampleRate = 0.0,
+                beforeSend = Just (\_ -> Nothing)
+              }
+      (result, transport) <-
+        Test.withCustomClient opts \_ ->
+          captureException (userError "rejected and sampled out")
+      result `shouldBe` Nothing
+      drops <- liftIO $ Test.fetchAndClearDrops transport
+      drops `shouldBe` [(BeforeSend, Error, 1)]
+
+    it "attributes to EventProcessor, not SampleRate, when an integration drops" do
+      let droppingIntegration = fromIntegration DroppingIntegration
+          opts =
+            (def @ClientOptions)
+              { sampleRate = 0.0,
+                integrations = Vector.singleton droppingIntegration
+              }
+      (result, transport) <-
+        Test.withCustomClient opts \_ ->
+          captureException (userError "dropped by integration, also sampled out")
+      result `shouldBe` Nothing
+      drops <- liftIO $ Test.fetchAndClearDrops transport
+      drops `shouldBe` [(EventProcessor, Error, 1)]

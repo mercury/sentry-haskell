@@ -149,8 +149,6 @@ captureWith client captured =
     (_, Nothing) -> pure Nothing
     (Just dsn, Just transport) -> do
       result <- runExceptT do
-        sampled <- liftIO $ sample client.options.sampleRate
-        unless sampled $ throwError ClientReport.SampleRate
         maybeEvent <- liftIO $ runIntegrations client.options captured client.integrations
         event <- maybe (throwError ClientReport.EventProcessor) pure maybeEvent
         enriched <- liftIO $ applyClientDefaults client.options client.integrations event
@@ -159,6 +157,11 @@ captureWith client captured =
           Nothing -> pure processed.event
           Just callback ->
             maybe (throwError ClientReport.BeforeSend) pure (callback processed)
+        -- sample /after/ processing events, so that an event processor has the
+        -- opportunity to drop an event even if it wasn't going to be sampled;
+        -- this ensures more accurate discard counts in Sentry's dashboards.
+        sampled <- liftIO $ sample client.options.sampleRate
+        unless sampled $ throwError ClientReport.SampleRate
         let envelope = Patrol.Envelope.fromEvent dsn finalEvent
         response <- liftIO $ Transport.send transport envelope
         pure (finalEvent, response)
