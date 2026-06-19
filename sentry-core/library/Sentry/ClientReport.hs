@@ -30,7 +30,6 @@ module Sentry.ClientReport
     attach,
 
     -- * Constants
-    maxDistinctKeys,
     piggybackInterval,
   )
 where
@@ -57,12 +56,10 @@ import Patrol.Type.Items qualified as Patrol.Items
 -- | The reason an event was discarded by the SDK.
 --
 -- Each constructor maps to one of Sentry's registered discard-reason strings
--- via 'reasonText'. 'Custom' is a forward seam for integration authors; its
--- payload is rendered verbatim on the wire, where the backend buckets any
--- unregistered string as @"other"@.
---
--- __NOTE__: /Never/ use high-cardinality strings as 'Custom' discard reasons;
--- this is enforced at runtime via 'maxDistinctKeys'.
+-- via 'reasonText'. The vocabulary is closed (mirroring the official SDKs,
+-- e.g. sentry-rust's @#[non_exhaustive]@ @DiscardReason@ enum); 'Other' is the
+-- catch-all for drops that do not fit a registered reason, which the backend
+-- buckets under @"other"@ anyway.
 type DiscardReason :: Type
 data DiscardReason
   = BeforeSend
@@ -73,7 +70,7 @@ data DiscardReason
   | RatelimitBackoff
   | SampleRate
   | SendError
-  | Custom Text
+  | Other
   deriving stock (Eq, Ord, Show)
 
 -- | Render a 'DiscardReason' to its Sentry wire string.
@@ -87,7 +84,7 @@ reasonText = \case
   RatelimitBackoff -> "ratelimit_backoff"
   SampleRate -> "sample_rate"
   SendError -> "send_error"
-  Custom t -> t
+  Other -> "other"
 
 -- | A thread-safe accumulator of discarded-event counts.
 --
@@ -98,13 +95,6 @@ data ClientReports = ClientReports
   { discarded :: IORef (Map (DiscardReason, DataCategory) Int),
     lastSent :: IORef UTCTime
   }
-
--- | Maximum distinct @(reason, category)@ keys in the accumulator.
---
--- Keys beyond the 4 KiB cap are folded into a @(Custom \"other\", category)@
--- sentinel bucket.
-maxDistinctKeys :: Int
-maxDistinctKeys = 64
 
 -- | How long to wait between piggybacked client reports, in seconds.
 --
@@ -122,14 +112,14 @@ new = do
   pure ClientReports{discarded, lastSent}
 
 -- | Record @n@ discarded events for the given reason and category.
+--
+-- The @(reason, category)@ keyspace is bounded by the product of the closed
+-- 'DiscardReason' and 'DataCategory' vocabularies, so the accumulator needs no
+-- cardinality cap.
 record :: ClientReports -> DiscardReason -> DataCategory -> Int -> IO ()
 record cr reason category n
   | n <= 0 = pure ()
-  | otherwise = atomicModifyIORefCAS_ cr.discarded \discards ->
-      let key = (reason, category)
-       in if Map.member key discards || Map.size discards < maxDistinctKeys - 1
-            then Map.insertWith (+) key n discards
-            else Map.insertWith (+) (Custom "other", category) n discards
+  | otherwise = atomicModifyIORefCAS_ cr.discarded (Map.insertWith (+) (reason, category) n)
 
 -- | Snapshot and reset the accumulator, returning a
 -- 'Patrol.Type.ClientReport.ClientReport' if there is anything pending.
