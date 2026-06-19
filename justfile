@@ -46,38 +46,37 @@ bench target=package:
     --ghc-options '{{ghc_opts}}' \
     --benchmark-options '+RTS -T -p'
 
-# Run the end-to-end profiling harness against a self-spawned kent (normal,
-# non-profiled build — use for a quick smoke run or to read the summary line).
-profile-run mode count="5000" queue="1000" payload="0":
-  cabal run sentry:exe:sentry-profile \
+# Quick smoke run of the harness against an in-process TLS sink (normal,
+# non-profiled build). backend: h1 | h2; mode (h1 only): sync | async.
+profile-run backend="h2" mode="async" count="5000" queue="1000" payload="0":
+  SENTRY_PROFILE_BACKEND={{backend}} cabal run sentry:exe:sentry-profile \
     -j{{jobs}} \
     --builddir '{{build_dir}}' \
     --ghc-options '{{ghc_opts}}' \
     -- {{mode}} {{count}} {{queue}} {{payload}}
 
-# Run the harness under the profiling RTS, producing cost-centre (.prof), heap
-# (.hp), and eventlog artifacts, then render them. Uses cabal.project.profiling
-# (-O2, -fprof-late). Note: profiling perturbs timing — use `profile-bench` for
-# wall-clock numbers.
-profile-prof mode count="5000" queue="1000" payload="0" backend="kent":
-  mkdir -p profiles
-  SENTRY_PROFILE_BACKEND={{backend}} cabal run sentry:exe:sentry-profile \
-    -j{{jobs}} \
-    --project-file cabal.project.profiling \
-    --builddir '{{bench_dir}}' \
-    -- {{mode}} {{count}} {{queue}} {{payload}} \
-    +RTS -p -hc -l -poprofiles/sentry-profile -olprofiles/sentry-profile.eventlog -RTS
-  profiteur profiles/sentry-profile.prof || true
-  eventlog2html profiles/sentry-profile.eventlog || true
-  @echo "artifacts under profiles/: sentry-profile.prof(.html) sentry-profile.eventlog(.html) sentry-profile.hp"
+# Run one transport leg under the profiling RTS against a separately-spawned TLS
+# backend (so the sink stays out of the client profile)
+# producing cost-centre
+# 
+# backend: h1 | h2.
+# 
+# Note: profiling perturbs timing, use `profile-time` for wall-clock numbers.
+profile-space backend="h2" count="50000" queue="1000" payload="0":
+  cabal build sentry:exe:sentry-profile sentry:exe:sentry-sink \
+    -j{{jobs}} --project-file cabal.project.profiling --builddir '{{bench_dir}}'
+  scripts/profile-space.sh \
+    "$(cabal list-bin sentry:exe:sentry-profile --project-file cabal.project.profiling --builddir '{{bench_dir}}')" \
+    "$(cabal list-bin sentry:exe:sentry-sink --project-file cabal.project.profiling --builddir '{{bench_dir}}')" \
+    {{backend}} {{count}} {{queue}} {{payload}}
 
-# Compare sync vs async wall-clock with hyperfine against a single long-lived
-# kent (normal build, kent flushed between runs so timing excludes its boot).
-# The kent/hyperfine orchestration lives in scripts/profile-bench.sh.
-profile-bench count="5000" queue="1000" payload="0":
-  cabal build sentry:exe:sentry-profile -j{{jobs}} --builddir '{{build_dir}}' --ghc-options '{{ghc_opts}}'
-  scripts/profile-bench.sh \
+# Compare HTTP/1.1 vs HTTP/2 wall-clock with hyperfine against a single
+# separately-spawned TLS backend.
+profile-time count="50000" queue="1000" payload="0":
+  cabal build sentry:exe:sentry-profile sentry:exe:sentry-sink -j{{jobs}} --builddir '{{build_dir}}' --ghc-options '{{ghc_opts}} -O2'
+  scripts/profile-time.sh \
     "$(cabal list-bin sentry:exe:sentry-profile --builddir '{{build_dir}}')" \
+    "$(cabal list-bin sentry:exe:sentry-sink --builddir '{{build_dir}}')" \
     {{count}} {{queue}} {{payload}}
 
 ghciwatch target=package:

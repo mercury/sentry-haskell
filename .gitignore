@@ -12,6 +12,7 @@ dist-newstyle/*
 cabal/*
 
 # GHC profiling artifacts
+profiles/*
 **/*.prof*
 **/*.hp
 **/*.eventlog

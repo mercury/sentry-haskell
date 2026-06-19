@@ -1,38 +1,54 @@
+-- This harness deliberately exercises the experimental HTTP/2 transport, so
+-- silence its experimental-use warning.
+{-# OPTIONS_GHC -Wno-x-sentry-experimental #-}
+
 -- | End-to-end profiling harness for the HTTP transports.
 --
--- Pushes a fixed number of envelopes through either the synchronous or the
--- asynchronous HTTP transport against a @kent-server@ backend, then flushes and
--- shuts the transport down.
+-- Pushes a fixed number of envelopes through one of the HTTP transports against
+-- a TLS sink, then flushes and shuts the transport down.  It is a single
+-- deterministic pass so it can be driven by both @hyperfine@ and under the
+-- profiling RTS (@+RTS -p\/-hc\/-l@).
 --
--- It is a single deterministic pass so it can be driven by both @hyperfine@ and
--- under the profiling RTS (@+RTS -p\/-hc\/-l@).
+-- == What is compared
+--
+-- Both legs talk to the __same TLS sink__ ('Sentry.TestKit.Sink') over the same
+-- wire — Sentry is always TLS in production, so there is no plaintext leg.  The
+-- sink advertises ALPN @h2@ + @http\/1.1@; the client picks:
+--
+--   * @h1@ — HTTP\/1.1 over TLS via @http-client@ ('Sentry.Transport.HTTP.Sync'
+--     / '…HTTP.Async'), selected by the @mode@ argument.
+--   * @h2@ — HTTP\/2 over TLS ('Sentry.Transport.HTTP2.Async'); always async,
+--     so the @mode@ argument is ignored.
+--
+-- == Sink selection
+--
+-- If @SENTRY_PROFILE_SINK_PORT@ is set, the harness talks to an already-running
+-- standalone @sentry-sink@ on @SENTRY_PROFILE_SINK_HOST@ (default @127.0.0.1@)
+-- so the sink's CPU\/allocation stays out of the profiled process.  Otherwise it
+-- spins up an in-process discarding TLS sink (convenient for a one-shot
+-- @just profile-prof@, but then the profile includes the server side).
 --
 -- Usage:
 --
 -- > sentry-profile <sync|async> [count] [queueSize] [payloadBytes]
---
--- Backend selection (via @SENTRY_PROFILE_BACKEND@):
---
---   * @sink@ — an in-process keep-alive @warp@ server that discards requests
---     ('Sink.withSink'). Use this to measure the transport's steady-state send
---     path without per-request connection churn.
---   * unset \/ @kent@ — spawn a kent-server and verify delivery at the end. If
---     @SENTRY_PROFILE_KENT_PORT@ is set, instead talk to an already-running
---     kent on that port without managing its lifecycle (so @hyperfine@ can keep
---     kent boot\/teardown out of the timed region).
+-- >   env SENTRY_PROFILE_BACKEND   h1 | h2   (default h2)
+-- >   env SENTRY_PROFILE_SINK_HOST host       (default 127.0.0.1)
+-- >   env SENTRY_PROFILE_SINK_PORT port        (external sink; else in-process)
 module Main where
 
 import Control.Concurrent (threadDelay)
 import Data.Default (def)
-import Data.Foldable (for_)
 import Data.Kind (Type)
+import Data.Maybe (fromMaybe)
+import Data.Text qualified as Text
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
+import Network.Connection (TLSSettings (TLSSettings))
 import Network.HTTP.Client qualified as HttpClient
+import Network.HTTP.Client.TLS (mkManagerSettings)
+import Network.TLS (ClientHooks (..), ClientParams (..), defaultParamsClient)
 import Patrol qualified
+import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Sentry.TestKit.Gen qualified as Gen
-import Sentry.TestKit.Http2Sink qualified as Http2Sink
-import Sentry.TestKit.Kent (KentHandle (..))
-import Sentry.TestKit.Kent qualified as Kent
 import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttp
@@ -44,9 +60,13 @@ import System.Exit (die)
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 
--- | Which transport to exercise.
+-- | Which HTTP\/1.1 transport to exercise (h2 is always async).
 type Mode :: Type
 data Mode = Sync | Async
+
+-- | Which transport family to exercise.
+type Backend :: Type
+data Backend = H1 | H2
 
 -- | Tallied outcomes from a run.
 type Counts :: Type
@@ -75,35 +95,23 @@ defaultCount = 5000
 main :: IO ()
 main = do
   cfg <- parseArgs =<< getArgs
-  backend <- lookupEnv "SENTRY_PROFILE_BACKEND"
-  case backend of
-    -- Keep-alive in-process sink: no event store, so nothing to verify.
-    Just "sink" ->
-      Sink.withSink \sink ->
-        run cfg sink.manager (Sink.dsnFor sink "1") Nothing
-    -- In-process HTTP/2 TLS sink (ALPN h2 over self-signed cert).
-    -- Measures the pure serialize→frame→send path without a real network hop.
-    -- Mode arg is ignored; the HTTP/2 transport is always async.
-    Just "http2" ->
-      Http2Sink.withHttp2Sink \sink ->
-        runH2 cfg (Http2Sink.dsnFor sink "1")
-    -- kent, either an externally-managed instance or one we spawn + verify.
-    _ -> do
-      externalPort <- (>>= readMaybe) <$> lookupEnv "SENTRY_PROFILE_KENT_PORT"
-      case externalPort of
-        Just port -> do
-          manager <- HttpClient.newManager HttpClient.defaultManagerSettings
-          run cfg manager (Kent.dsnFor KentHandle{port, manager} "1") Nothing
-        Nothing ->
-          Kent.withKent \kent ->
-            -- kent retains only a bounded, most-recent window, so this is a
-            -- sanity check that delivery happened, not a full count.
-            run cfg kent.manager (Kent.dsnFor kent "1") (Just (length <$> Kent.listEvents kent))
+  backend <- parseBackend . fromMaybe "h2" =<< lookupEnv "SENTRY_PROFILE_BACKEND"
+  host <- fromMaybe "127.0.0.1" <$> lookupEnv "SENTRY_PROFILE_SINK_HOST"
+  externalPort <- (>>= readMaybe) <$> lookupEnv "SENTRY_PROFILE_SINK_PORT"
+  -- Either talk to a standalone sink (preferred — keeps the server out of the
+  -- profile) or spin up an in-process one for a quick standalone run.
+  let withDsn act = case externalPort of
+        Just port -> act (mkDsn host port)
+        Nothing -> Sink.withDiscardingSink \port -> act (mkDsn "127.0.0.1" port)
+  withDsn \dsn -> case backend of
+    H1 -> do
+      manager <- newTlsManager host
+      runH1 cfg manager dsn
+    H2 -> runH2 cfg dsn
 
--- | Drive a profiling run against an HTTP\/2 sink.
+-- | Drive a profiling run against the HTTP\/2 transport.
 --
 -- The HTTP\/2 transport is always asynchronous; the 'Mode' argument is ignored.
--- No event-store verification is performed (the sink discards bodies).
 runH2 :: Config -> Patrol.Dsn -> IO ()
 runH2 cfg dsn = do
   let envelope = mkEnvelope cfg dsn
@@ -121,16 +129,14 @@ runH2 cfg dsn = do
   _ <- Transport.flush transport 300
   _ <- Transport.shutdown transport 300
   end <- getCurrentTime
-  let elapsed = realToFrac (diffUTCTime end start) :: Double
-  report counts elapsed
+  report counts (realToFrac (diffUTCTime end start))
 
--- | Construct the configured transport, drive the run, and report. @verify@, if
--- present, is run after shutdown to report how many events the backend saw.
-run :: Config -> HttpClient.Manager -> Patrol.Dsn -> Maybe (IO Int) -> IO ()
-run cfg manager dsn verify = do
+-- | Drive a profiling run against the HTTP\/1.1 transport (sync or async).
+runH1 :: Config -> HttpClient.Manager -> Patrol.Dsn -> IO ()
+runH1 cfg manager dsn = do
   let envelope = mkEnvelope cfg dsn
   putStrLn $
-    "sentry-profile: "
+    "sentry-profile: h1-"
       <> modeLabel cfg.mode
       <> " count="
       <> show cfg.count
@@ -142,23 +148,18 @@ run cfg manager dsn verify = do
     Sync -> do
       transport <- SyncHttp.build def Nothing manager dsn
       counts <- drive transport cfg.count envelope
-      -- Generous timeouts: flush must drain the whole queue through real HTTP.
+      -- Generous timeouts: flush must drain the whole queue through real TLS.
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300
       pure counts
     Async -> do
       transport <- AsyncHttp.build def Nothing cfg.queueSize manager dsn
       counts <- drive transport cfg.count envelope
-      -- Generous timeouts: flush must drain the whole queue through real HTTP.
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300
       pure counts
   end <- getCurrentTime
-  let elapsed = realToFrac (diffUTCTime end start) :: Double
-  report counts elapsed
-  for_ verify \countSeen -> do
-    seen <- countSeen
-    putStrLn $ "  backend saw: " <> show seen
+  report counts (realToFrac (diffUTCTime end start))
 
 -- | Push @total@ envelopes all the way through the transport, applying
 -- backpressure on a full queue so every event traverses the worker rather than
@@ -185,6 +186,29 @@ report counts elapsed = do
   printf "  queue-full retries: %d\n" counts.retries
   printf "  shutdown drops: %d\n" counts.shutdownDropped
 
+-- | An @https@ DSN pointing at the sink for project @1@.
+mkDsn :: String -> Int -> Patrol.Dsn
+mkDsn host port =
+  Patrol.Dsn.Dsn
+    { Patrol.Dsn.protocol = "https",
+      Patrol.Dsn.publicKey = "public",
+      Patrol.Dsn.secretKey = "",
+      Patrol.Dsn.host = Text.pack host,
+      Patrol.Dsn.port = Just (fromIntegral port),
+      Patrol.Dsn.path = "/",
+      Patrol.Dsn.projectId = "1"
+    }
+
+-- | An @http-client@ manager that speaks TLS but skips certificate validation,
+-- so the sink's embedded self-signed cert is accepted without a trust anchor.
+newTlsManager :: String -> IO HttpClient.Manager
+newTlsManager host =
+  HttpClient.newManager (mkManagerSettings (TLSSettings params) Nothing)
+  where
+    base = defaultParamsClient host ""
+    -- Returning no failures accepts any certificate (dev/profiling only).
+    params = base{clientHooks = (clientHooks base){onServerCertificate = \_ _ _ _ -> pure []}}
+
 mkEnvelope :: Config -> Patrol.Dsn -> Patrol.Envelope
 mkEnvelope cfg dsn
   | cfg.payloadBytes > 0 = Gen.messageEnvelope dsn cfg.payloadBytes
@@ -194,6 +218,12 @@ modeLabel :: Mode -> String
 modeLabel = \case
   Sync -> "sync"
   Async -> "async"
+
+parseBackend :: String -> IO Backend
+parseBackend = \case
+  "h1" -> pure H1
+  "h2" -> pure H2
+  other -> die $ "unknown SENTRY_PROFILE_BACKEND " <> show other <> " (expected h1 or h2)"
 
 parseArgs :: [String] -> IO Config
 parseArgs = \case
@@ -215,7 +245,7 @@ parseArgs = \case
           payloadBytes = positional 2 0 rest
         }
   where
-    positional i fallback xs = maybe fallback id (readMaybe =<< nth i xs)
+    positional i fallback xs = fromMaybe fallback (readMaybe =<< nth i xs)
     nth i xs = case drop i xs of
       (x : _) -> Just x
       [] -> Nothing
@@ -231,10 +261,8 @@ usage =
       "  payloadBytes  if > 0, send a message event of this size instead of the",
       "                default exception event (default 0)",
       "",
-      "  env SENTRY_PROFILE_BACKEND    backend to use:",
-      "    'sink'      in-process HTTP/1.1 keep-alive warp server",
-      "    'http2'     in-process HTTP/2 TLS sink (ALPN h2, self-signed cert)",
-      "    unset/other spawn a kent-server and verify delivery at the end",
-      "  env SENTRY_PROFILE_KENT_PORT  talk to an already-running kent on this",
-      "                                port instead of spawning one"
+      "  env SENTRY_PROFILE_BACKEND    h1 (HTTP/1.1 over TLS) | h2 (HTTP/2); default h2",
+      "  env SENTRY_PROFILE_SINK_HOST  sink host (default 127.0.0.1)",
+      "  env SENTRY_PROFILE_SINK_PORT  talk to a standalone sentry-sink on this",
+      "                                port; if unset, spin up an in-process sink"
     ]

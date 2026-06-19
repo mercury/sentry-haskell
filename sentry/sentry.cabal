@@ -78,7 +78,6 @@ library
 library testkit
   exposed-modules:
       Sentry.TestKit.Gen
-      Sentry.TestKit.Http2Sink
       Sentry.TestKit.Kent
       Sentry.TestKit.Sink
   other-modules:
@@ -158,12 +157,58 @@ executable sentry-profile
     , base
     , bytestring
     , containers
+    , crypton-connection
     , data-default
     , hs-opentelemetry-instrumentation-http-client
     , http-client
+    , http-client-tls
     , http-types
     , patrol ==1.2.*
     , sentry
+    , sentry-core
+    , stm
+    , testkit
+    , text
+    , time
+    , tls
+    , transformers
+    , unagi-chan
+    , unliftio
+    , witch
+  default-language: GHC2024
+
+executable sentry-sink
+  main-is: Main.hs
+  other-modules:
+      Paths_sentry
+  autogen-modules:
+      Paths_sentry
+  hs-source-dirs:
+      sink
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      MultiWayIf
+      OverloadedRecordDot
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
+  build-depends:
+      aeson
+    , async
+    , atomic-primops
+    , attoparsec
+    , base
+    , bytestring
+    , containers
+    , data-default
+    , hs-opentelemetry-instrumentation-http-client
+    , http-types
+    , patrol ==1.2.*
     , sentry-core
     , stm
     , testkit

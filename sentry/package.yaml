@@ -61,9 +61,10 @@ internal-libraries:
       - zlib
 
 executables:
-  # End-to-end profiling harness: pushes envelopes through the sync/async HTTP
-  # transports against kent. Build under cabal.project.profiling and run with
-  # +RTS flags, or measure wall-clock with hyperfine. See `just profile-*`.
+  # End-to-end profiling harness: pushes envelopes through the HTTP/1.1 or
+  # HTTP/2 transport against a TLS sink. Build under cabal.project.profiling and
+  # run with +RTS flags, or measure wall-clock with hyperfine. See `just
+  # profile-*`.
   sentry-profile:
     source-dirs: profile
     main: Main.hs
@@ -76,6 +77,24 @@ executables:
       - sentry
       - testkit
       - http-client
+      # TLS client manager (cert validation disabled) for the HTTP/1.1 leg
+      - http-client-tls
+      - crypton-connection
+      - tls
+
+  # Standalone TLS sink for out-of-process profiling: run `sentry-sink <port>`
+  # and point sentry-profile at it via SENTRY_PROFILE_SINK_PORT so the sink's
+  # CPU/allocation stays out of the client's profile.
+  sentry-sink:
+    source-dirs: sink
+    main: Main.hs
+    ghc-options:
+      - -g
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-A32M -N"'
+    dependencies:
+      - testkit
 
 tests:
   unit:
