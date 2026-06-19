@@ -3,12 +3,14 @@ module Http2CaptureTest where
 import Control.Monad (replicateM_)
 import Data.Default (def)
 import Network.HTTP.Types qualified as Http
+import Network.HTTP2.TLS.Client qualified as HTTP2TLS
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Http2Sink qualified as Http2Sink
 import Sentry.Transport (FlushResponse (..))
 import Sentry.Transport qualified as Transport
-import Sentry.Transport.HTTP2.Async (Http2TransportOptions (..))
+import Sentry.Transport.HTTP2.Async (Http2Settings (..), Http2TransportOptions (..))
 import Sentry.Transport.HTTP2.Async qualified as Http2Async
+import Sentry.Transport.HTTP2.Connection (applyHttp2Settings)
 import Test.Hspec
 
 -- | Transport options for all specs: disable cert validation so the embedded
@@ -104,3 +106,61 @@ spec_rateLimitSentryHeader =
         _ <- Transport.flush transport 10
         reqs2 <- Http2Sink.received sink
         length reqs2 `shouldBe` 1 -- unchanged
+
+-- | Pure unit test for 'applyHttp2Settings': verify that 'Just' overrides
+-- replace the corresponding field in the base settings, and 'Nothing' fields
+-- leave the base value unchanged.
+spec_settingsMapping :: Spec
+spec_settingsMapping =
+  describe "applyHttp2Settings" do
+    it "applies Just overrides and preserves Nothing fields" $ do
+      let overrides =
+            Http2Settings
+              { tcpNoDelay = False, -- no socket-open side effect in this pure test
+                pingRateLimit = Just 999,
+                emptyFrameRateLimit = Just 42,
+                settingsRateLimit = Nothing,
+                rstRateLimit = Just 7,
+                connectionWindowSize = Just 1048576,
+                streamWindowSize = Just 32768,
+                maxConcurrentStreams = Just 16
+              }
+          base = HTTP2TLS.defaultSettings
+          result = applyHttp2Settings overrides base
+
+      -- Overridden fields take the supplied value.
+      HTTP2TLS.settingsPingRateLimit result `shouldBe` 999
+      HTTP2TLS.settingsEmptyFrameRateLimit result `shouldBe` 42
+      HTTP2TLS.settingsRstRateLimit result `shouldBe` 7
+      HTTP2TLS.settingsConnectionWindowSize result `shouldBe` 1048576
+      HTTP2TLS.settingsStreamWindowSize result `shouldBe` 32768
+      HTTP2TLS.settingsConcurrentStreams result `shouldBe` 16
+
+      -- Nothing field is preserved from the base.
+      HTTP2TLS.settingsSettingsRateLimit result
+        `shouldBe` HTTP2TLS.settingsSettingsRateLimit base
+
+-- | Smoke test: build the transport with non-default 'Http2Settings' and
+-- confirm that the h2\/TLS handshake still succeeds and envelopes are delivered.
+spec_customSettingsDelivery :: Spec
+spec_customSettingsDelivery =
+  describe "custom Http2Settings: handshake and delivery" do
+    it "delivers envelopes with non-default settings applied" $
+      Http2Sink.withHttp2Sink \sink -> do
+        let dsn = Http2Sink.dsnFor sink "1"
+            -- Use non-default values to exercise the settings path; TCP_NODELAY
+            -- is disabled to avoid any socket-option interaction in tests.
+            customSettings =
+              (def :: Http2Settings)
+                { tcpNoDelay = False,
+                  pingRateLimit = Just 50,
+                  connectionWindowSize = Just (4 * 1024 * 1024)
+                }
+            opts = tlsOpts{http2Settings = customSettings}
+        transport <- Http2Async.build opts Nothing 100 dsn
+        replicateM_ 3 $ Transport.send transport (Gen.sampleEnvelope dsn)
+        flushResult <- Transport.flush transport 10
+        flushResult `shouldBe` FlushSucceeded
+        reqs <- Http2Sink.received sink
+        length reqs `shouldBe` 3
+        all (\r -> r.httpVersion == Http.http20) reqs `shouldBe` True

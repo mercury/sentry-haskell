@@ -16,6 +16,11 @@
 --
 -- This allows the same executor to work with different HTTP libraries or
 -- custom delivery mechanisms.
+--
+-- == Concurrency
+--
+-- The worker drains the queue __serially__: at most one send is outstanding at
+-- a time.
 module Sentry.Transport.Executor.Async
   ( AsyncExecutor (..),
     ClientReportConfig (..),

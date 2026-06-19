@@ -1,12 +1,16 @@
 -- | HTTP\/2 connection management for Sentry transports.
 --
--- Maintains a single long-lived HTTP\/2 TLS connection to the Sentry ingest
--- endpoint via ALPN @h2@ negotiation.  The @https://@ DSN scheme is required;
--- plaintext h2c is not supported.
+-- @stability: experimental@
 --
--- The connection is established lazily on the first envelope send and is kept
--- alive for multiplexed use — the intended lifecycle is one connection per
--- 'ConnManager' for the life of the transport.
+-- __Status:__ this is the connection layer for the experimental HTTP\/2
+-- transport ('Sentry.Transport.HTTP2.Async')
+-- 
+-- Maintains a single long-lived HTTP\/2 TLS connection to the Sentry ingest
+-- endpoint via ALPN @h2@ negotiation.
+--
+-- A single long-lived HTTP\/2 TLS connection is maintained for the life of the
+-- connection; it is is established when the first envelope is sent, and
+-- reconnected transparently if the server closes it.
 --
 -- == Threading model
 --
@@ -16,12 +20,16 @@
 -- so no additional locking is needed.
 --
 -- The HTTP\/2 runner ('Network.HTTP2.TLS.Client.runWithConfig') is forked on
--- its own 'Async' thread.  The runner thread blocks until the shutdown 'MVar'
--- is filled or the server disconnects.
+-- its own 'Async' thread, which blocks until the shutdown 'MVar' is filled or
+-- the server disconnects.
 module Sentry.Transport.HTTP2.Connection
   ( -- * Connection target
     ConnTarget (..),
     connTargetFromDsn,
+
+    -- * HTTP\/2 protocol settings
+    Http2Settings (..),
+    applyHttp2Settings,
 
     -- * Reconnect decision
     ReconnectDecision (..),
@@ -47,8 +55,10 @@ import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
+import Data.Default (Default (def))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Encoding
@@ -56,7 +66,8 @@ import Network.HTTP.Semantics qualified as HTTPSemantics
 import Network.HTTP.Types (RequestHeaders, ResponseHeaders, methodPost)
 import Network.HTTP2.Client qualified as HTTP2
 import Network.HTTP2.TLS.Client qualified as HTTP2TLS
-import Network.Socket (PortNumber)
+import Network.Run.TCP qualified as NetworkRun
+import Network.Socket (PortNumber, SocketOption (NoDelay))
 import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
@@ -72,7 +83,7 @@ data ConnTarget = ConnTarget
   { -- | Hostname without port; used for both the TCP connection and the TLS
     -- SNI\/HTTP\/2 @:authority@ pseudo-header.
     host :: String,
-    -- | TCP port.  Defaults to 443 when the DSN omits it.
+    -- | TCP port; defaults to 443 when the DSN omits it.
     port :: PortNumber,
     -- | Pre-built request path, e.g. @\"/api\/42\/envelope\/\"@.
     path :: ByteString,
@@ -83,9 +94,6 @@ data ConnTarget = ConnTarget
   }
 
 -- | Derive a 'ConnTarget' from a 'Patrol.Dsn'.
---
--- The @https://@ scheme is required; the HTTP\/2 transport does not support
--- plaintext h2c.
 connTargetFromDsn :: Compression -> Patrol.Dsn -> ConnTarget
 connTargetFromDsn compression dsn =
   ConnTarget
@@ -103,23 +111,127 @@ connTargetFromDsn compression dsn =
       compression
     }
 
+-- | HTTP\/2 protocol-level settings applied when establishing a connection.
+--
+-- These map directly onto the fields of 'Network.HTTP2.TLS.Client.Settings'.
+-- 'Nothing' values leave the corresponding @http2-tls@ default unchanged.
+type Http2Settings :: Type
+data Http2Settings = Http2Settings
+  { -- | Enable @TCP_NODELAY@ on the client socket.
+    --
+    -- When @True@ (the default), each envelope write flushes immediately;
+    -- with Nagle enabled, delayed-ACK on the server side can add up to
+    -- ~40 ms of latency per small bursty send.
+    --
+    -- Leave at the default unless you send very few very large envelopes
+    -- and care more about throughput than latency.
+    tcpNoDelay :: Bool,
+    -- | Maximum number of HTTP\/2 PING frames accepted per second from the
+    -- peer before sending @ENHANCE_YOUR_CALM@ (CVE-2019-9512).
+    --
+    -- Default: @Just 100@.
+    --
+    -- The @http2-tls@ library default is 10\/s, which is low enough to trigger
+    -- against some aggressive load balancers or TLS-terminating proxies.
+    --
+    -- Set to @Just maxBound@ to disable this protection entirely when
+    -- connecting to a fully trusted peer.
+    pingRateLimit :: Maybe Int,
+    -- | Maximum number of empty DATA\/HEADERS\/CONTINUATION frames accepted
+    -- per second from the peer (CVE-2019-9518).
+    --
+    -- Default: @Nothing@ (keep @http2-tls@ default, currently 4\/s).
+    emptyFrameRateLimit :: Maybe Int,
+    -- | Maximum number of SETTINGS frames accepted per second from the peer
+    -- (CVE-2019-9515).
+    --
+    -- Default: @Nothing@ (keep @http2-tls@ default, currently 4\/s).
+    settingsRateLimit :: Maybe Int,
+    -- | Maximum number of RST_STREAM frames accepted per second from the peer
+    -- (CVE-2023-44487, \"Rapid Reset\").
+    --
+    -- Default: @Nothing@ (keep @http2-tls@ default, currently 4\/s).
+    rstRateLimit :: Maybe Int,
+    -- | HTTP\/2 connection flow-control window size in bytes.
+    --
+    -- Default: @Nothing@ (keep @http2-tls@ default, currently 16 MiB).
+    -- Only relevant under concurrent stream use; the current transport sends
+    -- one stream at a time so the default is safe.
+    connectionWindowSize :: Maybe Int,
+    -- | HTTP\/2 per-stream flow-control window size in bytes
+    -- (@SETTINGS_INITIAL_WINDOW_SIZE@).
+    --
+    -- Default: @Nothing@ (keep @http2-tls@ default, currently 256 KiB).
+    streamWindowSize :: Maybe Int,
+    -- | Maximum number of concurrent incoming streams announced to the peer
+    -- (@SETTINGS_MAX_CONCURRENT_STREAMS@).
+    --
+    -- Default: @Nothing@ (keep @http2-tls@ default, currently 64).
+    maxConcurrentStreams :: Maybe Int
+  }
+
+-- | Defaults: TCP_NODELAY enabled, ping rate limit raised to 100\/s,
+-- all other knobs at @http2-tls@ library defaults.
+instance Default Http2Settings where
+  def =
+    Http2Settings
+      { tcpNoDelay = True,
+        pingRateLimit = Just 100,
+        emptyFrameRateLimit = Nothing,
+        settingsRateLimit = Nothing,
+        rstRateLimit = Nothing,
+        connectionWindowSize = Nothing,
+        streamWindowSize = Nothing,
+        maxConcurrentStreams = Nothing
+      }
+
+-- | Apply an 'Http2Settings' override record to a base 'HTTP2TLS.Settings'.
+--
+-- 'Nothing' fields leave the corresponding base value unchanged; 'Just'
+-- fields replace it.
+--
+-- 'tcpNoDelay' installs a custom 'HTTP2TLS.settingsOpenClientSocket' that
+-- opens the socket with @TCP_NODELAY@ set.
+applyHttp2Settings :: Http2Settings -> HTTP2TLS.Settings -> HTTP2TLS.Settings
+applyHttp2Settings s base =
+  base
+    { HTTP2TLS.settingsPingRateLimit =
+        fromMaybe (HTTP2TLS.settingsPingRateLimit base) s.pingRateLimit,
+      HTTP2TLS.settingsEmptyFrameRateLimit =
+        fromMaybe (HTTP2TLS.settingsEmptyFrameRateLimit base) s.emptyFrameRateLimit,
+      HTTP2TLS.settingsSettingsRateLimit =
+        fromMaybe (HTTP2TLS.settingsSettingsRateLimit base) s.settingsRateLimit,
+      HTTP2TLS.settingsRstRateLimit =
+        fromMaybe (HTTP2TLS.settingsRstRateLimit base) s.rstRateLimit,
+      HTTP2TLS.settingsConnectionWindowSize =
+        fromMaybe (HTTP2TLS.settingsConnectionWindowSize base) s.connectionWindowSize,
+      HTTP2TLS.settingsStreamWindowSize =
+        fromMaybe (HTTP2TLS.settingsStreamWindowSize base) s.streamWindowSize,
+      HTTP2TLS.settingsConcurrentStreams =
+        fromMaybe (HTTP2TLS.settingsConcurrentStreams base) s.maxConcurrentStreams,
+      HTTP2TLS.settingsOpenClientSocket =
+        if s.tcpNoDelay
+          then \addr -> NetworkRun.openClientSocketWithOptions [(NoDelay, 1)] addr
+          else HTTP2TLS.settingsOpenClientSocket base
+    }
+
 -- | Decision returned by a reconnect policy after a failed connection attempt.
 --
--- A reconnect policy is simply an @'IO' 'ReconnectDecision'@ action.  It
--- runs on the worker thread after 'tryConnect' fails, so blocking inside
--- the action (e.g. via 'threadDelay') applies natural back-pressure
--- without a separate retry loop.
+-- A reconnect policy is simply an @'IO' 'ReconnectDecision'@ action, which
+-- runs on the worker thread after 'tryConnect' fails.
 --
--- The default policy is @pure 'DontReconnect'@.  Use 'reconnectAfter' or
+-- The default policy is @pure 'DontReconnect'@; use 'reconnectAfter' or
 -- 'exponentialBackoff' for common retry patterns.
 type ReconnectDecision :: Type
 data ReconnectDecision
-  = -- | Do not attempt to reconnect.  Subsequent sends fail immediately
-    -- without touching the network.
+  = -- | Do not attempt to reconnect; subsequent sends fail immediately without
+    -- touching the network.
     DontReconnect
   | -- | Allow another connection attempt, applying the enclosed policy on
-    -- the /next/ failure.  This enables chained patterns like exponential
-    -- backoff: each step returns a new action with a longer delay.
+    -- the /next/ failure.
+    --
+    -- This enables chained patterns like exponential backoff: each step
+    -- returns a new action with a longer delay.
     DoReconnect (IO ReconnectDecision)
 
 -- | Reconnect after a fixed delay, retrying indefinitely.
@@ -173,26 +285,32 @@ data ConnManager = ConnManager
     -- | Whether to validate TLS server certificates.
     validateCert :: Bool,
     -- | How long to wait for the HTTP\/2 handshake before giving up,
-    -- in microseconds.  See 'Http2TransportOptions.connectTimeout'.
+    -- in microseconds.
+    --
+    -- See 'Http2TransportOptions.connectTimeout'.
     connectTimeout :: Int,
+    -- | HTTP\/2 protocol settings applied on every new connection.
+    http2Settings :: Http2Settings,
     -- | The policy to restore when a connection attempt succeeds, so the
     -- next failure starts from the beginning of the backoff sequence.
     initialReconnectPolicy :: IO ReconnectDecision,
     -- | The policy action to run after the /next/ failed 'tryConnect'.
+    -- 
     -- 'Nothing' means a prior 'DontReconnect' decision was already made;
     -- all future sends will fail immediately without touching the network.
     currentReconnectPolicy :: IORef (Maybe (IO ReconnectDecision))
   }
 
 -- | Create a new 'ConnManager'.  No connection is established yet.
-newConnManager :: ConnTarget -> Bool -> Int -> IO ReconnectDecision -> IO ConnManager
-newConnManager target validateCert connectTimeout initialReconnectPolicy = do
+newConnManager :: ConnTarget -> Bool -> Int -> Http2Settings -> IO ReconnectDecision -> IO ConnManager
+newConnManager target validateCert connectTimeout http2Settings initialReconnectPolicy = do
   activeConn <- newIORef Nothing
   currentReconnectPolicy <- newIORef (Just initialReconnectPolicy)
-  pure ConnManager{activeConn, target, validateCert, connectTimeout, initialReconnectPolicy, currentReconnectPolicy}
+  pure ConnManager{activeConn, target, validateCert, connectTimeout, http2Settings, initialReconnectPolicy, currentReconnectPolicy}
 
--- | Signal the runner thread to return and cancel it. Idempotent: safe to call
--- on an already-dead connection (the 'tryPutMVar' and 'cancel' both no-op).
+-- | Signal the runner thread to return and cancel it.
+--
+-- Idempotency: safe to call on an already-dead connection.
 teardownConn :: ActiveConn -> IO ()
 teardownConn conn = do
   _ <- tryPutMVar conn.connShutdown ()
@@ -201,7 +319,7 @@ teardownConn conn = do
 -- | Gracefully close the active connection, if any, and wait for the runner
 -- thread to terminate.
 --
--- Safe to call multiple times.
+-- Idempotency: safe to call multiple times.
 closeConnManager :: ConnManager -> IO ()
 closeConnManager mgr =
   readIORef mgr.activeConn >>= \case
@@ -211,8 +329,6 @@ closeConnManager mgr =
       teardownConn conn
 
 -- | Attempt to establish a connection and store it in 'activeConn'.
---
--- On failure (DNS, TLS, refused, …) 'activeConn' is left as 'Nothing'.
 tryConnect :: ConnManager -> IO ()
 tryConnect mgr = do
   connShutdown <- newEmptyMVar
@@ -229,7 +345,7 @@ tryConnect mgr = do
   -- 'connShutdown', keeping the connection alive for the transport's lifetime.
   thread <-
     Async.async $
-      runHttp2 mgr.target mgr.validateCert $
+      runHttp2 mgr.target mgr.validateCert mgr.http2Settings $
         \sendReq _aux -> do
           atomically $ putTMVar sendRequestVar sendReq
           takeMVar connShutdown
@@ -264,12 +380,16 @@ tryConnect mgr = do
             }
 
 -- | Run an HTTP\/2 'HTTP2.Client' action over TLS to 'ConnTarget'.
-runHttp2 :: ConnTarget -> Bool -> HTTP2.Client a -> IO a
-runHttp2 tgt validateCert client =
+--
+-- Applies 'applyHttp2Settings' to
+-- @'HTTP2TLS.defaultSettings' { 'HTTP2TLS.settingsValidateCert' = validateCert }@.
+runHttp2 :: ConnTarget -> Bool -> Http2Settings -> HTTP2.Client a -> IO a
+runHttp2 tgt validateCert http2s client =
   let settings =
-        HTTP2TLS.defaultSettings
-          { HTTP2TLS.settingsValidateCert = validateCert
-          }
+        applyHttp2Settings http2s $
+          HTTP2TLS.defaultSettings
+            { HTTP2TLS.settingsValidateCert = validateCert
+            }
       clientConfig = HTTP2TLS.defaultClientConfig settings tgt.host
    in HTTP2TLS.runWithConfig clientConfig settings tgt.host tgt.port client
 

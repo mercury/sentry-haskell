@@ -40,6 +40,7 @@ library:
     - http2
     - http2-tls
     - network
+    - network-run
     - zlib
 
 # Shared test/bench support: the kent driver and event generators, used by both
@@ -116,6 +117,8 @@ tests:
       - tasty
       - tasty-discover
       - tasty-hspec
+      # settings mapping test
+      - http2-tls
 
 benchmarks:
   time:
