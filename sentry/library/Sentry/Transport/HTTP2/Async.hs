@@ -1,24 +1,23 @@
 -- | Asynchronous HTTP\/2 transport for Sentry.
 --
--- This transport wraps an 'AsyncExecutor' with HTTP\/2 envelope delivery via
--- 'Sentry.Transport.HTTP2.Connection.sendEnvelope'.  Envelopes are queued
--- and sent on a dedicated worker thread with rate limiting handled
--- automatically.
+-- @stability: experimental@
 --
--- A single long-lived HTTP\/2 TLS connection (ALPN @h2@) is maintained for the
--- life of the transport.  The connection is established lazily on the first
--- send and reconnected transparently if the server closes it.  The @https://@
--- DSN scheme is required; plaintext h2c is not supported.
+-- __Status:__ this transport is under active development and has not been as
+-- thoroughly tested as the HTTP\/1.1 transports; it makes no API or runtime
+-- stability guarantees.
+--
+-- Prefer the HTTP\/1.1 transport unless you specifically want a single
+-- multiplexed connection, for example to minimise sockets and handshakes on
+-- bursty, high-RTT links.
+--
+-- A single long-lived HTTP\/2 TLS connection is maintained for the life of the
+-- transport; it is is established when the first envelope is sent, and
+-- reconnected transparently if the server closes it.
 --
 -- TLS certificate validation is enabled by default and can be disabled via
--- 'Http2TransportOptions.validateCert'.
---
--- == Note on OpenTelemetry instrumentation
---
--- Unlike the HTTP\/1.1 transports, this backend does __not__ flow through the
--- @hs-opentelemetry-instrumentation-http-client@ layer; OTel spans are
--- therefore __not__ emitted for HTTP\/2 envelope sends.
+-- 'Http2TransportOptions.validateCert' **for testing only**.
 module Sentry.Transport.HTTP2.Async
+  {-# WARNING in "x-sentry-experimental" "The HTTP/2 transport is experimental and it makes no API or runtime stability guarantees, please use the HTTP/1.1 transport instead. Silence with -Wno-x-sentry-experimental." #-}
   ( -- * Async HTTP\/2 Transport
     AsyncHttp2Transport (..),
     new,
@@ -29,6 +28,7 @@ module Sentry.Transport.HTTP2.Async
 
     -- * Re-exports
     Compression (..),
+    Http2Settings (..),
     ReconnectDecision (..),
     reconnectAfter,
     exponentialBackoff,
@@ -52,7 +52,7 @@ import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
-import Sentry.Transport.HTTP2.Connection (ConnManager, ReconnectDecision (..), exponentialBackoff, reconnectAfter)
+import Sentry.Transport.HTTP2.Connection (ConnManager, Http2Settings (..), ReconnectDecision (..), exponentialBackoff, reconnectAfter)
 import Sentry.Transport.HTTP2.Connection qualified as Connection
 import Sentry.Transport.Delivery qualified as Delivery
 
@@ -88,18 +88,25 @@ data Http2TransportOptions = Http2TransportOptions
     -- Defaults to @pure 'DontReconnect'@: give up after the first failure
     -- so the transport never silently hammers an unreachable endpoint.
     -- Use 'reconnectAfter' or 'exponentialBackoff' for retry behaviour.
-    reconnectPolicy :: IO ReconnectDecision
+    reconnectPolicy :: IO ReconnectDecision,
+    -- | HTTP\/2 protocol-level settings (flow-control windows, rate-limit
+    -- overrides, TCP_NODELAY).
+    --
+    -- Defaults to 'def': TCP_NODELAY enabled, ping rate limit raised to
+    -- 100\/s, all other knobs at @http2-tls@ library defaults.
+    http2Settings :: Http2Settings
   }
 
 -- | Defaults: 'Gzip' compression, TLS certificate validation enabled,
--- 30-second connect timeout, no reconnect on failure.
+-- 30-second connect timeout, no reconnect on failure, 'def' HTTP\/2 settings.
 instance Default Http2TransportOptions where
   def =
     Http2TransportOptions
       { compression = def,
         validateCert = True,
         connectTimeout = 30_000_000,
-        reconnectPolicy = pure DontReconnect
+        reconnectPolicy = pure DontReconnect,
+        http2Settings = def
       }
 
 -- | Create a 'TransportProvider' that will build an 'AsyncHttp2Transport' when
@@ -135,7 +142,7 @@ build opts clientReports queueSize dsn = do
           }
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
       connTarget = Connection.connTargetFromDsn opts.compression dsn
-  connManager <- Connection.newConnManager connTarget opts.validateCert opts.connectTimeout opts.reconnectPolicy
+  connManager <- Connection.newConnManager connTarget opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn envelope rateLimiter = do
         now <- getCurrentTime
         outcome <- Connection.sendEnvelope connManager envelope
