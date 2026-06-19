@@ -100,6 +100,30 @@ executables:
     dependencies:
       - testkit
 
+  # THROWAWAY probe: does h2 multiplexing beat h1 pooling under concurrency +
+  # injected RTT? Bypasses the executor and drives concurrent sends directly.
+  # Delete once the concurrency question is settled.
+  sentry-concprobe:
+    source-dirs: concprobe
+    main: Main.hs
+    ghc-options:
+      - -g
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-A32M -N"'
+    dependencies:
+      - sentry
+      - testkit
+      - async
+      - http-client
+      - http-client-tls
+      - crypton-connection
+      - tls
+      - wai
+      - warp
+      - warp-tls
+      - network
+
 tests:
   unit:
     source-dirs: tests/unit

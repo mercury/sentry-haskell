@@ -132,6 +132,58 @@ library testkit
     , zlib
   default-language: GHC2024
 
+executable sentry-concprobe
+  main-is: Main.hs
+  other-modules:
+      Paths_sentry
+  autogen-modules:
+      Paths_sentry
+  hs-source-dirs:
+      concprobe
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      MultiWayIf
+      OverloadedRecordDot
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
+  build-depends:
+      aeson
+    , async
+    , atomic-primops
+    , attoparsec
+    , base
+    , bytestring
+    , containers
+    , crypton-connection
+    , data-default
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
+    , http-client
+    , http-client-tls
+    , http-types
+    , network
+    , patrol ==1.2.*
+    , sentry
+    , sentry-core
+    , stm
+    , testkit
+    , text
+    , time
+    , tls
+    , transformers
+    , unagi-chan
+    , unliftio
+    , wai
+    , warp
+    , warp-tls
+    , witch
+  default-language: GHC2024
+
 executable sentry-profile
   main-is: Main.hs
   other-modules:
