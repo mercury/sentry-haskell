@@ -55,7 +55,7 @@ library
     , bytestring
     , containers
     , data-default
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-client-tls
     , http-semantics
     , http-types
@@ -109,7 +109,7 @@ library testkit
     , data-default
     , directory
     , file-embed
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-client
     , http-types
     , network
@@ -159,7 +159,7 @@ executable sentry-profile
     , containers
     , crypton-connection
     , data-default
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-client
     , http-client-tls
     , http-types
@@ -206,7 +206,7 @@ executable sentry-sink
     , bytestring
     , containers
     , data-default
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-types
     , patrol ==1.2.*
     , sentry-core
@@ -258,7 +258,7 @@ test-suite integration
     , bytestring
     , containers
     , data-default
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , hspec
     , http-types
     , http2-tls
@@ -312,7 +312,7 @@ test-suite unit
     , bytestring
     , containers
     , data-default
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , hspec
     , http-types
     , patrol ==1.2.*
@@ -360,7 +360,7 @@ benchmark time
     , bytestring
     , containers
     , data-default
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-types
     , patrol ==1.2.*
     , sentry

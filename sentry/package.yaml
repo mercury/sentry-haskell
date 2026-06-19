@@ -23,7 +23,7 @@ dependencies:
   - atomic-primops
   - attoparsec
   - data-default
-  - hs-opentelemetry-instrumentation-http-client
+  - hs-opentelemetry-instrumentation-http-client ^>= 1.0
   - http-types
   - patrol ^>= 1.2
   - sentry-core

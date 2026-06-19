@@ -144,7 +144,7 @@ sendEnvelope manager otelConfig prepared envelope =
   -- @http-client@'s status-code check to a no-op.
   liftIO . handle (pure . Left . exceptionContent) $ do
     let request = Request.attach prepared envelope
-    response <- HttpClient.httpLbs otelConfig request manager
+    response <- HttpClient.httpLbs' otelConfig request manager
     let status = HttpTypes.statusCode . HttpClient.responseStatus $ response
         responseNoBody = void response
     pure $

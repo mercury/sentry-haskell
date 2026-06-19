@@ -64,8 +64,8 @@ library
     , data-default
     , deepseq
     , exceptions
-    , hs-opentelemetry-api
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-api ==1.0.*
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , mtl
     , network-bsd
     , network-uri
@@ -125,8 +125,8 @@ test-suite unit
     , data-default
     , deepseq
     , exceptions
-    , hs-opentelemetry-api
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-api ==1.0.*
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , hspec
     , mtl
     , network-bsd
@@ -177,8 +177,8 @@ benchmark space
     , data-default
     , deepseq
     , exceptions
-    , hs-opentelemetry-api
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-api ==1.0.*
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , mtl
     , network-bsd
     , network-uri
@@ -226,8 +226,8 @@ benchmark time
     , data-default
     , deepseq
     , exceptions
-    , hs-opentelemetry-api
-    , hs-opentelemetry-instrumentation-http-client
+    , hs-opentelemetry-api ==1.0.*
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , mtl
     , network-bsd
     , network-uri
