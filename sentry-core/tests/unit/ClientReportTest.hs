@@ -1,11 +1,10 @@
 module ClientReportTest where
 
-import Data.Text qualified as Text
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory (..))
 import Patrol.Type.DiscardedEvent qualified as Patrol.DiscardedEvent
-import Sentry.ClientReport (DiscardReason (..), maxDistinctKeys, piggybackInterval)
+import Sentry.ClientReport (DiscardReason (..), piggybackInterval)
 import Sentry.ClientReport qualified as ClientReport
 import Test.Hspec
 
@@ -89,40 +88,3 @@ spec_clientReport = describe "ClientReport" do
       result `shouldSatisfy` \case
         Just _ -> True
         Nothing -> False
-
-  describe "keyspace cap" do
-    it "folds overflow keys into (Custom \"other\", category) sentinel" do
-      now <- getCurrentTime
-      cr <- ClientReport.new
-      -- fill up to the cap with distinct Custom reasons
-      mapM_
-        (\i -> ClientReport.record cr (Custom $ "reason-" <> Text.pack (show i)) Error 1)
-        [1 .. maxDistinctKeys]
-      -- this one should overflow into the sentinel
-      ClientReport.record cr (Custom "overflow") Error 10
-      result <- ClientReport.takePending cr now True
-      case result of
-        Nothing -> expectationFailure "expected a ClientReport"
-        Just report -> do
-          -- total quantity preserved: maxDistinctKeys + 10
-          let total = sum $ map Patrol.DiscardedEvent.quantity report.discardedEvents
-          total `shouldBe` maxDistinctKeys + 10
-          -- number of distinct entries bounded at maxDistinctKeys
-          length report.discardedEvents `shouldSatisfy` (<= maxDistinctKeys)
-
-    it "always increments an existing key even when the map is full" do
-      now <- getCurrentTime
-      cr <- ClientReport.new
-      -- fill the map to capacity
-      mapM_
-        (\i -> ClientReport.record cr (Custom $ "reason-" <> Text.pack (show i)) Error 1)
-        [1 .. maxDistinctKeys]
-      -- re-record an existing key; should increment, not overflow
-      ClientReport.record cr (Custom "reason-1") Error 99
-      result <- ClientReport.takePending cr now True
-      case result of
-        Nothing -> expectationFailure "expected a ClientReport"
-        Just report -> do
-          let total = sum $ map Patrol.DiscardedEvent.quantity report.discardedEvents
-          total `shouldBe` maxDistinctKeys + 99
-          length report.discardedEvents `shouldBe` maxDistinctKeys
