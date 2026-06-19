@@ -14,6 +14,9 @@ license-file:   LICENSE
 build-type:     Simple
 tested-with:
     GHC == { 9.10.3, 9.12.2 }
+extra-source-files:
+    testkit/certs/localhost.crt
+    testkit/certs/localhost.key
 
 library
   exposed-modules:
@@ -59,7 +62,6 @@ library
     , http2
     , http2-tls
     , network
-    , network-run
     , patrol ==1.2.*
     , sentry-core
     , stm
@@ -75,6 +77,7 @@ library
 library testkit
   exposed-modules:
       Sentry.TestKit.Gen
+      Sentry.TestKit.Http2Sink
       Sentry.TestKit.Kent
       Sentry.TestKit.Sink
   other-modules:
@@ -105,6 +108,7 @@ library testkit
     , containers
     , data-default
     , directory
+    , file-embed
     , hs-opentelemetry-instrumentation-http-client
     , http-client
     , http-types
@@ -120,7 +124,9 @@ library testkit
     , unliftio
     , wai
     , warp
+    , warp-tls
     , witch
+    , zlib
   default-language: GHC2024
 
 executable sentry-profile
@@ -175,6 +181,7 @@ test-suite integration
       CaptureEventTest
       ClientReportTest
       DropPathTest
+      Http2CaptureTest
       ShutdownTest
       Paths_sentry
   autogen-modules:
