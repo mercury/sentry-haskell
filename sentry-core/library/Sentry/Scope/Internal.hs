@@ -190,7 +190,7 @@ modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS_ ref f
 -- than using this reference directly.
 processGlobal :: Scope
 processGlobal = Scope $ unsafePerformIO $ newIORef (def{type_ = Just Global})
-{-# NOINLINE processGlobalScope #-}
+{-# NOINLINE processGlobal #-}
 
 -- | Thread-local context key for a per-thread global scope override.
 globalKey :: Key Scope
