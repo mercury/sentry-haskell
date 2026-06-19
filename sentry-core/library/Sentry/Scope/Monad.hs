@@ -50,23 +50,32 @@ withScope action = MonadMask.bracket acquire release \(_, scope) ->
 -- This is the @MonadMask@\/@MonadIO@ variant; see "Sentry.Scope.IO" for the
 -- @MonadUnliftIO@ version.
 withIsolationScope :: forall m a. (MonadMask m, MonadIO m) => (Scope -> m a) -> m a
-withIsolationScope action = MonadMask.bracket acquire release \(_, scope) ->
+withIsolationScope action = MonadMask.bracket acquire release \(_, _, scope) ->
   catchAndAnnotate (action scope) Scope.readAmbientScope
   where
-    acquire :: m (Maybe Scope, Scope)
+    -- Per the scopes spec, forking the isolation scope MUST also fork the
+    -- current scope at the same time, so that current-scope mutations within
+    -- the block are likewise isolated and users need not call both 'withScope'
+    -- and 'withIsolationScope'. The action receives the isolation scope handle.
+    acquire :: m (Maybe Scope, Maybe Scope, Scope)
     acquire = do
       context <- ThreadLocal.getContext
-      scope <- case Scope.lookupIsolation context of
+      isolationScope <- case Scope.lookupIsolation context of
         Nothing -> Scope.create Scope.Isolation
         Just s -> Scope.clone s
-      let parentScope = Scope.lookupIsolation context
-      ThreadLocal.adjustContext (Scope.insertIsolation scope)
-      pure (parentScope, scope)
+      currentScope <- case Scope.lookupCurrent context of
+        Nothing -> Scope.create Scope.Current
+        Just s -> Scope.clone s
+      let parentIsolation = Scope.lookupIsolation context
+          parentCurrent = Scope.lookupCurrent context
+      ThreadLocal.adjustContext (Scope.insertCurrent currentScope . Scope.insertIsolation isolationScope)
+      pure (parentIsolation, parentCurrent, isolationScope)
 
-    release :: (Maybe Scope, Scope) -> m ()
-    release (parentScope, _) =
+    release :: (Maybe Scope, Maybe Scope, Scope) -> m ()
+    release (parentIsolation, parentCurrent, _) =
       ThreadLocal.adjustContext \ctx ->
-        maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentScope
+        let withIso = maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentIsolation
+         in maybe (Scope.removeCurrent withIso) (`Scope.insertCurrent` withIso) parentCurrent
 
 -- | Catch synchronous exceptions and annotate them with merged scope metadata.
 -- Async exceptions are re-thrown immediately. If the exception already carries
