@@ -24,6 +24,7 @@ import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import System.IO.Unsafe (unsafePerformIO)
 import Test.Hspec
 import UnliftIO.Exception (SomeException (..), displayException, finally, fromException, throwIO)
+import UnliftIO.Timeout qualified as UnliftIO (timeout)
 
 spec_send :: Spec
 spec_send = parallel $ describe "sending envelopes" do
@@ -160,6 +161,44 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
     -- envelope should never have sent
     envelope <- atomically $ tryReadTQueue q
     envelope `shouldBe` Nothing
+
+  it "kills in-flight concurrent sends when shutdown times out" do
+    -- With cap > 1 a timed-out shutdown must abort every send still in flight
+    -- (the `for_ senders killThread` fan-out) so none outlive the executor.
+    -- Each send blocks forever on `block`; its `finally` fires only if the
+    -- thread is actually interrupted.
+    let cap = 3 :: Int
+    inflight <- newTVarIO (0 :: Int)
+    killed <- newTVarIO (0 :: Int)
+    block <- newEmptyMVar
+    let sendFn _ =
+          ( do
+              atomically $ modifyTVar' inflight (+ 1)
+              -- Never completes: `block` is never filled.
+              readMVar block
+              pure okOutcome
+          )
+            `finally` atomically (modifyTVar' killed (+ 1))
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions (cap * 2) cap) Nothing sendFn
+    replicateM_ cap (void $ Transport.send executor testEnvelope)
+    -- Wait until all cap sends are simultaneously in flight before shutting down.
+    atomically $ readTVar inflight >>= \n -> when (n < cap) retry
+    -- Every send is wedged on `block`, so the graceful drain cannot finish and
+    -- shutdown must fall back to force-cancelling the worker.
+    shutdownRes <- Transport.shutdown executor 0.05
+    shutdownRes `shouldBe` Transport.ShutdownFailed_TimedOut 0.05
+    -- The dispatcher was cancelled, not allowed to exit cleanly.
+    Async.poll executor.handle >>= \case
+      Nothing -> do
+        Async.cancel executor.handle
+        expectationFailure "dispatcher should have been cancelled"
+      Just (Left exc) -> fromException exc `shouldBe` Just Async.AsyncCancelled
+      Just (Right ()) -> expectationFailure "dispatcher should have been cancelled, not exited cleanly"
+    -- Every in-flight send was killed (its `finally` ran); if any slot's thread
+    -- were leaked this would never reach cap and the wait would time out.
+    reaped <- UnliftIO.timeout 1_000_000 do
+      atomically $ readTVar killed >>= \n -> when (n < cap) retry
+    reaped `shouldBe` Just ()
 
   it "stops processing envelopes" do
     let sendFn _ = pure okOutcome
@@ -376,6 +415,25 @@ spec_concurrency = parallel $ describe "concurrent fan-out" do
       Just (Right ()) -> expectationFailure "dispatcher exited unexpectedly"
     shutdownRes <- Transport.shutdown executor 5
     shutdownRes `shouldBe` Transport.ShutdownSucceeded
+
+  it "delivers every envelope when many sends churn through the slots" do
+    -- Far more sends than slots, so each slot is acquired and released many
+    -- times over. Exercises slot recycling under churn: a miscounted slot would
+    -- either wedge the dispatcher (flush times out) or drop sends (count < total).
+    let cap = 8 :: Int
+        total = 200 :: Int
+    q <- newTQueueIO
+    let sendFn = testSendFn q okOutcome
+    -- Queue is sized to hold every task so no send is dropped for QueueFull;
+    -- the point under test is slot recycling, not queue backpressure.
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions total cap) Nothing sendFn
+    results <- replicateM total (Transport.send executor testEnvelope)
+    results `shouldSatisfy` all (== Transport.SendProcessed)
+    flushRes <- Transport.flush executor 5
+    flushRes `shouldBe` Transport.FlushSucceeded
+    -- Every envelope was delivered exactly once: no loss, no duplication, no hang.
+    delivered <- atomically $ flushTQueue q
+    length delivered `shouldBe` total
 
 -- | Every discarded-event category carried by an envelope's client reports.
 reportCategories :: Patrol.Envelope -> [DataCategory.DataCategory]
