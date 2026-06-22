@@ -30,6 +30,7 @@ module Sentry.TestKit.Sink
     SinkHandle (..),
     withSink,
     received,
+    connectionsOpened,
 
     -- * Discarding sink (profiling)
     withDiscardingSink,
@@ -110,7 +111,12 @@ data SinkHandle = SinkHandle
   { port :: Int,
     -- | @(request-count, requests-in-reverse-arrival-order)@
     recordRef :: IORef (Int, [RecordedRequest]),
-    responderRef :: IORef Responder
+    responderRef :: IORef Responder,
+    -- | Count of TCP connections accepted by the server.  For an HTTP\/2 client
+    -- multiplexing many streams this stays at @1@; the HTTP\/1.1 client opens
+    -- one per pooled connection.  Useful for asserting single-flight connection
+    -- behaviour under concurrent sends.
+    connRef :: IORef Int
   }
 
 -- | Start a recording TLS sink on an OS-assigned free port, run the action,
@@ -120,8 +126,11 @@ withSink action =
   bracket Warp.openFreePort (Socket.close . snd) \(port, sock) -> do
     recordRef <- newIORef (0, [])
     responderRef <- newIORef (\_ _ -> pure ok)
-    let handle = SinkHandle{port, recordRef, responderRef}
-        runner = WarpTLS.runTLSSocket tlsSettings Warp.defaultSettings sock (recordingApp recordRef responderRef)
+    connRef <- newIORef 0
+    let handle = SinkHandle{port, recordRef, responderRef, connRef}
+        -- Count each accepted TCP connection; returning 'True' accepts it.
+        settings = Warp.setOnOpen (\_ -> atomicModifyIORef' connRef \n -> (n + 1, True)) Warp.defaultSettings
+        runner = WarpTLS.runTLSSocket tlsSettings settings sock (recordingApp recordRef responderRef)
     Async.withAsync runner \serverAsync -> do
       -- Surface any server-side crash immediately rather than letting the
       -- client hang waiting for a dead server.
@@ -171,6 +180,10 @@ received :: SinkHandle -> IO [RecordedRequest]
 received handle = do
   (_, rs) <- readIORef handle.recordRef
   pure (reverse rs)
+
+-- | Number of TCP connections the server has accepted so far.
+connectionsOpened :: SinkHandle -> IO Int
+connectionsOpened handle = readIORef handle.connRef
 
 -- | Replace the active 'Responder'.  Takes effect for the next request; a
 -- request already being processed may still use the previous responder.

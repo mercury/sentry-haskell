@@ -48,20 +48,20 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
-import Sentry.Transport.HTTP2.Connection (ConnManager, Http2Settings (..), ReconnectDecision (..), exponentialBackoff, reconnectAfter)
+import Sentry.Transport.HTTP2.Connection (Http2Settings (..), ReconnectDecision (..), exponentialBackoff, reconnectAfter)
 import Sentry.Transport.HTTP2.Connection qualified as Connection
-import Sentry.Transport.Delivery qualified as Delivery
 
 -- | An asynchronous HTTP\/2 transport backed by an 'AsyncExecutor'.
 type AsyncHttp2Transport :: Type
 data AsyncHttp2Transport = AsyncHttp2Transport
   { executor :: AsyncExecutor,
     -- | The underlying connection manager; closed after the executor shuts down.
-    connManager :: ConnManager
+    manager :: Connection.Manager
   }
 
 -- | Configuration for 'AsyncHttp2Transport'.
@@ -81,13 +81,14 @@ data Http2TransportOptions = Http2TransportOptions
     connectTimeout :: Int,
     -- | Policy to apply after a failed connection attempt.
     --
-    -- The policy is an @'IO' 'ReconnectDecision'@ action that runs on the
-    -- worker thread; blocking inside it (e.g. 'reconnectAfter') applies
-    -- back-pressure without a separate retry loop.
+    -- The policy is an @'IO' 'ReconnectDecision'@ action that /describes/ how
+    -- long to back off ('ReconnectAfter') or whether to give up
+    -- ('DontReconnect').
     --
     -- Defaults to @pure 'DontReconnect'@: give up after the first failure
     -- so the transport never silently hammers an unreachable endpoint.
-    -- Use 'reconnectAfter' or 'exponentialBackoff' for retry behaviour.
+    --
+    -- Use 'reconnectAfter' or 'exponentialBackoff' for retry behavior.
     reconnectPolicy :: IO ReconnectDecision,
     -- | HTTP\/2 protocol-level settings (flow-control windows, rate-limit
     -- overrides, TCP_NODELAY).
@@ -141,17 +142,17 @@ build opts clientReports queueSize dsn = do
               Patrol.Items.EnvelopeItems [Patrol.Item.ClientReport report]
           }
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
-      connTarget = Connection.connTargetFromDsn opts.compression dsn
-  connManager <- Connection.newConnManager connTarget opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
+      endpoint = Connection.mkEndpoint opts.compression dsn
+  manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn envelope rateLimiter = do
         now <- getCurrentTime
-        outcome <- Connection.sendEnvelope connManager envelope
+        outcome <- Connection.sendEnvelope manager envelope
         for_ (Delivery.discardReason outcome) \reason ->
           for_ (fmap (.accumulator) reportConfig) \cr ->
             ClientReport.recordEnvelopeDrop cr reason envelope
         pure $ RateLimiter.updateFromResponse rateLimiter now outcome
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
-  pure AsyncHttp2Transport{executor, connManager}
+  pure AsyncHttp2Transport{executor, manager}
 
 instance Transport AsyncHttp2Transport where
   send t = AsyncExecutor.send t.executor
@@ -162,7 +163,7 @@ instance Transport AsyncHttp2Transport where
   -- network resources.
   shutdown t timeout = do
     result <- AsyncExecutor.shutdown t.executor timeout
-    Connection.closeConnManager t.connManager
+    Connection.closeManager t.manager
     pure result
 
   recordDiscards t = AsyncExecutor.recordDiscards t.executor

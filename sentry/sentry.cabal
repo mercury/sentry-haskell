@@ -228,6 +228,7 @@ test-suite integration
       ClientReportTest
       DropPathTest
       Http2CaptureTest
+      Http2ConcurrencyTest
       ShutdownTest
       Paths_sentry
   autogen-modules:
