@@ -29,13 +29,13 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
 import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope, toOutcome)
-import Sentry.Transport.Delivery qualified as Delivery
 
 -- | An asynchronous HTTP transport backed by an 'AsyncExecutor'.
 type AsyncHttpTransport :: Type

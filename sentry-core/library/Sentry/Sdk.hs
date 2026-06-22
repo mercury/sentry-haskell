@@ -33,7 +33,7 @@ sdkVersion = Text.pack $ showVersion Paths_sentry_core.version
 -- * @packages@ contains a single entry referencing @sentry-core@ on Hackage.
 -- * @integrations@ lists the 'Sentry.Integration.Integration.name' of every
 --   installed integration, sorted alphabetically for deterministic payloads
---   (matching sentry-python's behaviour).
+--   (matching sentry-python's behavior).
 sdkInfo :: Vector SomeIntegration -> ClientSdkInfo
 sdkInfo integrations =
   ClientSdkInfo.empty

@@ -2,30 +2,29 @@
 --
 -- @stability: experimental@
 --
--- __Status:__ this is the connection layer for the experimental HTTP\/2
--- transport ('Sentry.Transport.HTTP2.Async')
--- 
--- Maintains a single long-lived HTTP\/2 TLS connection to the Sentry ingest
--- endpoint via ALPN @h2@ negotiation.
+-- This is the connection layer for the experimental HTTP\/2 transport
+-- ('Sentry.Transport.HTTP2.Async'), which maintains a single, long-lived
+-- HTTP\/2 TLS connection to the Sentry ingest endpoint via ALPN @h2@
+-- negotiation.
 --
--- A single long-lived HTTP\/2 TLS connection is maintained for the life of the
--- connection; it is is established when the first envelope is sent, and
--- reconnected transparently if the server closes it.
+-- The connection is established when the first envelope is sent, and
+-- reconnected transparently if closed by the server.
 --
 -- == Threading model
 --
--- 'sendEnvelope' is designed to be called from a single worker thread (the
--- 'Sentry.Transport.Executor.Async.AsyncExecutor' worker).  The connection
--- state is stored in an 'IORef' that is read and written only by that worker,
--- so no additional locking is needed.
+-- Connection lifecycle is a lock-free STM state machine ('State') stored in
+-- a single 'Control.Concurrent.STM.TVar'.
 --
--- The HTTP\/2 runner ('Network.HTTP2.TLS.Client.runWithConfig') is forked on
--- its own 'Async' thread, which blocks until the shutdown 'MVar' is filled or
--- the server disconnects.
+-- The HTTP\/2 runner ('Network.HTTP2.TLS.Client.runWithConfig') runs on its
+-- own thread, which blocks until the shutdown 'MVar' is filled or the server
+-- disconnects.
+--
+-- When the runner exits for any reason it resets the state back to 'Idle'
+-- so the next send can attempt to reconnect.
 module Sentry.Transport.HTTP2.Connection
-  ( -- * Connection target
-    ConnTarget (..),
-    connTargetFromDsn,
+  ( -- * Connection endpoint
+    Endpoint,
+    mkEndpoint,
 
     -- * HTTP\/2 protocol settings
     Http2Settings (..),
@@ -37,26 +36,25 @@ module Sentry.Transport.HTTP2.Connection
     exponentialBackoff,
 
     -- * Connection manager
-    ConnManager,
-    newConnManager,
-    closeConnManager,
+    Manager,
+    newManager,
+    closeManager,
 
     -- * Sending
     sendEnvelope,
   )
 where
 
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
-import Control.Concurrent.STM (atomically, newEmptyTMVarIO, orElse, putTMVar, readTVar, registerDelay, retry, takeTMVar)
-import Control.Monad (unless)
+import Control.Concurrent.STM (TVar, atomically, modifyTVar', newEmptyTMVarIO, newTVarIO, orElse, putTMVar, readTVar, registerDelay, retry, swapTVar, takeTMVar, writeTVar)
+import Control.Monad (join, unless)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as Builder
 import Data.Default (Default (def))
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -71,15 +69,16 @@ import Network.Socket (PortNumber, SocketOption (NoDelay))
 import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.HTTP.Request (Compression)
 import Sentry.Transport.HTTP.Request qualified as Request
-import Sentry.Transport.Delivery qualified as Delivery
-import UnliftIO.Exception (catchAny)
+import UnliftIO.Exception (catchAny, finally, mask, onException)
+import Witch qualified
 
--- | The static parameters needed to establish an HTTP\/2 connection for a
--- given DSN.
-type ConnTarget :: Type
-data ConnTarget = ConnTarget
+-- | The static parameters needed to establish an HTTP\/2 connection and POST
+-- envelopes for a given DSN.
+type Endpoint :: Type
+data Endpoint = Endpoint
   { -- | Hostname without port; used for both the TCP connection and the TLS
     -- SNI\/HTTP\/2 @:authority@ pseudo-header.
     host :: String,
@@ -87,16 +86,23 @@ data ConnTarget = ConnTarget
     port :: PortNumber,
     -- | Pre-built request path, e.g. @\"/api\/42\/envelope\/\"@.
     path :: ByteString,
-    -- | Pre-built Sentry-specific HTTP headers.
+    -- | Pre-built Sentry-specific HTTP headers, including @content-encoding@
+    -- when the body is compressed.
     headers :: RequestHeaders,
     -- | Body encoding.
     compression :: Compression
   }
 
--- | Derive a 'ConnTarget' from a 'Patrol.Dsn'.
-connTargetFromDsn :: Compression -> Patrol.Dsn -> ConnTarget
-connTargetFromDsn compression dsn =
-  ConnTarget
+instance Witch.From Patrol.Dsn Endpoint where
+  from = mkEndpoint def
+
+-- | Build an 'Endpoint' from a 'Patrol.Dsn' with an explicit 'Compression'
+-- setting.
+--
+-- Prefer the 'Witch.From' instance if you want 'Gzip' compression by default.
+mkEndpoint :: Compression -> Patrol.Dsn -> Endpoint
+mkEndpoint compression dsn =
+  Endpoint
     { host = Text.unpack dsn.host,
       port = maybe 443 fromIntegral dsn.port,
       path = Encoding.encodeUtf8 $ dsn.path <> "api/" <> dsn.projectId <> "/envelope/",
@@ -217,8 +223,8 @@ applyHttp2Settings s base =
 
 -- | Decision returned by a reconnect policy after a failed connection attempt.
 --
--- A reconnect policy is simply an @'IO' 'ReconnectDecision'@ action, which
--- runs on the worker thread after 'tryConnect' fails.
+-- A reconnect policy is an @'IO' 'ReconnectDecision'@ action consulted by the
+-- connection manager after 'tryConnect' fails.
 --
 -- The default policy is @pure 'DontReconnect'@; use 'reconnectAfter' or
 -- 'exponentialBackoff' for common retry patterns.
@@ -227,20 +233,22 @@ data ReconnectDecision
   = -- | Do not attempt to reconnect; subsequent sends fail immediately without
     -- touching the network.
     DontReconnect
-  | -- | Allow another connection attempt, applying the enclosed policy on
-    -- the /next/ failure.
+  | -- | Back off for the given number of microseconds, then attempt one
+    -- reconnect; the enclosed action is the policy to consult on the /next/
+    -- failure.
     --
-    -- This enables chained patterns like exponential backoff: each step
-    -- returns a new action with a longer delay.
-    DoReconnect (IO ReconnectDecision)
+    -- This enables chained patterns like exponential backoff, where each step
+    -- returns a longer delay paired with the action for the step after it;
+    -- because the delay is returned rather than performed, outgoing requests
+    -- during the backoff window fail fast instead of blocking.
+    ReconnectAfter !Int (IO ReconnectDecision)
 
 -- | Reconnect after a fixed delay, retrying indefinitely.
 --
 -- > reconnectAfter 5_000_000  -- retry every 5 s
 reconnectAfter :: Int -> IO ReconnectDecision
-reconnectAfter delayMicros = do
-  threadDelay delayMicros
-  pure $ DoReconnect (reconnectAfter delayMicros)
+reconnectAfter delayMicros =
+  pure $ ReconnectAfter delayMicros (reconnectAfter delayMicros)
 
 -- | Reconnect with exponential backoff, retrying indefinitely.
 --
@@ -259,29 +267,59 @@ exponentialBackoff ::
   IO ReconnectDecision
 exponentialBackoff initial factor maxDelay = go initial
   where
-    go delay = do
-      threadDelay delay
+    go delay =
       let next = min maxDelay (round (fromIntegral delay * factor))
-      pure $ DoReconnect (go next)
+       in pure $ ReconnectAfter delay (go next)
 
 -- | An established HTTP\/2 connection.
-type ActiveConn :: Type
-data ActiveConn = ActiveConn
+type Active :: Type
+data Active = Active
   { -- | Captured @http2@ @sendRequest@ callback.
     --
     -- Calling this issues a single HTTP\/2 stream on the shared connection.
     doSend :: HTTP2.Request -> (HTTP2.Response -> IO ()) -> IO (),
     -- | Fill this 'MVar' to signal the runner thread to return.
-    connShutdown :: MVar (),
+    shutdown :: MVar (),
     -- | The runner thread (executing 'HTTP2TLS.runWithConfig').
-    connThread :: Async ()
+    thread :: Async ()
   }
 
+-- | The lifecycle state of a 'Manager''s single HTTP\/2 connection.
+--
+--   * 'acquire' claims 'Idle' (or an elapsed 'Backoff') by writing
+--     'Connecting'; concurrent callers then see 'Connecting' and park on
+--     'retry'.
+--   * the single claimant commits 'Connecting' to 'Connected', 'Backoff', or
+--     'GaveUp'.
+--   * the runner thread resets 'Connected' to 'Idle' when it exits.
+--   * 'closeManager' moves any state to the terminal 'Closed'.
+--
+-- __NOTE__: Transitions are correct __so long as each edge has exactly one
+-- possible mutator__.
+type State :: Type
+data State
+  = -- | No connection; the next caller single-flights one.
+    Idle
+  | -- | A claimant is running the handshake; other callers 'retry' until it
+    -- resolves.
+    Connecting
+  | -- | A live connection; the hot path is a single 'readTVar' of this.
+    Connected !Active
+  | -- | The last attempt failed.  Sends fail fast until the timer 'TVar' flips
+    -- 'True', after which the next caller reconnects using the enclosed policy.
+    Backoff !(TVar Bool) !(IO ReconnectDecision)
+  | -- | A 'DontReconnect' decision was reached; all sends fail immediately
+    -- without touching the network.
+    GaveUp
+  | -- | The manager has been shut down; terminal.
+    Closed
+
 -- | Manages a single lazy HTTP\/2 connection.
-type ConnManager :: Type
-data ConnManager = ConnManager
-  { activeConn :: IORef (Maybe ActiveConn),
-    target :: ConnTarget,
+type Manager :: Type
+data Manager = Manager
+  { -- | The lock-free connection lifecycle state machine.
+    state :: TVar State,
+    target :: Endpoint,
     -- | Whether to validate TLS server certificates.
     validateCert :: Bool,
     -- | How long to wait for the HTTP\/2 handshake before giving up,
@@ -291,99 +329,98 @@ data ConnManager = ConnManager
     connectTimeout :: Int,
     -- | HTTP\/2 protocol settings applied on every new connection.
     http2Settings :: Http2Settings,
-    -- | The policy to restore when a connection attempt succeeds, so the
-    -- next failure starts from the beginning of the backoff sequence.
-    initialReconnectPolicy :: IO ReconnectDecision,
-    -- | The policy action to run after the /next/ failed 'tryConnect'.
-    -- 
-    -- 'Nothing' means a prior 'DontReconnect' decision was already made;
-    -- all future sends will fail immediately without touching the network.
-    currentReconnectPolicy :: IORef (Maybe (IO ReconnectDecision))
+    -- | The policy consulted on the first failure of a fresh connect attempt.
+    initialReconnectPolicy :: IO ReconnectDecision
   }
 
--- | Create a new 'ConnManager'.  No connection is established yet.
-newConnManager :: ConnTarget -> Bool -> Int -> Http2Settings -> IO ReconnectDecision -> IO ConnManager
-newConnManager target validateCert connectTimeout http2Settings initialReconnectPolicy = do
-  activeConn <- newIORef Nothing
-  currentReconnectPolicy <- newIORef (Just initialReconnectPolicy)
-  pure ConnManager{activeConn, target, validateCert, connectTimeout, http2Settings, initialReconnectPolicy, currentReconnectPolicy}
+-- | Create a new 'Manager'.  No connection is established yet.
+newManager :: Endpoint -> Bool -> Int -> Http2Settings -> IO ReconnectDecision -> IO Manager
+newManager target validateCert connectTimeout http2Settings initialReconnectPolicy = do
+  state <- newTVarIO Idle
+  pure Manager{state, target, validateCert, connectTimeout, http2Settings, initialReconnectPolicy}
 
 -- | Signal the runner thread to return and cancel it.
---
--- Idempotency: safe to call on an already-dead connection.
-teardownConn :: ActiveConn -> IO ()
-teardownConn conn = do
-  _ <- tryPutMVar conn.connShutdown ()
-  Async.cancel conn.connThread
+teardown :: Active -> IO ()
+teardown conn = do
+  _ <- tryPutMVar conn.shutdown ()
+  Async.cancel conn.thread
 
--- | Gracefully close the active connection, if any, and wait for the runner
--- thread to terminate.
+-- | Gracefully close the manager: move to the terminal 'Closed' state and tear
+-- down a live connection if one is present.
 --
--- Idempotency: safe to call multiple times.
-closeConnManager :: ConnManager -> IO ()
-closeConnManager mgr =
-  readIORef mgr.activeConn >>= \case
-    Nothing -> pure ()
-    Just conn -> do
-      writeIORef mgr.activeConn Nothing
-      teardownConn conn
+-- An in-flight connect observes 'Closed' at its commit point and tears down the
+-- connection it built rather than installing it, so no connection can outlive
+-- the manager.
+closeManager :: Manager -> IO ()
+closeManager mgr =
+  atomically (swapTVar mgr.state Closed) >>= \case
+    Connected conn -> teardown conn
+    _ -> pure ()
 
--- | Attempt to establish a connection and store it in 'activeConn'.
-tryConnect :: ConnManager -> IO ()
+-- | Attempt to establish a connection, returning the live 'Active' or a
+-- description of why it failed.
+tryConnect :: Manager -> IO (Either Text Active)
 tryConnect mgr = do
-  connShutdown <- newEmptyMVar
-  -- 'TMVar' rather than 'MVar': the one-shot rendezvous for 'sendRequest'
-  -- must compose with STM's 'orElse' so all three outcomes below can be
-  -- checked in a single atomic transaction — no race between the timeout
-  -- firing and the var being filled.
+  shutdownVar <- newEmptyMVar
   sendRequestVar <- newEmptyTMVarIO
   timeoutVar <- registerDelay mgr.connectTimeout
 
   -- Fork the HTTP/2 runner thread.
-  --
-  -- The 'runWithConfig' callback publishes 'sendRequest' and then blocks on
-  -- 'connShutdown', keeping the connection alive for the transport's lifetime.
-  thread <-
+  runner <-
     Async.async $
-      runHttp2 mgr.target mgr.validateCert mgr.http2Settings $
-        \sendReq _aux -> do
-          atomically $ putTMVar sendRequestVar sendReq
-          takeMVar connShutdown
+      runHttp2
+        mgr.target
+        mgr.validateCert
+        mgr.http2Settings
+        ( \sendReq _aux -> do
+            atomically $ putTMVar sendRequestVar sendReq
+            takeMVar shutdownVar
+        )
+        `finally` atomically
+          ( modifyTVar' mgr.state \case
+              Connected _ -> Idle
+              other -> other
+          )
 
   -- Wait for whichever comes first in a single atomic STM transaction:
   --
-  --  1. 'sendRequestVar' filled → handshake complete; store the connection.
+  --  1. 'sendRequestVar' filled → handshake complete; return the connection.
   --  2. Runner thread done      → connection failed before publishing (DNS
   --                               error, TLS rejection, …).
   --  3. Timeout expired         → runner alive but stuck (TCP connected,
   --                               server SETTINGS frame never received).
-  result <-
-    atomically $
-      (Just <$> takeTMVar sendRequestVar)
-        `orElse` (Async.pollSTM thread >>= maybe retry (\_ -> pure Nothing))
-        `orElse` do
-          expired <- readTVar timeoutVar
-          unless expired retry
-          pure Nothing
+  --
+  -- If this wait is interrupted (e.g. the claimant is cancelled mid-handshake),
+  -- cancel the runner so it cannot leak.
+  let awaitHandshake =
+        atomically $
+          (Just <$> takeTMVar sendRequestVar)
+            `orElse` (Async.pollSTM runner >>= maybe retry (\_ -> pure Nothing))
+            `orElse` do
+              expired <- readTVar timeoutVar
+              unless expired retry
+              pure Nothing
+  result <- awaitHandshake `onException` Async.cancel runner
 
   case result of
-    Nothing ->
+    Nothing -> do
       -- Connection not established: cancel the runner (no-op if already dead).
-      Async.cancel thread
+      Async.cancel runner
+      pure (Left "HTTP/2 connection could not be established")
     Just sendReq ->
-      writeIORef mgr.activeConn $
-        Just
-          ActiveConn
+      pure $
+        Right
+          Active
             { doSend = sendReq,
-              connShutdown,
-              connThread = thread
+              shutdown = shutdownVar,
+              thread = runner
             }
 
--- | Run an HTTP\/2 'HTTP2.Client' action over TLS to 'ConnTarget'.
+-- | Run an HTTP\/2 'HTTP2.Client' action over TLS to 'Endpoint'.
 --
 -- Applies 'applyHttp2Settings' to
 -- @'HTTP2TLS.defaultSettings' { 'HTTP2TLS.settingsValidateCert' = validateCert }@.
-runHttp2 :: ConnTarget -> Bool -> Http2Settings -> HTTP2.Client a -> IO a
+runHttp2 :: Endpoint -> Bool -> Http2Settings -> HTTP2.Client a -> IO a
 runHttp2 tgt validateCert http2s client =
   let settings =
         applyHttp2Settings http2s $
@@ -393,68 +430,95 @@ runHttp2 tgt validateCert http2s client =
       clientConfig = HTTP2TLS.defaultClientConfig settings tgt.host
    in HTTP2TLS.runWithConfig clientConfig settings tgt.host tgt.port client
 
--- | Send an envelope over the HTTP\/2 connection, returning an 'Outcome'.
+-- | Send an envelope over the shared HTTP\/2 connection, returning an
+-- 'Outcome'.
 --
--- Connects lazily on the first call; if the runner thread has exited, attempt
--- to reconnect before sending.
---
--- Any exception during the send is caught, the connection torn down, and a
--- 'NetworkFailure' returned.
-sendEnvelope :: ConnManager -> Patrol.Envelope -> IO Delivery.Outcome
-sendEnvelope mgr envelope = do
-  mConn <- getOrConnect mgr
-  case mConn of
+-- Any exception during the send is caught and returned as a 'NetworkFailure'
+-- for /this/ envelope only; it does not tear down the shared connection (a
+-- connection-level failure is handled centrally by the runner-exit reset).
+sendEnvelope :: Manager -> Patrol.Envelope -> IO Delivery.Outcome
+sendEnvelope mgr envelope =
+  acquire mgr >>= \case
     Left err -> pure (Delivery.NetworkFailure err)
-    Right conn -> sendOnConn mgr conn envelope
+    Right conn -> sendOn mgr conn envelope
 
--- | Return the current 'ActiveConn', reconnecting if necessary.
-getOrConnect :: ConnManager -> IO (Either Text ActiveConn)
-getOrConnect mgr =
-  readIORef mgr.activeConn >>= \case
-    Just conn -> do
-      status <- Async.poll conn.connThread
-      case status of
-        -- Runner still alive — reuse.
-        Nothing -> pure (Right conn)
-        -- Runner exited (server disconnect) — reconnect.
-        Just _ -> do
-          writeIORef mgr.activeConn Nothing
-          reconnect
-    Nothing ->
-      reconnect
+-- | Acquire a live connection, single-flighting a connect when necessary.
+acquire :: Manager -> IO (Either Text Active)
+acquire mgr = join . atomically $ do
+  readTVar mgr.state >>= \case
+    -- Hot path: reuse the live connection without a lock.
+    Connected conn -> pure . pure $ Right conn
+    -- Someone else is connecting; park until they resolve it, then re-decide.
+    Connecting -> retry
+    -- Terminal / fail-fast states.
+    Closed -> pure . pure $ Left "HTTP/2 connection manager closed"
+    GaveUp -> pure . pure $ Left "HTTP/2 transport has given up reconnecting"
+    -- No connection: claim the single-flight slot and connect.
+    Idle -> claim mgr.initialReconnectPolicy
+    -- Backed off after a failure: fail fast until the timer elapses, then the
+    -- next caller claims a reconnect with the policy's continuation.
+    Backoff timer policy ->
+      readTVar timer >>= \case
+        False -> pure . pure $ Left "HTTP/2 transport is backing off after a failed connect"
+        True -> claim policy
   where
-    reconnect =
-      readIORef mgr.currentReconnectPolicy >>= \case
-        -- A prior 'DontReconnect' decision: fail fast without touching the network.
-        Nothing ->
-          pure (Left "HTTP/2 transport has given up reconnecting")
-        Just policy -> do
-          tryConnect mgr
-          readIORef mgr.activeConn >>= \case
-            Just conn -> do
-              -- Success: restore the initial policy so the next failure
-              -- starts from the beginning of the backoff sequence.
-              writeIORef mgr.currentReconnectPolicy (Just mgr.initialReconnectPolicy)
-              pure (Right conn)
-            Nothing -> do
-              -- Failure: run the policy action (may block for a delay).
-              decision <- policy
-              case decision of
-                DontReconnect ->
-                  writeIORef mgr.currentReconnectPolicy Nothing
-                DoReconnect nextPolicy ->
-                  writeIORef mgr.currentReconnectPolicy (Just nextPolicy)
-              pure (Left "HTTP/2 connection could not be established")
+    -- Transition 'Connecting' inside this transaction so concurrent callers
+    -- immediately park; run the (blocking) connect after the transaction.
+    claim policy = do
+      writeTVar mgr.state Connecting
+      pure $ runConnect mgr policy
 
--- | Perform a single envelope POST on an established 'ActiveConn'.
+runConnect :: Manager -> IO ReconnectDecision -> IO (Either Text Active)
+runConnect mgr policy = (`onException` resetClaim) $ mask $ \restore -> do
+  -- 'tryConnect' self-cancels its runner if interrupted, so it leaks nothing.
+  restore (tryConnect mgr) >>= \case
+    Right conn -> commit conn -- masked: ends as 'Connected' or torn down
+    Left err -> restore (handleFailure err)
+  where
+    -- Drop the 'Connecting' claim so the next caller retries; never clobber a
+    -- 'Connected'/'Closed'/… that some other transition already installed.
+    resetClaim =
+      atomically $
+        modifyTVar' mgr.state \case
+          Connecting -> Idle
+          other -> other
+
+    -- Install the live connection, unless the manager was closed (or otherwise
+    -- moved on) under us, in which case tear down the orphan we just built.
+    commit conn = join . atomically $ do
+      readTVar mgr.state >>= \case
+        Connecting -> writeTVar mgr.state (Connected conn) >> pure (pure (Right conn))
+        _ -> pure (teardown conn >> pure (Left "HTTP/2 connection manager closed"))
+
+    -- Consult the policy and schedule a non-blocking 'Backoff', or give up
+    -- permanently.
+    handleFailure err = do
+      decision <- policy
+      join . atomically $
+        readTVar mgr.state >>= \case
+          Connecting -> case decision of
+            DontReconnect -> writeTVar mgr.state GaveUp >> pure (pure (Left err))
+            ReconnectAfter delayMicros nextPolicy -> pure $ do
+              timer <- registerDelay delayMicros
+              atomically $
+                modifyTVar' mgr.state \case
+                  Connecting -> Backoff timer nextPolicy
+                  other -> other
+              pure (Left err)
+          -- Closed under us while connecting.
+          _ -> pure (pure (Left "HTTP/2 connection manager closed"))
+
+-- | Perform a single envelope POST on an established 'Active'.
 --
--- 'doSend' returns @IO ()@ — http2 fixes its result to the runner callback's
--- type — so the 'Outcome' is recovered through an 'IORef'. That is safe only
--- because 'doSend' invokes the response continuation synchronously and returns
--- once it has run: the ref is always written (by the continuation on success,
--- or the handler on failure) before we read it below.
-sendOnConn :: ConnManager -> ActiveConn -> Patrol.Envelope -> IO Delivery.Outcome
-sendOnConn mgr conn envelope = do
+-- 'doSend' returns @IO ()@, so the 'Outcome' is recovered via an 'IORef'.
+--
+-- This is safe /only/ because 'doSend' invokes the response continuation
+-- synchronously and returns once it has run: the ref is always written (by the
+-- continuation on success, or the handler on failure) before we read it below.
+--
+-- A failure here is reported as a 'NetworkFailure' for this envelope only.
+sendOn :: Manager -> Active -> Patrol.Envelope -> IO Delivery.Outcome
+sendOn mgr conn envelope = do
   outcomeRef <- newIORef Nothing
   let body = Request.serializeBody mgr.target.compression envelope
       req =
@@ -474,16 +538,13 @@ sendOnConn mgr conn envelope = do
               Delivery.Responded status headers
       writeIORef outcomeRef (Just outcome)
     )
-    `catchAny` \e -> do
-      -- Abandon the connection so the next send reconnects.
-      writeIORef mgr.activeConn Nothing
-      teardownConn conn
-      writeIORef outcomeRef (Just $ Delivery.NetworkFailure (Text.pack (show e)))
+    `catchAny` \e ->
+      writeIORef outcomeRef (Just . Delivery.NetworkFailure . Text.pack $ show e)
   readIORef outcomeRef >>= \case
     Just outcome -> pure outcome
     -- Unreachable given the synchronicity guarantee above; kept as a defensive
     -- total fallback rather than an 'error'.
-    Nothing -> pure (Delivery.NetworkFailure "HTTP/2 send completed without response")
+    Nothing -> pure $ Delivery.NetworkFailure "HTTP/2 send completed without response"
 
 -- | Drain the HTTP\/2 response body chunks until EOF.
 --

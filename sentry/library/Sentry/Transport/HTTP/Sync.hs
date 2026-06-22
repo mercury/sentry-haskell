@@ -44,11 +44,11 @@ import Sentry.ClientReport (ClientReports, DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..), PreparedRequest)
 import Sentry.Transport.HTTP.Request qualified as Request
-import Sentry.Transport.Delivery qualified as Delivery
 import UnliftIO.Exception (handle, toException)
 import Witch qualified
 

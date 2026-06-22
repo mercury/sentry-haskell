@@ -54,7 +54,7 @@ import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttp
 import Sentry.Transport.HTTP.Sync qualified as SyncHttp
 import Sentry.Transport.HTTP2.Async (Http2TransportOptions (..))
-import Sentry.Transport.HTTP2.Async qualified as AsyncHttp2
+import Sentry.Transport.HTTP2.Async qualified as Http2
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (die)
 import Text.Printf (printf)
@@ -124,7 +124,7 @@ runH2 cfg dsn = do
       <> " payloadBytes="
       <> show cfg.payloadBytes
   start <- getCurrentTime
-  transport <- AsyncHttp2.build opts Nothing cfg.queueSize dsn
+  transport <- Http2.build opts Nothing cfg.queueSize dsn
   counts <- drive transport cfg.count envelope
   _ <- Transport.flush transport 300
   _ <- Transport.shutdown transport 300
