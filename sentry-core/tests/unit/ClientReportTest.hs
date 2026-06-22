@@ -1,5 +1,7 @@
 module ClientReportTest where
 
+import Data.Foldable (traverse_)
+import Data.List (sort)
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory (..))
@@ -59,6 +61,51 @@ spec_clientReport = describe "ClientReport" do
       ClientReport.record cr SampleRate Error (-1)
       result <- ClientReport.takePending cr now True
       result `shouldBe` Nothing
+
+    it "round-trips every (reason, category) cell without collision" do
+      now <- getCurrentTime
+      cr <- ClientReport.new
+      -- Every category, in any order; reasons via the derived Bounded/Enum.
+      let reasons = [minBound .. maxBound] :: [DiscardReason]
+          categories =
+            [ Default,
+              Error,
+              Transaction,
+              Monitor,
+              Span,
+              LogItem,
+              Security,
+              Attachment,
+              Session,
+              Profile,
+              ProfileChunk,
+              Replay,
+              Feedback,
+              TraceMetric,
+              Internal
+            ]
+          -- Assign a distinct, nonzero quantity to each of the 9×15 cells.
+          cells = zip [1 ..] [(r, c) | r <- reasons, c <- categories]
+      traverse_ (\(q, (r, c)) -> ClientReport.record cr r c q) cells
+      result <- ClientReport.takePending cr now True
+      case result of
+        Nothing -> expectationFailure "expected a ClientReport"
+        Just report -> do
+          -- One entry per cell with its exact quantity: a collision in
+          -- 'cellIndex' would merge two cells, dropping the count below the
+          -- full grid size and doubling a quantity.
+          let got =
+                sort
+                  [ (Patrol.DiscardedEvent.reason de, Patrol.DiscardedEvent.category de, Patrol.DiscardedEvent.quantity de)
+                  | de <- report.discardedEvents
+                  ]
+              want =
+                sort
+                  [ (ClientReport.reasonText r, c, q)
+                  | (q, (r, c)) <- cells
+                  ]
+          length report.discardedEvents `shouldBe` length cells
+          got `shouldBe` want
 
   describe "interval" do
     it "returns Nothing when interval has not elapsed and force = False" do

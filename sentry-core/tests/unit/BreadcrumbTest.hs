@@ -2,7 +2,7 @@ module BreadcrumbTest where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
-import Data.Foldable (toList)
+import Data.Foldable (toList, traverse_)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Patrol qualified
@@ -83,7 +83,7 @@ spec_breadcrumbs = do
     it "trims oldest entries to stay within maxBreadcrumbs" do
       (scopeData, _) <- Test.withCustomClient def{maxBreadcrumbs = 3} \_ ->
         Scope.IO.withIsolationScope \scope -> do
-          mapM_ Scope.addBreadcrumb [crumb "1", crumb "2", crumb "3", crumb "4", crumb "5"]
+          traverse_ Scope.addBreadcrumb [crumb "1", crumb "2", crumb "3", crumb "4", crumb "5"]
           liftIO $ Scope.readScopeRef scope
       map (\c -> c.message) (toList scopeData.breadcrumbs) `shouldBe` ["3", "4", "5"]
 

@@ -36,15 +36,16 @@ where
 
 import Control.Monad (guard)
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
-import Data.Atomics (atomicModifyIORefCAS_)
+import Control.Monad.Trans.Maybe (runMaybeT)
+import Data.Atomics.Counter (AtomicCounter, incrCounter_, newCounter, readCounter)
 import Data.Foldable (for_)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
-import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import Data.Traversable (for)
+import Data.Vector (Vector)
+import Data.Vector qualified as Vector
 import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory (..))
@@ -71,7 +72,7 @@ data DiscardReason
   | SampleRate
   | SendError
   | Other
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 -- | Render a 'DiscardReason' to its Sentry wire string.
 reasonText :: DiscardReason -> Text
@@ -92,9 +93,64 @@ reasonText = \case
 -- and drain with 'takePending'.
 type ClientReports :: Type
 data ClientReports = ClientReports
-  { discarded :: IORef (Map (DiscardReason, DataCategory) Int),
+  { discarded :: Vector AtomicCounter,
     lastSent :: IORef UTCTime
   }
+
+-- | Every 'DataCategory', in the canonical order used to index 'discarded'.
+allCategories :: [DataCategory]
+allCategories =
+  [ Default,
+    Error,
+    Transaction,
+    Monitor,
+    Span,
+    LogItem,
+    Security,
+    Attachment,
+    Session,
+    Profile,
+    ProfileChunk,
+    Replay,
+    Feedback,
+    TraceMetric,
+    Internal
+  ]
+
+-- | Index of a 'DataCategory' on the category axis of the grid.
+--
+-- __NOTE__: Must agree with 'allCategories'.
+categoryIndex :: DataCategory -> Int
+categoryIndex = \case
+  Default -> 0
+  Error -> 1
+  Transaction -> 2
+  Monitor -> 3
+  Span -> 4
+  LogItem -> 5
+  Security -> 6
+  Attachment -> 7
+  Session -> 8
+  Profile -> 9
+  ProfileChunk -> 10
+  Replay -> 11
+  Feedback -> 12
+  TraceMetric -> 13
+  Internal -> 14
+
+-- | Number of 'DataCategory' cells per 'DiscardReason'.
+numCategories :: Int
+numCategories = length allCategories
+
+-- | Number of 'DiscardReason' rows in the accumulator.
+numReasons :: Int
+numReasons = fromEnum (maxBound :: DiscardReason) + 1
+
+-- | Flatten a @(reason, category)@ pair to its cell index in 'discarded'.
+--
+-- Row-major: each reason owns a contiguous run of 'numCategories' cells.
+cellIndex :: DiscardReason -> DataCategory -> Int
+cellIndex reason category = fromEnum reason * numCategories + categoryIndex category
 
 -- | How long to wait between piggybacked client reports, in seconds.
 --
@@ -107,19 +163,20 @@ piggybackInterval = 30
 new :: IO ClientReports
 new = do
   now <- getCurrentTime
-  discarded <- newIORef Map.empty
+  discarded <- Vector.replicateM (numReasons * numCategories) (newCounter 0)
   lastSent <- newIORef now
   pure ClientReports{discarded, lastSent}
 
 -- | Record @n@ discarded events for the given reason and category.
 --
--- The @(reason, category)@ keyspace is bounded by the product of the closed
--- 'DiscardReason' and 'DataCategory' vocabularies, so the accumulator needs no
--- cardinality cap.
+-- A single atomic add into the @(reason, category)@ cell: allocation-free, and
+-- distinct keys never contend. The keyspace is bounded by the product of the
+-- closed 'DiscardReason' and 'DataCategory' vocabularies, so the accumulator
+-- needs no cardinality cap.
 record :: ClientReports -> DiscardReason -> DataCategory -> Int -> IO ()
 record cr reason category n
   | n <= 0 = pure ()
-  | otherwise = atomicModifyIORefCAS_ cr.discarded (Map.insertWith (+) (reason, category) n)
+  | otherwise = incrCounter_ n (cr.discarded Vector.! cellIndex reason category)
 
 -- | Snapshot and reset the accumulator, returning a
 -- 'Patrol.Type.ClientReport.ClientReport' if there is anything pending.
@@ -132,24 +189,39 @@ record cr reason category n
 -- When @force@ is 'True' the interval check is skipped, suitable for
 -- 'Sentry.Transport.flush' and 'Sentry.Transport.shutdown' paths.
 takePending :: ClientReports -> UTCTime -> Bool -> IO (Maybe Patrol.ClientReport.ClientReport)
-takePending cr now force = runMaybeT $ do
+takePending cr now force = runMaybeT do
   lastSent <- lift $ readIORef cr.lastSent
   guard (force || diffUTCTime now lastSent >= piggybackInterval)
-  m <- lift $ atomicModifyIORef' cr.discarded (Map.empty,)
-  guard (not $ Map.null m)
+  events <- lift $ drain cr
+  guard (not (null events))
   lift $ writeIORef cr.lastSent now
   pure
     Patrol.ClientReport.ClientReport
       { Patrol.ClientReport.timestamp = Just now,
-        Patrol.ClientReport.discardedEvents =
-          [ Patrol.DiscardedEvent.DiscardedEvent
-              { Patrol.DiscardedEvent.reason = reasonText reason,
-                Patrol.DiscardedEvent.category = category,
-                Patrol.DiscardedEvent.quantity = quantity
-              }
-          | ((reason, category), quantity) <- Map.toList m
-          ]
+        Patrol.ClientReport.discardedEvents = events
       }
+
+-- | Read and reset every cell in 'discarded', returning one 'DiscardedEvent'
+-- per nonzero count.
+drain :: ClientReports -> IO [Patrol.DiscardedEvent.DiscardedEvent]
+drain cr = do
+  counts <- for grid \(reason, category) -> do
+    let counter = cr.discarded Vector.! cellIndex reason category
+    quantity <- readCounter counter
+    incrCounter_ (negate quantity) counter
+    pure (reason, category, quantity)
+  pure
+    [ Patrol.DiscardedEvent.DiscardedEvent
+        { Patrol.DiscardedEvent.reason = reasonText reason,
+          Patrol.DiscardedEvent.category = category,
+          Patrol.DiscardedEvent.quantity = quantity
+        }
+    | (reason, category, quantity) <- counts,
+      quantity /= 0
+    ]
+  where
+    grid :: [(DiscardReason, DataCategory)]
+    grid = [(reason, category) | reason <- [minBound ..], category <- allCategories]
 
 -- | Resolve the 'DataCategory' an envelope item is accounted under, if any.
 categoryFromItem :: Patrol.Item -> Maybe DataCategory
