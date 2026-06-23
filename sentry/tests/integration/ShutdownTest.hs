@@ -11,6 +11,7 @@ import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (ShutdownResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
+import Sentry.Transport.Executor.Async (ExecutorOptions (ExecutorOptions))
 import Test.Hspec
 import UnliftIO.Exception (SomeException (..))
 import Witch qualified
@@ -21,7 +22,7 @@ spec_shutdownDrains = describe "graceful shutdown" do
     Kent.withKent \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
+      transport <- AsyncHttpTransport.build def Nothing (ExecutorOptions 100 1) kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,

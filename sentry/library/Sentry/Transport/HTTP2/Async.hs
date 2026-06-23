@@ -46,7 +46,7 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
-import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
+import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..), ExecutorOptions)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP2.Connection (Http2Settings (..), ReconnectDecision (..), exponentialBackoff, reconnectAfter)
@@ -109,15 +109,16 @@ instance Default Http2TransportOptions where
 -- | Create a 'TransportProvider' that will build an 'AsyncHttp2Transport' when
 -- called as part of 'Sentry.Client.new'.
 --
--- Pass 'AsyncExecutor.defaultQueueSize' for @queueSize@ unless you have a
--- specific reason to tune it.
-new :: Http2TransportOptions -> Int -> TransportProvider
-new http2Opts queueSize = DeferredTransport \dsn clientOpts -> do
+-- Pass 'Data.Default.def' for @executorOpts@ for the serial defaults, or
+-- override the queue size\/concurrency (e.g. @def{concurrency = 8}@ to fan out
+-- sends across the multiplexed connection).
+new :: Http2TransportOptions -> ExecutorOptions -> TransportProvider
+new http2Opts executorOpts = DeferredTransport \dsn clientOpts -> do
   clientReports <-
     if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  SomeTransport <$> build http2Opts clientReports queueSize dsn
+  SomeTransport <$> build http2Opts clientReports executorOpts dsn
 
 -- | Build an 'AsyncHttp2Transport' directly, bypassing the 'TransportProvider'.
 --
@@ -126,10 +127,10 @@ new http2Opts queueSize = DeferredTransport \dsn clientOpts -> do
 build ::
   Http2TransportOptions ->
   Maybe ClientReports ->
-  Int ->
+  ExecutorOptions ->
   Patrol.Dsn ->
   IO AsyncHttp2Transport
-build opts clientReports queueSize dsn = do
+build opts clientReports executorOpts dsn = do
   let toEnvelope report =
         Patrol.Envelope.Envelope
           { Patrol.Envelope.headers =
@@ -141,7 +142,7 @@ build opts clientReports queueSize dsn = do
       endpoint = Connection.mkEndpoint opts.compression dsn
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn = Connection.sendEnvelope manager
-  executor <- AsyncExecutor.new queueSize 1 reportConfig sendFn
+  executor <- AsyncExecutor.new executorOpts reportConfig sendFn
   pure AsyncHttp2Transport{executor, manager}
 
 instance Transport AsyncHttp2Transport where

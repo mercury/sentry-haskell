@@ -50,7 +50,7 @@ benchRateLimiter =
 withNoopExecutor :: Int -> (IO (AsyncExecutor, Patrol.Envelope) -> TestTree) -> TestTree
 withNoopExecutor queueSize =
   withResource
-    ((,) <$> AsyncExecutor.new queueSize 1 Nothing noopSend <*> mkTestEnvelope)
+    ((,) <$> AsyncExecutor.new (AsyncExecutor.ExecutorOptions queueSize 1) Nothing noopSend <*> mkTestEnvelope)
     (\(executor, _) -> void $ Transport.shutdown executor 1)
 
 withTestEnvelope :: (IO Patrol.Envelope -> TestTree) -> TestTree

@@ -27,7 +27,7 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
-import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
+import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..), ExecutorOptions)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
@@ -42,32 +42,33 @@ data AsyncHttpTransport = AsyncHttpTransport
 -- | Create a 'TransportProvider' that will build an 'AsyncHttpTransport' when
 -- called as part of 'Client.new'
 --
--- Pass 'AsyncExecutor.defaultQueueSize' for @queueSize@ unless you have a
--- specific reason to tune it.
-new :: HttpTransportOptions -> Int -> TransportProvider
-new httpOpts queueSize = DeferredTransport \dsn clientOpts -> do
+-- Pass 'Data.Default.def' for @executorOpts@ for the serial defaults, or
+-- override the queue size\/concurrency (e.g. @def{concurrency = 8}@ to fan out
+-- sends across the connection pool).
+new :: HttpTransportOptions -> ExecutorOptions -> TransportProvider
+new httpOpts executorOpts = DeferredTransport \dsn clientOpts -> do
   manager <- maybe getGlobalManager pure httpOpts.manager
   clientReports <-
     if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  SomeTransport <$> build httpOpts clientReports queueSize manager dsn
+  SomeTransport <$> build httpOpts clientReports executorOpts manager dsn
 
 -- | Build an 'AsyncHttpTransport' directly, bypassing the 'TransportProvider'.
 --
 -- Use this when you need a transport handle directly (e.g. for testing or
 -- profiling).
 --
--- Pass 'AsyncExecutor.defaultQueueSize' for @queueSize@ unless you have a
--- specific reason to tune it.
+-- Pass 'Data.Default.def' for @executorOpts@ for the serial defaults, or
+-- override the queue size\/concurrency.
 build ::
   HttpTransportOptions ->
   Maybe ClientReports ->
-  Int ->
+  ExecutorOptions ->
   HttpClient.Manager ->
   Patrol.Dsn ->
   IO AsyncHttpTransport
-build opts clientReports queueSize manager dsn = do
+build opts clientReports executorOpts manager dsn = do
   let toEnvelope report =
         Patrol.Envelope.Envelope
           { Patrol.Envelope.headers =
@@ -78,7 +79,7 @@ build opts clientReports queueSize manager dsn = do
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
       template = Request.prepare opts.compression dsn
       sendFn envelope = toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
-  executor <- AsyncExecutor.new queueSize 1 reportConfig sendFn
+  executor <- AsyncExecutor.new executorOpts reportConfig sendFn
   pure AsyncHttpTransport{executor}
 
 instance Transport AsyncHttpTransport where

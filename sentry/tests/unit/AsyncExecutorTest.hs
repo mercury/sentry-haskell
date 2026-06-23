@@ -32,7 +32,7 @@ spec_send = parallel $ describe "sending envelopes" do
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env = readMVar var *> testSendFn q okOutcome env
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     -- verify that the send was processed
     res <- Transport.send executor testEnvelope
     res `shouldBe` Transport.SendProcessed
@@ -49,7 +49,7 @@ spec_send = parallel $ describe "sending envelopes" do
     let sendFn env = readMVar var *> testSendFn q okOutcome env
         capacity = 1 :: Int
         attempts = capacity + 2
-    executor <- AsyncExecutor.new capacity 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions capacity 1) Nothing sendFn
     -- Saturate the executor faster than the worker can drain:
     --
     -- \* the worker is blocked in sendFn, so it dequeues at most one envelope
@@ -67,7 +67,7 @@ spec_send = parallel $ describe "sending envelopes" do
   it "is subject to filtering for valid envelope types" do
     q <- newTQueueIO
     let sendFn = testSendFn q okOutcome
-    executor <- AsyncExecutor.new 2 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 2 1) Nothing sendFn
     -- verify that the send was processed
     sendRes <- Transport.send executor emptyEnvelope
     sendRes `shouldBe` Transport.SendProcessed
@@ -82,7 +82,7 @@ spec_send = parallel $ describe "sending envelopes" do
     -- construct a send function that returns a 429 outcome, which causes
     -- the executor to apply a 1-minute global rate limit after the send
     let sendFn = testSendFn q (Delivery.Responded HttpTypes.tooManyRequests429 [])
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     -- verify that the send was processed
     res0 <- Transport.send executor testEnvelope
     res0 `shouldBe` Transport.SendProcessed
@@ -105,7 +105,7 @@ spec_flush = parallel $ describe "flushing the executor" do
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env = readMVar var *> testSendFn q okOutcome env
-    executor <- AsyncExecutor.new 3 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 3 1) Nothing sendFn
     -- enqueues two messages to be sent despite the function blocking
     sendRes0 <- Transport.send executor testEnvelope
     sendRes0 `shouldBe` Transport.SendProcessed
@@ -127,7 +127,7 @@ spec_shutdown :: Spec
 spec_shutdown = parallel $ describe "shutting the executor down" do
   it "gracefully shuts the worker down" do
     let sendFn _ = pure okOutcome
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     -- shutdown call succeeds
     res <- Transport.shutdown executor 1
     res `shouldBe` Transport.ShutdownSucceeded
@@ -142,7 +142,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env = readMVar var *> testSendFn q okOutcome env
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     -- envelope is enqueued even though the send function is blocking
     sendRes <- Transport.send executor testEnvelope
     sendRes `shouldBe` Transport.SendProcessed
@@ -163,21 +163,21 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
 
   it "stops processing envelopes" do
     let sendFn _ = pure okOutcome
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     void $ Transport.shutdown executor 1
     res <- Transport.send executor testEnvelope
     res `shouldBe` Transport.SendFailed_Shutdown
 
   it "stops processing flush requests" do
     let sendFn _ = pure okOutcome
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     void $ Transport.shutdown executor 1
     res <- Transport.flush executor 1
     res `shouldBe` Transport.FlushFailed_Shutdown
 
   it "does not shutdown more than once" do
     let sendFn _ = pure okOutcome
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     void $ Transport.shutdown executor 1
     res <- Transport.shutdown executor 1
     res `shouldBe` Transport.ShutdownFailed_AlreadyShutdown
@@ -188,7 +188,7 @@ spec_resilience = parallel $ describe "worker resilience" do
     -- A throwing sendFn (e.g. an unhandled network exception) must not kill the
     -- worker thread and turn the executor into a black hole.
     let sendFn _ = throwIO (userError "boom") :: IO Delivery.Outcome
-    executor <- AsyncExecutor.new 3 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 3 1) Nothing sendFn
     -- The envelope is accepted; its send throws on the worker thread.
     res <- Transport.send executor testEnvelope
     res `shouldBe` Transport.SendProcessed
@@ -219,7 +219,7 @@ spec_shutdownDrain = describe "shutting down with a saturated queue" do
           readMVar block
           atomically $ writeTQueue q env
           pure okOutcome
-    executor <- AsyncExecutor.new 1 1 Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 1 1) Nothing sendFn
     -- The worker dequeues env0 and blocks in sendFn.
     Transport.send executor testEnvelope >>= (`shouldBe` Transport.SendProcessed)
     readMVar started
@@ -254,7 +254,7 @@ spec_flushClientReports = describe "flushing with client reports" do
         sendFn env = do
           atomically $ writeTQueue q env
           pure (Delivery.Responded HttpTypes.tooManyRequests429 [])
-    executor <- AsyncExecutor.new 3 1 (Just reports) sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 3 1) (Just reports) sendFn
     -- The flush drains the report; the 429 outcome causes a global rate limit.
     Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
     -- A subsequent send must be filtered out by the retained limit. If the
@@ -279,7 +279,7 @@ spec_flushClientReports = describe "flushing with client reports" do
         sendFn env = do
           atomically $ writeTQueue q env
           pure (Delivery.Responded HttpTypes.internalServerError500 [])
-    executor <- AsyncExecutor.new 3 1 (Just reports) sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions 3 1) (Just reports) sendFn
     -- First flush drains the error/network_error report; its delivery fails,
     -- recording an Internal drop for the undelivered report.
     Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
@@ -304,7 +304,7 @@ spec_concurrency = parallel $ describe "concurrent fan-out" do
           atomically $ modifyTVar' latch (subtract 1)
           atomically $ readTVar latch >>= \n -> if n > 0 then retry else pure ()
           testSendFn q okOutcome env
-    executor <- AsyncExecutor.new (cap * 2) cap Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions (cap * 2) cap) Nothing sendFn
     replicateM_ cap (void $ Transport.send executor testEnvelope)
     -- If the executor ran serially, the latch would never reach 0 and flush
     -- would time out; with fan-out it completes within 5 seconds.
@@ -335,7 +335,7 @@ spec_concurrency = parallel $ describe "concurrent fan-out" do
           readMVar gate
           testSendFn q okOutcome env
             `finally` atomically (modifyTVar' live (subtract 1))
-    executor <- AsyncExecutor.new (cap * 2) cap Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions (cap * 2) cap) Nothing sendFn
     replicateM_ cap (void $ Transport.send executor testEnvelope)
     flushRes <- Transport.flush executor 5
     flushRes `shouldBe` Transport.FlushSucceeded
@@ -347,7 +347,7 @@ spec_concurrency = parallel $ describe "concurrent fan-out" do
     gate <- newEmptyMVar
     q <- newTQueueIO
     let sendFn env = readMVar gate *> testSendFn q okOutcome env
-    executor <- AsyncExecutor.new (cap * 2) cap Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions (cap * 2) cap) Nothing sendFn
     replicateM_ cap (void $ Transport.send executor testEnvelope)
     -- Enqueue the flush marker behind the cap in-flight sends, then unblock.
     flushAsync <- Async.async $ Transport.flush executor 5
@@ -364,7 +364,7 @@ spec_concurrency = parallel $ describe "concurrent fan-out" do
     -- the release even on exceptions).
     let cap = 3 :: Int
     let sendFn _ = throwIO (userError "boom") :: IO Delivery.Outcome
-    executor <- AsyncExecutor.new (cap * 2) cap Nothing sendFn
+    executor <- AsyncExecutor.new (AsyncExecutor.ExecutorOptions (cap * 2) cap) Nothing sendFn
     replicateM_ cap (void $ Transport.send executor testEnvelope)
     -- If any slot was leaked the dispatcher would block forever in acquireSlot.
     flushRes <- Transport.flush executor 5

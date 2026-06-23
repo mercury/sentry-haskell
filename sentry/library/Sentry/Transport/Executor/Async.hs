@@ -12,7 +12,7 @@
 -- a send function that handles envelope delivery:
 --
 -- > sendFn :: Patrol.Envelope -> IO Delivery.Outcome
--- > transport <- Sentry.Transport.Executor.Async.new defaultQueueSize 1 Nothing sendFn
+-- > transport <- Sentry.Transport.Executor.Async.new def Nothing sendFn
 --
 -- The send function is responsible only for transmitting the envelope and
 -- returning an 'Delivery.Outcome', and it is up to the executor to apply
@@ -33,9 +33,9 @@
 module Sentry.Transport.Executor.Async
   ( AsyncExecutor (..),
     ClientReportConfig (..),
+    ExecutorOptions (..),
     RateLimiter,
     new,
-    defaultQueueSize,
     send,
     flush,
     shutdown,
@@ -51,6 +51,7 @@ import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar)
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, writeTVar)
 import Control.Monad (void, when)
 import Data.Atomics (atomicModifyIORefCAS_)
+import Data.Default (Default (def))
 import Data.Foldable (for_)
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.Kind (Type)
@@ -68,7 +69,7 @@ import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import UnliftIO.Exception (catchAny, finally, mask_, onException)
+import UnliftIO.Exception (bracket_, catchAny, mask_, onException)
 import UnliftIO.Timeout qualified as UnliftIO (timeout)
 
 -- | Tasks that can be sent to the dispatcher thread.
@@ -100,17 +101,39 @@ data AsyncExecutor = AsyncExecutor
     handle :: Async (),
     clientReports :: Maybe ClientReports,
     rateLimiter :: IORef RateLimiter,
-    inFlight :: TVar Int,
+    -- | Count of occupied concurrency slots, as well as a semaphor that blocks
+    -- until a slot is freed and a flush\/shutdown drain barrier.
+    activeSlots :: TVar Int,
     -- | Thread ids of sends currently in flight, so a timed-out 'shutdown' can
-    -- abort them. Each forked send registers itself on entry and removes itself
-    -- on completion (in a @finally@), so the set never leaks completed threads.
-    inFlightThreads :: TVar (Set ThreadId),
+    -- abort them.
+    --
+    -- Each forked send registers itself on entry and removes itself
+    -- on completion.
+    senders :: TVar (Set ThreadId)
+  }
+
+-- | Tuning options for an 'AsyncExecutor': how large the bounded task queue is
+-- and how many envelopes may be sent concurrently.
+--
+-- Use 'def' for the defaults (queue size of 30, single-threaded concurrency)
+-- and override with record syntax, e.g. @def{'concurrency' = 8}@ if desired.
+type ExecutorOptions :: Type
+data ExecutorOptions = ExecutorOptions
+  { -- | Bounded task-queue capacity.
+    queueSize :: Int,
+    -- | Maximum number of in-flight sends.
+    --
+    -- @1@ = single-threaded, serial execution; @N@ = multi-threaded,
+    -- concurrent execution (particularly useful with the HTTP\/2 backend).
+    -- 
+    -- __NOTE__: Values below @1@ are clamped to @1@.
     concurrency :: Int
   }
 
--- | Default queue size (matches Rust SDK's @tokio_thread@ executor).
-defaultQueueSize :: Int
-defaultQueueSize = 30
+-- | Defaults: a 30-item queue (matching the Rust SDK's @tokio_thread@ executor)
+-- and serialized dispatch with @'concurrency' = 1@.
+instance Default ExecutorOptions where
+  def = ExecutorOptions{queueSize = 30, concurrency = 1}
 
 -- | Client-report piggybacking configuration for an 'AsyncExecutor'.
 type ClientReportConfig :: Type
@@ -126,19 +149,11 @@ data ClientReportConfig = ClientReportConfig
 -- | Create a new 'AsyncExecutor'.
 --
 -- The send function handles the actual envelope delivery and is called
--- by the dispatcher thread for each envelope. It is responsible only for
--- transmitting the envelope and returning a 'Delivery.Outcome'; the
--- executor owns the rate-limiter state and applies
--- 'RateLimiter.updateFromResponse' after each successful send.
+-- by the dispatcher thread for each envelope.
 --
--- Pass @Just@ a 'ClientReportConfig' to enable client-report piggybacking, or
--- 'Nothing' to disable client reports entirely.
---
--- The concurrency cap controls how many sends may be in flight simultaneously.
--- Pass @1@ for serial behaviour (a single send outstanding at a time), or a
--- larger value to fan out sends concurrently (useful with HTTP\/2
--- multiplexing). Values below @1@ are clamped to @1@, since a cap of @0@ would
--- wedge the dispatcher on the first send.
+-- It is responsible only for transmitting the envelope, returning a
+-- 'Delivery.Outcome', and applying 'RateLimiter.updateFromResponse' after
+-- each successful send.
 --
 -- Example:
 --
@@ -147,27 +162,24 @@ data ClientReportConfig = ClientReportConfig
 -- >   -- Transmit the envelope via HTTP, return the outcome.
 -- >   myFancySendEnvelopeFn envelope
 -- >
--- > executor <- Sentry.Transport.Executor.Async.new defaultQueueSize 1 Nothing sendFn
+-- > executor <- Sentry.Transport.Executor.Async.new def Nothing sendFn
 new ::
-  -- | Queue size (use 'defaultQueueSize' unless you have a specific reason to tune it).
-  Int ->
-  -- | Concurrency cap: max in-flight sends (@1@ = serial).
-  Int ->
+  ExecutorOptions ->
   Maybe ClientReportConfig ->
   (Patrol.Envelope -> IO Delivery.Outcome) ->
   IO AsyncExecutor
-new queueSize cap reports sendFn = do
+new options reports sendFn = do
   -- A cap below 1 would make 'acquireSlot' retry forever on the first send,
   -- wedging the dispatcher; clamp it so the executor always makes progress.
-  let concurrency = max 1 cap
-  (taskQueue, outChan) <- Unagi.newChan queueSize
+  let concurrency = max 1 options.concurrency
+  (taskQueue, outChan) <- Unagi.newChan options.queueSize
   shutdownRef <- newTVarIO False
   rateLimiter <- newIORef RateLimiter.new
-  inFlight <- newTVarIO 0
-  inFlightThreads <- newTVarIO Set.empty
+  activeSlots <- newTVarIO 0
+  senders <- newTVarIO Set.empty
   let clientReports = fmap (.accumulator) reports
-  handle <- async $ mkWorker outChan reports sendFn rateLimiter inFlight inFlightThreads concurrency
-  pure AsyncExecutor{taskQueue, shutdownRef, handle, clientReports, rateLimiter, inFlight, inFlightThreads, concurrency}
+  handle <- async $ mkWorker outChan reports sendFn rateLimiter activeSlots senders concurrency
+  pure AsyncExecutor{taskQueue, shutdownRef, handle, clientReports, rateLimiter, activeSlots, senders}
 
 -- | Dispatcher thread that reads tasks from the queue and fans out sends
 -- behind a bounded in-flight count.
@@ -180,7 +192,7 @@ mkWorker ::
   TVar (Set ThreadId) ->
   Int ->
   IO ()
-mkWorker outChan reports sendFn rlRef inFlight inFlightThreads cap = loop
+mkWorker outChan reports sendFn rlRef activeSlots senders cap = loop
   where
     loop :: IO ()
     loop =
@@ -190,21 +202,23 @@ mkWorker outChan reports sendFn rlRef inFlight inFlightThreads cap = loop
           awaitDrained
           drainReportsInline
         -- Wait for all in-flight sends, drain any pending client report, then
-        -- signal the caller and continue. The whole barrier+drain is bounded by
-        -- the caller's timeout so a stuck in-flight send or a misbehaving drain
-        -- send can never wedge the dispatcher permanently; on timeout we leave
-        -- the syncVar unset so the caller observes 'FlushFailed_TimedOut'.
+        -- signal the caller and continue.
+        --
+        -- The whole barrier+drain is bounded by the caller's timeout so a stuck
+        -- in-flight send or a misbehaving drain send can never wedge the
+        -- dispatcher permanently; on timeout we leave the syncVar unset so the
+        -- caller observes 'FlushFailed_TimedOut'.
         Flush syncVar timeout -> do
           completed <- UnliftIO.timeout (toMicroseconds timeout) (awaitDrained *> drainReportsInline)
           for_ completed \() -> void (tryPutMVar syncVar ())
           loop
         -- Prepare the envelope (rate-limit filter + client-report piggyback)
         -- serially on the dispatcher, then acquire a slot and fork the actual
-        -- send. Preparation is guarded so a misbehaving filter/accumulator can
+        -- send.
+        --
+        -- Preparation is guarded so a misbehaving filter/accumulator can
         -- never kill the dispatcher, and runs *before* the slot is taken so a
-        -- failure cannot leak one. The acquire->fork handoff is masked (a
-        -- cancellation in that window must not leak a slot); the forked send
-        -- runs unmasked and releases the slot via finally.
+        -- failure cannot leak one.
         SendEnvelope envelope -> do
           mPrepared <-
             prepareEnvelope envelope `catchAny` \_ -> do
@@ -212,20 +226,15 @@ mkWorker outChan reports sendFn rlRef inFlight inFlightThreads cap = loop
                 ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError envelope
               pure Nothing
           for_ mPrepared \piggybacked ->
+            -- Mask the acquire->fork handoff so an async exception in that window
+            -- can't strand a reserved slot.
+            --
+            -- The child runs unmasked and 'trackedSend' frees the slot when it
+            -- finishes; if the fork itself fails the child never runs, so
+            -- release the slot here instead.
             mask_ do
               acquireSlot
-              void
-                ( asyncWithUnmask \unmask -> do
-                    tid <- myThreadId
-                    ( atomically (modifyTVar' inFlightThreads (Set.insert tid))
-                        *> unmask (sendAndAccount piggybacked)
-                      )
-                      `finally` ( atomically (modifyTVar' inFlightThreads (Set.delete tid))
-                                    *> releaseSlot
-                                )
-                )
-                -- If the fork itself fails, the child never ran, so hand the
-                -- slot back here rather than leaking it.
+              void (asyncWithUnmask \unmask -> trackedSend (unmask (sendAndAccount piggybacked)))
                 `onException` releaseSlot
           loop
 
@@ -302,18 +311,30 @@ mkWorker outChan reports sendFn rlRef inFlight inFlightThreads cap = loop
     acquireSlot :: IO ()
     acquireSlot =
       atomically $
-        readTVar inFlight >>= \n ->
-          if n >= cap then retry else writeTVar inFlight (n + 1)
+        readTVar activeSlots >>= \n ->
+          if n >= cap then retry else writeTVar activeSlots (n + 1)
 
     -- | Release an in-flight slot.
     releaseSlot :: IO ()
-    releaseSlot = atomically $ modifyTVar' inFlight (subtract 1)
+    releaseSlot = atomically $ modifyTVar' activeSlots (subtract 1)
+
+    -- | Run a forked send as a tracked in-flight operation: register this
+    -- thread in 'senders' (so a timed-out 'shutdown' can abort it) for the
+    -- duration of @act@, then deregister and release its slot on completion,
+    -- whether @act@ returns normally or throws.
+    trackedSend :: IO () -> IO ()
+    trackedSend act = do
+      tid <- myThreadId
+      bracket_
+        (atomically (modifyTVar' senders (Set.insert tid)))
+        (atomically (modifyTVar' senders (Set.delete tid)) *> releaseSlot)
+        act
 
     -- | Block until all in-flight sends have completed.
     awaitDrained :: IO ()
     awaitDrained =
       atomically $
-        readTVar inFlight >>= \n ->
+        readTVar activeSlots >>= \n ->
           when (n > 0) retry
 
 instance Sentry.Transport.Transport AsyncExecutor where
@@ -352,8 +373,8 @@ instance Sentry.Transport.Transport AsyncExecutor where
         -- Best-effort: abort any sends still in flight so they do not outlive
         -- the executor after a timed-out shutdown. The dispatcher is already
         -- cancelled above, so no new sends can be forked past this point.
-        inFlightTids <- readTVarIO executor.inFlightThreads
-        for_ inFlightTids killThread
+        senders <- readTVarIO executor.senders
+        for_ senders killThread
         pure $ Sentry.Transport.ShutdownFailed_TimedOut timeout
 
   recordDiscards :: AsyncExecutor -> DiscardReason -> DataCategory -> Int -> IO ()

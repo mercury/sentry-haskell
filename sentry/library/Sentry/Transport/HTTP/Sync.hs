@@ -68,7 +68,7 @@ data SyncHttpTransport = SyncHttpTransport
 -- > SyncHttpTransport.new def
 -- > SyncHttpTransport.new (Witch.from manager)
 -- > SyncHttpTransport.new def{compression = NoCompression}
--- > AsyncHttpTransport.new def AsyncExecutor.defaultQueueSize
+-- > AsyncHttpTransport.new def def  -- second 'def' is the 'ExecutorOptions'
 type HttpTransportOptions :: Type
 data HttpTransportOptions = HttpTransportOptions
   { -- | Body encoding for outgoing envelopes.
