@@ -168,7 +168,7 @@ benchmark space
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -with-rtsopts=-A32m
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -rtsopts -with-rtsopts=-A32m
   build-depends:
       aeson
     , annotated-exception
@@ -183,7 +183,7 @@ benchmark space
     , mtl
     , network-bsd
     , network-uri
-    , patrol ==1.2.*
+    , patrol
     , random
     , safe-exceptions
     , sentry-core

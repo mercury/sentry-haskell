@@ -60,7 +60,14 @@ benchmarks:
   space:
     source-dirs: benchmarks/space
     main: Main.hs
-    ghc-options: -with-rtsopts=-A32m
+    ghc-options:
+      - -rtsopts
+      - -with-rtsopts=-A32m
     dependencies:
+      - aeson
+      - data-default
+      - patrol
       - sentry-core
+      - text
+      - vector
       - weigh
