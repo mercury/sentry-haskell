@@ -15,9 +15,7 @@ module Sentry.Transport.HTTP.Async
   )
 where
 
-import Data.Foldable (for_)
 import Data.Kind (Type)
-import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Client.TLS (getGlobalManager)
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
@@ -29,10 +27,8 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
-import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
-import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
 import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope, toOutcome)
@@ -81,15 +77,7 @@ build opts clientReports queueSize manager dsn = do
           }
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
       template = Request.prepare opts.compression dsn
-      sendFn envelope rateLimiter = do
-        now <- getCurrentTime
-        outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
-        -- Record send/network failures as drops (a 429 is accounted for by the
-        -- rate limiter via updateFromResponse, not as a drop).
-        for_ (Delivery.discardReason outcome) \reason ->
-          for_ (fmap (.accumulator) reportConfig) \cr ->
-            ClientReport.recordEnvelopeDrop cr reason envelope
-        pure $ RateLimiter.updateFromResponse rateLimiter now outcome
+      sendFn envelope = toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
   pure AsyncHttpTransport{executor}
 

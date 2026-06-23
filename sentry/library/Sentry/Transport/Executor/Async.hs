@@ -11,11 +11,12 @@
 -- The executor is generic over the actual sending mechanism - you provide
 -- a send function that handles envelope delivery:
 --
--- > sendFn :: Patrol.Envelope -> RateLimiter -> IO RateLimiter
+-- > sendFn :: Patrol.Envelope -> IO Delivery.Outcome
 -- > transport <- Sentry.Transport.Executor.Async.new defaultQueueSize Nothing sendFn
 --
--- This allows the same executor to work with different HTTP libraries or
--- custom delivery mechanisms.
+-- The send function is responsible only for transmitting the envelope and
+-- returning an 'Delivery.Outcome', and it is up to the executor to apply
+-- 'RateLimiter.updateFromResponse' after each successful send.
 --
 -- == Concurrency
 --
@@ -51,6 +52,7 @@ import Sentry.ClientReport (ClientReports, DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import UnliftIO.Exception (catchAny)
@@ -102,27 +104,26 @@ data ClientReportConfig = ClientReportConfig
 -- | Create a new 'AsyncExecutor'.
 --
 -- The send function handles the actual envelope delivery and is called
--- by the worker thread for each envelope. It receives the current rate
--- limiter state and returns an updated state (typically parsed from
--- response headers).
+-- by the worker thread for each envelope. It is responsible only for
+-- transmitting the envelope and returning a 'Delivery.Outcome'; the
+-- executor owns the rate-limiter state and applies
+-- 'RateLimiter.updateFromResponse' after each successful send.
 --
 -- Pass @Just@ a 'ClientReportConfig' to enable client-report piggybacking, or
 -- 'Nothing' to disable client reports entirely.
 --
 -- Example:
 --
--- > sendFn :: Patrol.Envelope -> RateLimiter -> IO RateLimiter
--- > sendFn envelope rateLimiter = do
--- >   -- Send envelope via HTTP, parse rate limit headers, handle retries...
--- >   newRateLimiter <- myFancySendEnvelopeFn envelope
--- >   -- Return updated rate limiter
--- >   pure newRateLimiter
+-- > sendFn :: Patrol.Envelope -> IO Delivery.Outcome
+-- > sendFn envelope = do
+-- >   -- Transmit the envelope via HTTP, return the outcome.
+-- >   myFancySendEnvelopeFn envelope
 -- >
 -- > executor <- Sentry.Transport.Executor.Async.new defaultQueueSize Nothing sendFn
 new ::
   Int ->
   Maybe ClientReportConfig ->
-  (Patrol.Envelope -> RateLimiter -> IO RateLimiter) ->
+  (Patrol.Envelope -> IO Delivery.Outcome) ->
   IO AsyncExecutor
 new queueSize reports sendFn = do
   (taskQueue, outChan) <- Unagi.newChan queueSize
@@ -135,7 +136,7 @@ new queueSize reports sendFn = do
 mkWorker ::
   Unagi.OutChan Task ->
   Maybe ClientReportConfig ->
-  (Patrol.Envelope -> RateLimiter -> IO RateLimiter) ->
+  (Patrol.Envelope -> IO Delivery.Outcome) ->
   IO ()
 mkWorker outChan reports sendFn = loop RateLimiter.new
   where
@@ -165,17 +166,27 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
                 Just config -> do
                   mReport <- ClientReport.takePending config.accumulator now False
                   pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
-              newRateLimiter <-
-                -- a misbehaving sendFn must never kill the worker thread.
-                --
-                -- the built-in HTTP sendFn already converts transport failures
-                -- into values, so this only catches genuinely unexpected
-                -- errors.
-                sendFn piggybacked rateLimiter `catchAny` \_ -> do
+              -- a misbehaving sendFn must never kill the worker thread.
+              --
+              -- the built-in HTTP sendFn already converts transport failures
+              -- into values, so this only catches genuinely unexpected
+              -- errors.
+              mOutcome <-
+                fmap Just (sendFn piggybacked) `catchAny` \_ -> do
                   for_ (fmap (.accumulator) reports) \cr ->
                     ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError filteredEnvelope
-                  pure rateLimiter
-              loop newRateLimiter
+                  pure Nothing
+              case mOutcome of
+                Nothing -> loop rateLimiter
+                Just outcome -> do
+                  now' <- getCurrentTime
+                  -- Account for send/network failures as drops (a 429 is
+                  -- accounted for by the rate limiter via updateFromResponse,
+                  -- not as a drop).
+                  for_ (Delivery.discardReason outcome) \reason ->
+                    for_ (fmap (.accumulator) reports) \cr ->
+                      ClientReport.recordEnvelopeDrop cr reason filteredEnvelope
+                  loop (RateLimiter.updateFromResponse rateLimiter now' outcome)
 
     -- Force-drain any pending client report, sending it immediately. Returns
     -- the (possibly updated) rate limiter so a limit learned from the drain's
@@ -188,8 +199,14 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
         now <- getCurrentTime
         ClientReport.takePending config.accumulator now True >>= \case
           Nothing -> pure rateLimiter
-          Just report ->
-            sendFn (config.toEnvelope report) rateLimiter `catchAny` \_ -> pure rateLimiter
+          Just report -> do
+            mOutcome <-
+              fmap Just (sendFn (config.toEnvelope report)) `catchAny` \_ -> pure Nothing
+            case mOutcome of
+              Nothing -> pure rateLimiter
+              Just outcome -> do
+                now' <- getCurrentTime
+                pure (RateLimiter.updateFromResponse rateLimiter now' outcome)
 
 instance Sentry.Transport.Transport AsyncExecutor where
   send :: AsyncExecutor -> Patrol.Envelope -> IO Sentry.Transport.SendResponse

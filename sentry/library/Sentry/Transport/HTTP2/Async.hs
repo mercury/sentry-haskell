@@ -36,9 +36,7 @@ module Sentry.Transport.HTTP2.Async
 where
 
 import Data.Default (Default (def))
-import Data.Foldable (for_)
 import Data.Kind (Type)
-import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Headers qualified as Patrol.Headers
@@ -48,10 +46,8 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
-import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
-import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP2.Connection (Http2Settings (..), ReconnectDecision (..), exponentialBackoff, reconnectAfter)
 import Sentry.Transport.HTTP2.Connection qualified as Connection
@@ -144,13 +140,7 @@ build opts clientReports queueSize dsn = do
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
       endpoint = Connection.mkEndpoint opts.compression dsn
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
-  let sendFn envelope rateLimiter = do
-        now <- getCurrentTime
-        outcome <- Connection.sendEnvelope manager envelope
-        for_ (Delivery.discardReason outcome) \reason ->
-          for_ (fmap (.accumulator) reportConfig) \cr ->
-            ClientReport.recordEnvelopeDrop cr reason envelope
-        pure $ RateLimiter.updateFromResponse rateLimiter now outcome
+  let sendFn = Connection.sendEnvelope manager
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
   pure AsyncHttp2Transport{executor, manager}
 
