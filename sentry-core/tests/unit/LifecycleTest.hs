@@ -11,7 +11,7 @@ import Sentry qualified
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Test qualified as Test
-import Sentry.Test (withGlobalClient)
+import Sentry.Test (withGlobalScope)
 import Sentry.Transport (FlushResponse (..), SendResponse (..), ShutdownResponse (..), SomeTransport (..), Transport (..))
 import Test.Hspec
 import Witch qualified
@@ -22,7 +22,7 @@ spec_lifecycle = do
     it "flushes and shuts down the transport on normal exit" do
       lt <- newLifecycleTransport
       let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
-      withGlobalClient Nothing $ bracket (Sentry.init opts) Sentry.close \_ -> pure ()
+      withGlobalScope $ bracket (Sentry.init opts) Sentry.close \_ -> pure ()
       flushCount <- readIORef lt.flushes
       shutdownCount <- readIORef lt.shutdowns
       flushCount `shouldBe` 1
@@ -33,7 +33,7 @@ spec_lifecycle = do
       let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
       result <-
         try @SomeException $
-          withGlobalClient Nothing $
+          withGlobalScope $
             bracket (Sentry.init opts) Sentry.close \_ -> throwIO TestError
       case result of
         Right _ -> expectationFailure "expected exception to propagate"
@@ -45,20 +45,20 @@ spec_lifecycle = do
 
     it "is a no-op on exit when there is no transport" do
       result <-
-        withGlobalClient Nothing $
+        withGlobalScope $
           bracket (Sentry.init def) Sentry.close \_ -> pure (42 :: Int)
       result `shouldBe` 42
 
     it "returns a client carrying the configured transport" do
       lt <- newLifecycleTransport
       let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
-      withGlobalClient Nothing $ bracket (Sentry.init opts) Sentry.close \client ->
+      withGlobalScope $ bracket (Sentry.init opts) Sentry.close \client ->
         isJust client.transport `shouldBe` True
 
     it "binds the client to the global scope so capture works without scopes" do
       transport <- Test.new
       let opts = def{transport = Just (Witch.from (SomeTransport transport)), dsn = Just Test.TEST_DSN}
-      withGlobalClient Nothing $
+      withGlobalScope $
         bracket (Sentry.init opts) Sentry.close \_ ->
           () <$ Sentry.captureMessage Patrol.Level.Info "scope-free capture"
       events <- Test.fetchAndClearEvents transport

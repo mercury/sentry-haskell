@@ -19,16 +19,14 @@ module Sentry.Test
 
     -- * Scope isolation
     cleanScopes,
-    withGlobalClient,
-    withoutGlobalClient,
+    withGlobalScope,
   )
 where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent.MVar (MVar, newMVar, withMVarMasked)
 import Control.Exception (bracket)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.IO.Unlift (MonadUnliftIO)
+import Control.Monad.IO.Unlift (MonadUnliftIO, withRunInIO)
 import Data.Atomics (atomicModifyIORefCAS, atomicModifyIORefCAS_)
 import Data.Default (def)
 import Data.Function ((&))
@@ -47,12 +45,11 @@ import Sentry.Client (Client)
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
-import Sentry.Scope (bindClient, global, readScopeRef, removeCurrent, removeIsolation)
-import Sentry.Scope.Internal (ScopeData (..))
+import Sentry.Scope qualified as Scope
+import Sentry.Scope.Internal qualified as Internal
 import Sentry.Scope.IO qualified as ScopeIO
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Transport
-import System.IO.Unsafe (unsafePerformIO)
 import Witch qualified
 
 pattern TEST_DSN :: Patrol.Dsn
@@ -108,7 +105,7 @@ mkCustomClient transport opts =
 
 -- | Create a fresh 'TestTransport', build a 'Client' from it, and run the
 -- given action with that client bound to the isolation scope.
--- 
+--
 -- The callback receives the 'TestTransport' so it can be inspected (e.g. via
 -- 'fetchAndClearEvents') after the action returns.
 --
@@ -166,44 +163,49 @@ fetchAndClearDrops transport =
 
 -- Scope isolation helpers
 
--- | Reset all three scope layers to a clean state: unbind the client from the
--- process-wide 'Sentry.Scope.global' scope and clear any isolation or current
--- scope from the calling thread's OpenTelemetry context.
+-- | Reset all three scope layers to fresh empty scopes on the calling thread.
 --
--- For parallel tests that write to the global scope, use 'withGlobalScope'
--- (which holds the shared lock) rather than this function.
+-- Each layer is replaced with a new empty 'Scope' rather than removed from the
+-- thread-local context: removing the global override would fall back to the
+-- true process singleton (exposing shared state across parallel tests), so it
+-- must be shadowed with an empty scope instead.
+--
+-- For parallel tests that call 'Sentry.Init.init' \/ 'Sentry.Init.withSentry',
+-- use 'withGlobalScope' instead, as it provides isolation without requiring an
+-- explicit clean-up step.
 cleanScopes :: IO ()
 cleanScopes = do
-  bindClient Nothing global
-  ThreadLocal.adjustContext (removeCurrent . removeIsolation)
+  g <- Scope.create Scope.Global
+  i <- Scope.create Scope.Isolation
+  c <- Scope.create Scope.Current
+  ThreadLocal.adjustContext
+    ( Internal.insertGlobal g
+        . Scope.insertIsolation i
+        . Scope.insertCurrent c
+    )
 
--- | A process-wide lock that 'withGlobalScope' uses to synchronize
--- 'Sentry.Scope.global' scope access.
+-- | Run an action with a fresh, empty global scope installed on the calling
+-- thread, restoring the previous global on exit (normal or exceptional).
 --
--- Teset suites should wrap any test (or test setup) that calls
--- 'Sentry.Init.init' in tihs function to serialize access to the process-wide
--- global scope.
-globalScopeLock :: MVar ()
-globalScopeLock = unsafePerformIO (newMVar ())
-{-# NOINLINE globalScopeLock #-}
-
--- | Run an action with the global scope's client set to @mc@, holding the
--- shared 'globalScopeLock' and restoring the previous client on exit.
+-- Every read and write to the global scope within the action (including calls
+-- to 'Sentry.Init.init', 'Sentry.Init.close', 'Sentry.Init.withSentry', and
+-- 'Sentry.Scope.configureGlobal') hits the thread-local copy rather than the
+-- process singleton, so parallel tests cannot contaminate one another.
 --
--- Use this to wrap any test (or test setup) that calls 'Sentry.Init.init',
--- 'Sentry.Init.close', or 'Sentry.Init.withSentry', so that parallel tests
--- do not race on the process-wide global scope.
-withGlobalClient :: Maybe Client -> IO a -> IO a
-withGlobalClient mc action =
-  withMVarMasked globalScopeLock \() ->
-    bracket
-      (do saved <- (.client) <$> readScopeRef global
-          bindClient mc global
-          pure saved)
-      (\saved -> bindClient saved global)
-      (const action)
+-- __Note__: this helper is intentionally /not/ re-exported from "Sentry" or
+-- "Sentry.Scope". The global scope is meant to be truly global in production;
+-- this override exists solely as a test-isolation escape hatch.
+withGlobalScope :: (MonadUnliftIO m) => m a -> m a
+withGlobalScope action = withRunInIO \run ->
+  bracket acquire release \_ -> run action
+  where
+    acquire :: IO (Maybe Scope.Scope)
+    acquire = do
+      ctx <- ThreadLocal.getContext
+      scope <- Scope.create Scope.Global
+      ThreadLocal.adjustContext (Internal.insertGlobal scope)
+      pure (Internal.lookupGlobal ctx)
 
--- | Run an action with no client bound to the global scope. Shorthand for
--- @'withGlobalClient' Nothing@.
-withoutGlobalClient :: IO a -> IO a
-withoutGlobalClient = withGlobalClient Nothing
+    release parent =
+      ThreadLocal.adjustContext \ctx ->
+        maybe (Internal.removeGlobal ctx) (`Internal.insertGlobal` ctx) parent

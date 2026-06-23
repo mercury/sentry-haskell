@@ -2,7 +2,7 @@ module ClientResolutionTest where
 
 import Patrol.Type.Level qualified as Patrol.Level
 import Sentry qualified
-import Sentry.Test (withoutGlobalClient)
+import Sentry.Test (withGlobalScope)
 import Sentry.Test qualified as Test
 import Test.Hspec
 
@@ -37,5 +37,5 @@ spec_clientResolution = describe "client resolution (client-on-scope)" do
     length eventsB `shouldBe` 1
 
   it "resolves a non-recording client when nothing is bound (capture no-ops)" do
-    result <- withoutGlobalClient $ Sentry.captureMessage Patrol.Level.Info "into the void"
+    result <- withGlobalScope $ Sentry.captureMessage Patrol.Level.Info "into the void"
     result `shouldBe` Nothing

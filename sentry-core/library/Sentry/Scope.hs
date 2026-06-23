@@ -75,7 +75,13 @@ module Sentry.Scope
     removeIsolation,
 
     -- ** Global Scope
-    global,
+    getGlobal,
+    configureGlobal,
+
+    -- ** Event Processor
+    setEventProcessor,
+    addEventProcessor,
+    unsetEventProcessor,
 
     -- ** Event Modification
     apply,
@@ -108,6 +114,7 @@ import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
+import Sentry.Scope.Internal qualified as Internal
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | Read the current state of the 'ScopeData' contained within the given
@@ -191,11 +198,29 @@ removeContext scope k = modifyScopeData scope \s -> s{contexts = Map.delete k s.
 clearContexts :: (MonadIO m) => Scope -> m ()
 clearContexts scope = modifyScopeData scope \s -> s{contexts = Map.empty}
 
--- | A globally accessible 'Scope' holding data that will be added to /all/
--- events sent by this process.
-global :: Scope
-global = Scope $ unsafePerformIO $ newIORef (def{type_ = Just Global})
-{-# NOINLINE global #-}
+-- | Resolve the global 'Scope' visible on the calling thread.
+--
+-- Returns the thread-local override installed by 'Sentry.Test.withGlobalScope'
+-- (or, at the lower level, 'Sentry.Scope.Internal.insertGlobal') when one
+-- exists, falling back to the true process-wide singleton
+-- ('Sentry.Scope.Internal.processGlobal') otherwise.
+--
+-- In production, where no override should ever installed, this is a single
+-- context lookup that returns the process singleton immediately.
+getGlobal :: (MonadIO m) => m Scope
+getGlobal = liftIO $ fromMaybe Internal.processGlobal . Internal.lookupGlobal <$> ThreadLocal.getContext
+
+-- | Apply a modification to the resolved global 'Scope'.
+--
+-- Equivalent to @'getGlobal' >>= f@ — fetches the thread-local override
+-- (or the process singleton) and passes it to @f@. Useful for writing
+-- process-wide defaults at startup:
+--
+-- @
+-- configureGlobal \\scope -> Sentry.Scope.setTag scope "release" version
+-- @
+configureGlobal :: (MonadIO m) => (Scope -> m a) -> m a
+configureGlobal f = getGlobal >>= f
 
 currentScopeKey :: Key Scope
 currentScopeKey = unsafePerformIO $ Context.newKey "current_scope"
@@ -241,13 +266,15 @@ clone (Scope ref) = liftIO do
   Scope <$> newIORef scope
 
 -- | Read the merged ambient 'ScopeData' visible at the call site:
--- 'global' \<> isolation (from thread-local) \<> current (from thread-local).
+-- global (process singleton or thread-local override) \<> isolation (from
+-- thread-local) \<> current (from thread-local).
 --
 -- Missing layers contribute 'mempty'.
 readAmbientScope :: (MonadIO m) => m ScopeData
 readAmbientScope = liftIO do
-  globalScope <- readScopeRef global
   context <- ThreadLocal.getContext
+  let globalScopeRef = fromMaybe Internal.processGlobal (Internal.lookupGlobal context)
+  globalScope <- readScopeRef globalScopeRef
   isolationScope <- maybe (pure mempty) readScopeRef (lookupIsolation context)
   currentScope <- maybe (pure mempty) readScopeRef (lookupCurrent context)
   pure $ globalScope <> isolationScope <> currentScope
@@ -273,6 +300,28 @@ lookupClient = (.client) <$> readAmbientScope
 -- isolation scope for a dynamic extent.
 bindClient :: (MonadIO m) => Maybe Client -> Scope -> m ()
 bindClient mc scope = modifyScopeData scope \s -> s{client = mc}
+
+-- * Event processor setters
+
+-- | Replace the 'Scope's event processor with the given function.
+setEventProcessor :: (MonadIO m) => Scope -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
+setEventProcessor scope f = modifyScopeData scope \s -> s{eventProcessor = f}
+
+-- | Chain a new processor after the existing one.
+--
+-- The existing processor runs first; its output is then passed to the new
+-- processor. If the existing processor drops the event ('Nothing'), the new
+-- processor is not called. Matches the left-to-right chaining of the
+-- 'Semigroup' instance.
+addEventProcessor :: (MonadIO m) => Scope -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
+addEventProcessor scope g =
+  modifyScopeData scope \s ->
+    s{eventProcessor = \ce -> s.eventProcessor ce >>= \ev -> g ce{event = ev}}
+
+-- | Reset the 'Scope's event processor to the default pass-through (no
+-- filtering or mutation).
+unsetEventProcessor :: (MonadIO m) => Scope -> m ()
+unsetEventProcessor scope = modifyScopeData scope \s -> s{eventProcessor = \ce -> Just ce.event}
 
 -- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
 -- 'eventProcessor' as the final step.
