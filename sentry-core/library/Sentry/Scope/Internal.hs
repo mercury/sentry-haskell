@@ -11,6 +11,15 @@ module Sentry.Scope.Internal
 
     -- * Privileged mutation
     modifyScopeData,
+
+    -- * Process-global scope and thread-local override
+    --
+    -- $global-override
+    processGlobal,
+    globalKey,
+    lookupGlobal,
+    insertGlobal,
+    removeGlobal,
   )
 where
 
@@ -19,15 +28,18 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
 import Data.Atomics (atomicModifyIORefCAS_)
 import Data.Default (Default (def))
-import Data.IORef (IORef)
+import Data.IORef (IORef, newIORef)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Vector (Vector)
+import OpenTelemetry.Context (Context, Key)
+import OpenTelemetry.Context qualified as Context
 import Patrol qualified
 import Sentry.Client (Client)
 import Sentry.Event (CapturedEvent (..))
+import System.IO.Unsafe (unsafePerformIO)
 
 -- | A mutable reference to 'ScopeData' that lives on thread-local context.
 --
@@ -159,3 +171,42 @@ defaultScopeData =
 -- 'ScopeData -> ScopeData' modifiers should be avoided.
 modifyScopeData :: (MonadIO m) => Scope -> (ScopeData -> ScopeData) -> m ()
 modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS_ ref f
+
+-- $global-override
+--
+-- 'processGlobal' is the true process-wide singleton.
+--
+-- It is intentionally not exported from "Sentry.Scope", with the intention
+-- that callers should go through 'Sentry.Scope.getGlobal' which first checks
+-- for a thread-local override installed by 'insertGlobal'.
+--
+-- This override mechanism exists primarily for test isolation (see
+-- 'Sentry.Test'); in production, no override is installed, so every thread
+-- resolves straight to 'processGlobal' with no overhead.
+
+-- | The true process-wide global scope singleton.
+--
+-- All reads and writes should go through 'Sentry.Scope.getGlobalScope' rather
+-- than using this reference directly.
+processGlobal :: Scope
+processGlobal = Scope $ unsafePerformIO $ newIORef (def{type_ = Just Global})
+{-# NOINLINE processGlobalScope #-}
+
+-- | Thread-local context key for a per-thread global scope override.
+globalKey :: Key Scope
+globalKey = unsafePerformIO $ Context.newKey "global_scope"
+{-# NOINLINE globalKey #-}
+
+-- | Retrieve the per-thread global scope override from the given 'Context', if
+-- one has been installed.
+lookupGlobal :: Context -> Maybe Scope
+lookupGlobal = Context.lookup globalKey
+
+-- | Install a per-thread global scope override on the given 'Context'.
+insertGlobal :: Scope -> Context -> Context
+insertGlobal = Context.insert globalKey
+
+-- | Remove any per-thread global scope override from the given 'Context',
+-- reverting global resolution to 'processGlobalScope'.
+removeGlobal :: Context -> Context
+removeGlobal = Context.delete globalKey

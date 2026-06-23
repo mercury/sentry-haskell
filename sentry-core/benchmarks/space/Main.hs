@@ -86,7 +86,8 @@ heavy =
 installGlobalClient :: IO ()
 installGlobalClient = do
   transport <- Test.new
-  Scope.bindClient (Just (Test.mkCustomClient transport def{maxBreadcrumbs = 1000})) Scope.global
+  g <- Scope.getGlobal
+  Scope.bindClient (Just (Test.mkCustomClient transport def{maxBreadcrumbs = 1000})) g
 
 -- | Capture @iterations@ message events.
 captureN :: IO ()
@@ -129,7 +130,8 @@ baselineException () = do
 runProfile :: Profile -> () -> IO ()
 runProfile p () = do
   installGlobalClient
-  setTags Scope.global "global.tag-" p.globalTags
+  g <- Scope.getGlobal
+  setTags g "global.tag-" p.globalTags
   Sentry.withIsolationScope \iso -> do
     setTags iso "request.tag-" p.requestTags
     setExtras iso p.requestExtras
