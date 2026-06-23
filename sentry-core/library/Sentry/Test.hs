@@ -1,9 +1,34 @@
 {-# LANGUAGE PatternSynonyms #-}
 
-module Sentry.Test where
+module Sentry.Test
+  ( -- * Test DSN
+    pattern TEST_DSN,
+
+    -- * Test transport
+    TestTransport (..),
+    new,
+    mkClient,
+    mkCustomClient,
+    withClient,
+    withCustomClient,
+
+    -- * Inspecting collected data
+    fetchAndClearEvents,
+    fetchAndClearEnvelopes,
+    fetchAndClearDrops,
+
+    -- * Scope isolation
+    cleanScopes,
+    withGlobalClient,
+    withoutGlobalClient,
+  )
+where
 
 import Control.Applicative ((<|>))
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Concurrent.MVar (MVar, newMVar, withMVarMasked)
+import Control.Exception (bracket)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Data.Atomics (atomicModifyIORefCAS, atomicModifyIORefCAS_)
 import Data.Default (def)
 import Data.Function ((&))
@@ -11,6 +36,7 @@ import Data.IORef (IORef, newIORef)
 import Data.Kind (Type)
 import Data.Maybe (mapMaybe)
 import Data.Monoid (Endo (..))
+import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Patrol qualified
 import Patrol.Type.DataCategory (DataCategory)
 import Patrol.Type.Dsn qualified as Patrol.Dsn
@@ -21,9 +47,12 @@ import Sentry.Client (Client)
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
-import Sentry.Monad (SentryT, runSentryT)
+import Sentry.Scope (bindClient, global, readScopeRef, removeCurrent, removeIsolation)
+import Sentry.Scope.Internal (ScopeData (..))
+import Sentry.Scope.IO qualified as ScopeIO
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Transport
+import System.IO.Unsafe (unsafePerformIO)
 import Witch qualified
 
 pattern TEST_DSN :: Patrol.Dsn
@@ -78,11 +107,13 @@ mkCustomClient transport opts =
       }
 
 -- | Create a fresh 'TestTransport', build a 'Client' from it, and run the
--- given 'SentryT' action. The callback receives the 'TestTransport' so it
--- can be inspected (e.g. via 'fetchAndClearEvents') after the action returns.
+-- given action with that client bound to the isolation scope.
+-- 
+-- The callback receives the 'TestTransport' so it can be inspected (e.g. via
+-- 'fetchAndClearEvents') after the action returns.
 --
 -- Returns both the action result and the transport.
-withClient :: (MonadIO m) => (TestTransport -> SentryT m a) -> m (a, TestTransport)
+withClient :: (MonadUnliftIO m) => (TestTransport -> m a) -> m (a, TestTransport)
 withClient = withCustomClient (def @ClientOptions)
 
 -- | Like 'withClient' but uses the given 'ClientOptions' (with 'TEST_DSN' and
@@ -92,7 +123,7 @@ withClient = withCustomClient (def @ClientOptions)
 -- 'Sentry.Client.new', so 'Sentry.Integration.Integration.setup' is
 -- invoked for every integration and default integrations are prepended when
 -- 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@.
-withCustomClient :: (MonadIO m) => ClientOptions -> (TestTransport -> SentryT m a) -> m (a, TestTransport)
+withCustomClient :: (MonadUnliftIO m) => ClientOptions -> (TestTransport -> m a) -> m (a, TestTransport)
 withCustomClient opts f = do
   transport <- liftIO new
   client <-
@@ -102,7 +133,7 @@ withCustomClient opts f = do
           { dsn = opts.dsn <|> Just TEST_DSN,
             transport = Just (Witch.from (SomeTransport transport))
           }
-  result <- runSentryT client (f transport)
+  result <- ScopeIO.withClient client (f transport)
   pure (result, transport)
 
 -- | Like 'fetchAndClearEnvelopes', but filters the 'Patrol.Type.Envelope.Envelope's
@@ -132,3 +163,47 @@ fetchAndClearDrops transport =
   atomicModifyIORefCAS
     transport.recordedDrops
     \drops -> (mempty, drops `appEndo` [])
+
+-- Scope isolation helpers
+
+-- | Reset all three scope layers to a clean state: unbind the client from the
+-- process-wide 'Sentry.Scope.global' scope and clear any isolation or current
+-- scope from the calling thread's OpenTelemetry context.
+--
+-- For parallel tests that write to the global scope, use 'withGlobalScope'
+-- (which holds the shared lock) rather than this function.
+cleanScopes :: IO ()
+cleanScopes = do
+  bindClient Nothing global
+  ThreadLocal.adjustContext (removeCurrent . removeIsolation)
+
+-- | A process-wide lock that 'withGlobalScope' uses to synchronize
+-- 'Sentry.Scope.global' scope access.
+--
+-- Teset suites should wrap any test (or test setup) that calls
+-- 'Sentry.Init.init' in tihs function to serialize access to the process-wide
+-- global scope.
+globalScopeLock :: MVar ()
+globalScopeLock = unsafePerformIO (newMVar ())
+{-# NOINLINE globalScopeLock #-}
+
+-- | Run an action with the global scope's client set to @mc@, holding the
+-- shared 'globalScopeLock' and restoring the previous client on exit.
+--
+-- Use this to wrap any test (or test setup) that calls 'Sentry.Init.init',
+-- 'Sentry.Init.close', or 'Sentry.Init.withSentry', so that parallel tests
+-- do not race on the process-wide global scope.
+withGlobalClient :: Maybe Client -> IO a -> IO a
+withGlobalClient mc action =
+  withMVarMasked globalScopeLock \() ->
+    bracket
+      (do saved <- (.client) <$> readScopeRef global
+          bindClient mc global
+          pure saved)
+      (\saved -> bindClient saved global)
+      (const action)
+
+-- | Run an action with no client bound to the global scope. Shorthand for
+-- @'withGlobalClient' Nothing@.
+withoutGlobalClient :: IO a -> IO a
+withoutGlobalClient = withGlobalClient Nothing

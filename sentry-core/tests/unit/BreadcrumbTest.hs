@@ -13,7 +13,6 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Client (pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event (CapturedEvent (..))
-import Sentry.Monad (runSentryT)
 import Sentry.Scope (ScopeData (..))
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
@@ -105,7 +104,7 @@ spec_breadcrumbs = do
         cs -> expectationFailure $ "expected 1 crumb, got " <> show (length cs)
 
     it "still writes to the scope for NON_RECORDING_CLIENT (transport is irrelevant at add-time)" do
-      scopeData <- runSentryT NON_RECORDING_CLIENT $
+      scopeData <- Scope.IO.withClient NON_RECORDING_CLIENT $
         Scope.IO.withIsolationScope \scope -> do
           Scope.addBreadcrumb (crumb "present")
           liftIO $ Scope.readScopeRef scope

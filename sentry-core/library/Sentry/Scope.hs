@@ -29,6 +29,11 @@ module Sentry.Scope
     readScopeRef,
     readAmbientScope,
 
+    -- ** Client resolution
+    resolveClient,
+    lookupClient,
+    bindClient,
+
     -- ** Mutation
 
     -- *** Scalar fields
@@ -80,7 +85,6 @@ where
 import Control.Applicative ((<|>))
 import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Reader (MonadReader)
 import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Foldable (for_, toList)
@@ -100,10 +104,9 @@ import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
-import Sentry.Client (Client (..))
+import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event (CapturedEvent (..))
-import Sentry.Monad (HasClient, askClient)
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -249,6 +252,28 @@ readAmbientScope = liftIO do
   currentScope <- maybe (pure mempty) readScopeRef (lookupCurrent context)
   pure $ globalScope <> isolationScope <> currentScope
 
+-- | Resolve the 'Client' visible at the call site by walking the scope chain
+-- (current \> isolation \> global, most-specific wins), falling back to
+-- 'NON_RECORDING_CLIENT' when no layer has a client bound.
+--
+-- This reuses the same right-biased merge as 'readAmbientScope', so the client
+-- is resolved exactly like every other piece of scope data.
+resolveClient :: (MonadIO m) => m Client
+resolveClient = fromMaybe NON_RECORDING_CLIENT . (.client) <$> readAmbientScope
+
+-- | Like 'resolveClient', but reports the absence of a bound client as
+-- 'Nothing' rather than substituting 'NON_RECORDING_CLIENT'.
+lookupClient :: (MonadIO m) => m (Maybe Client)
+lookupClient = (.client) <$> readAmbientScope
+
+-- | Bind (or clear, with 'Nothing') the 'Client' on a specific scope layer.
+--
+-- Used by 'Sentry.Init.init' to set the process-wide client on the 'global'
+-- scope, and by 'Sentry.Scope.IO.withClient' to bind a client onto the
+-- isolation scope for a dynamic extent.
+bindClient :: (MonadIO m) => Maybe Client -> Scope -> m ()
+bindClient mc scope = modifyScopeData scope \s -> s{client = mc}
+
 -- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
 -- 'eventProcessor' as the final step.
 --
@@ -299,9 +324,9 @@ apply scope ce = scope.eventProcessor ce{event = merged}
 -- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'.
 --
 -- No-ops when no isolation scope is active.
-addBreadcrumb :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Breadcrumb -> m ()
+addBreadcrumb :: (MonadIO m) => Patrol.Breadcrumb -> m ()
 addBreadcrumb crumb = do
-  client <- askClient
+  client <- resolveClient
   liftIO do
     ctx <- ThreadLocal.getContext
     for_ (lookupIsolation ctx) \scope ->
@@ -311,9 +336,9 @@ addBreadcrumb crumb = do
 --
 -- Equivalent to calling 'addBreadcrumb' on each element; each crumb is
 -- independently filtered and trimmed.
-addBreadcrumbs :: (MonadIO m, MonadReader env m, HasClient env) => [Patrol.Breadcrumb] -> m ()
+addBreadcrumbs :: (MonadIO m) => [Patrol.Breadcrumb] -> m ()
 addBreadcrumbs crumbs = do
-  client <- askClient
+  client <- resolveClient
   liftIO do
     ctx <- ThreadLocal.getContext
     for_ (lookupIsolation ctx) \scope ->

@@ -11,7 +11,7 @@ import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport qualified as ClientReport
-import Sentry.Monad (runSentryT)
+import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
@@ -43,7 +43,7 @@ spec_clientReport = describe "client report delivery" do
         replicateM n $
           Patrol.Event.fromSomeException $
             SomeException (userError "boom")
-      sentIds <- traverse (\e -> runSentryT client $ captureEvent e) events
+      sentIds <- traverse (\e -> withClient client $ captureEvent e) events
       -- Nothing was delivered as an event.
       catMaybes sentIds `shouldBe` []
       -- Flush force-drains the accumulator, sending a standalone client report.

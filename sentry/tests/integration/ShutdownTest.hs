@@ -6,7 +6,7 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Monad (runSentryT)
+import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (ShutdownResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
@@ -36,7 +36,7 @@ spec_shutdownDrains = describe "graceful shutdown" do
             SomeException (userError "boom")
       -- Enqueue everything, then shut down *without* a prior flush: the worker
       -- must process the backlog before honouring the shutdown signal.
-      void $ traverse (\e -> runSentryT client $ captureEvent e) events
+      void $ traverse (\e -> withClient client $ captureEvent e) events
       shutdownResult <- Transport.shutdown transport 5
       shutdownResult `shouldBe` ShutdownSucceeded
       received <- Kent.listEvents kent

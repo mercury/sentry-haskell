@@ -8,7 +8,7 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Monad (runSentryT)
+import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
@@ -37,7 +37,7 @@ spec_captureEvent = describe "captureEvent against kent (async transport)" do
         replicateM n $
           Patrol.Event.fromSomeException $
             SomeException (userError "boom")
-      sentIds <- traverse (\e -> runSentryT client $ captureEvent e) events
+      sentIds <- traverse (\e -> withClient client $ captureEvent e) events
       flushResult <- Transport.flush transport 5
       flushResult `shouldBe` FlushSucceeded
       received <- Kent.listEvents kent
@@ -65,7 +65,7 @@ spec_captureEventSync = describe "captureEvent against kent (sync transport)" do
             SomeException (userError "boom")
       -- The sync transport blocks until each send completes, so by the time
       -- 'captureEvent' returns the event is already on the server.
-      sentIds <- traverse (\e -> runSentryT client $ captureEvent e) events
+      sentIds <- traverse (\e -> withClient client $ captureEvent e) events
       received <- Kent.listEvents kent
       length (catMaybes sentIds) `shouldBe` n
       length received `shouldBe` n
@@ -85,7 +85,7 @@ spec_eventPayload = describe "event payload delivered to kent" do
               }
           client = Witch.from @ClientOptions @Client opts
       event <- Patrol.Event.fromSomeException $ SomeException (userError "boom")
-      mEventId <- runSentryT client $ captureEvent event
+      mEventId <- withClient client $ captureEvent event
       ids <- Kent.eventIds kent
       case (mEventId, ids) of
         (Just eventId, [kentId]) -> do

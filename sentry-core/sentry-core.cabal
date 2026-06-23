@@ -28,7 +28,6 @@ library
       Sentry.Integration.Context
       Sentry.Integration.Stacktrace
       Sentry.Internal
-      Sentry.Monad
       Sentry.Scope
       Sentry.Scope.Internal
       Sentry.Scope.IO
@@ -91,12 +90,12 @@ test-suite unit
       CaptureDropTest
       CaptureExceptionTest
       ClientReportTest
+      ClientResolutionTest
       IntegrationSetupTest
       LifecycleTest
       ScopeDataTest
       ScopeMutationTest
       ScopeTest
-      SentryMonadTest
       StacktraceTest
       Paths_sentry_core
   autogen-modules:

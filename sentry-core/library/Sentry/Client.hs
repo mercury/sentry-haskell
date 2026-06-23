@@ -72,7 +72,7 @@ realizePrebuilt opts = case (opts.dsn, opts.transport) of
 -- 'DeferredTransport' providers cannot run without 'IO' and yield a
 -- non-recording client; use 'new' for those.
 --
--- For normal application use, prefer 'new' (or 'Sentry.Init.withSentry').
+-- For normal application use, prefer 'new' (or 'Sentry.Init.init').
 instance Witch.From ClientOptions Client where
   from options@ClientOptions{integrations} =
     Client
@@ -99,9 +99,7 @@ getIntegration iType client = do
 -- Example:
 --
 -- @
--- withSentry
---   (def & disableIntegration (type ProcessStacktraceIntegration))
---   \\client -> ...
+-- Sentry.init (def & disableIntegration (type ProcessStacktraceIntegration))
 -- @
 disableIntegration :: forall i -> (Integration i) => ClientOptions -> ClientOptions
 disableIntegration iType opts =

@@ -26,6 +26,7 @@ import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Vector (Vector)
 import Patrol qualified
+import Sentry.Client (Client)
 import Sentry.Event (CapturedEvent (..))
 
 -- | A mutable reference to 'ScopeData' that lives on thread-local context.
@@ -68,7 +69,8 @@ data ScopeData = ScopeData
     extras :: Map Text Aeson.Value,
     tags :: Map Text Text,
     contexts :: Map Text Patrol.Context,
-    eventProcessor :: CapturedEvent -> Maybe Patrol.Event
+    eventProcessor :: CapturedEvent -> Maybe Patrol.Event,
+    client :: Maybe Client
   }
 
 instance Show ScopeData where
@@ -94,6 +96,7 @@ instance Show ScopeData where
         . showString ", contexts = "
         . shows scope.contexts
         . showString ", eventProcessor = <<function>>"
+        . showString ", client = <<client>>"
         . showString " }"
 
 -- | Merge two scopes.
@@ -121,7 +124,8 @@ instance Semigroup ScopeData where
         contexts = new.contexts <> old.contexts,
         eventProcessor = \ce -> do
           event' <- old.eventProcessor ce
-          new.eventProcessor ce{event = event'}
+          new.eventProcessor ce{event = event'},
+        client = new.client <|> old.client
       }
 
 instance Monoid ScopeData where
@@ -144,7 +148,8 @@ defaultScopeData =
       extras = mempty,
       tags = mempty,
       contexts = mempty,
-      eventProcessor = \ce -> Just ce.event
+      eventProcessor = \ce -> Just ce.event,
+      client = Nothing
     }
 
 -- | Apply a pure modification to the 'ScopeData' inside a 'Scope'.
