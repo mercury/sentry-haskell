@@ -17,7 +17,6 @@ import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
 import Control.Monad (unless, void, when)
 import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Reader (MonadReader)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Foldable (for_)
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -36,15 +35,14 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventId qualified as Patrol.EventId
 import Patrol.Type.EventType qualified as Patrol.EventType
 import Patrol.Type.Platform qualified as Patrol.Platform
-import Sentry.Client (Client (..))
+import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Event qualified as Event
 import Sentry.Integration (Integration (..), SomeIntegration)
-import Sentry.Monad (HasClient, askClient)
-import Sentry.Scope (ScopeData)
+import Sentry.Scope (ScopeData, resolveClient)
 import Sentry.Scope qualified as Scope
 import Sentry.Sdk qualified as Sdk
 import Sentry.Transport (SendResponse (..))
@@ -58,13 +56,13 @@ import Witch qualified
 --
 -- Returns the event's 'Patrol.EventId' on success, otherwise 'Nothing' if the
 -- event was dropped at any stage.
-captureEvent :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Event -> m (Maybe Patrol.EventId)
+captureEvent :: (MonadIO m) => Patrol.Event -> m (Maybe Patrol.EventId)
 captureEvent event = do
-  client <- askClient
+  client <- resolveClient
   captureWith client $ Witch.from event
 
 -- | Convenience alias for a 'captureEvent' call that discards its result.
-captureEvent_ :: (MonadIO m, MonadReader env m, HasClient env) => Patrol.Event -> m ()
+captureEvent_ :: (MonadIO m) => Patrol.Event -> m ()
 captureEvent_ = void . captureEvent
 
 -- | Capture an arbitrary 'Exception', building a 'Patrol.Event' from it and
@@ -84,15 +82,21 @@ captureEvent_ = void . captureEvent
 --
 -- If the scope's @eventProcessor@ drops the event, this function returns
 -- 'Nothing' without invoking the transport.
-captureException :: (HasCallStack, MonadIO m, MonadReader env m, HasClient env, Exception e) => e -> m (Maybe Patrol.EventId)
+captureException :: (HasCallStack, MonadIO m, Exception e) => e -> m (Maybe Patrol.EventId)
 captureException (toException -> orig) = do
-  client <- askClient
-  let (anns, inner) = case fromException @(AnnotatedException SomeException) orig of
+  -- Read the call-site ambient scope once: it supplies the client, and (absent
+  -- an annotation) the scope to apply.
+  --
+  -- The annotation carries throw-site scope data, but the client is always
+  -- resolved from the call site.
+  ambient <- Scope.readAmbientScope
+  let client = fromMaybe NON_RECORDING_CLIENT (Scope.client ambient)
+      (anns, inner) = case fromException @(AnnotatedException SomeException) orig of
         Just (AnnotatedException as i) -> (as, i)
         Nothing -> ([], orig)
       scopeFromAnnotation = listToMaybe [s | Annotation a <- anns, Just s <- [cast @_ @ScopeData a]]
-  scope <- maybe Scope.readAmbientScope pure scopeFromAnnotation
-  let captured =
+      scope = fromMaybe ambient scopeFromAnnotation
+      captured =
         (Event.fromException inner `Event.withException` inner $ orig)
           { captureCallStack = Just callStack
           }
@@ -102,7 +106,7 @@ captureException (toException -> orig) = do
       Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
 
 -- | Convenience alias for a 'captureException' call that discards its result.
-captureException_ :: (HasCallStack, MonadIO m, MonadReader env m, HasClient env, Exception e) => e -> m ()
+captureException_ :: (HasCallStack, MonadIO m, Exception e) => e -> m ()
 captureException_ = void . captureException
 
 -- | Capture a plain message at the given severity level, applying the ambient
@@ -115,11 +119,12 @@ captureException_ = void . captureException
 -- The 'HasCallStack' constraint captures the call-site stack, which stacktrace
 -- integrations can attach as thread frames (since message events carry no
 -- exception).
-captureMessage :: (HasCallStack, MonadIO m, MonadReader env m, HasClient env) => Patrol.Level -> Text -> m (Maybe Patrol.EventId)
+captureMessage :: (HasCallStack, MonadIO m) => Patrol.Level -> Text -> m (Maybe Patrol.EventId)
 captureMessage lvl msg = do
-  client <- askClient
+  -- One ambient read supplies both the client and the scope to apply.
   scope <- Scope.readAmbientScope
-  let captured =
+  let client = fromMaybe NON_RECORDING_CLIENT (Scope.client scope)
+      captured =
         (Witch.from (Event.fromMessage lvl msg))
           { captureCallStack = Just callStack
           }
@@ -129,7 +134,7 @@ captureMessage lvl msg = do
       Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
 
 -- | Convenience alias for a 'captureMessage' call that discards its result.
-captureMessage_ :: (HasCallStack, MonadIO m, MonadReader env m, HasClient env) => Patrol.Level -> Text -> m ()
+captureMessage_ :: (HasCallStack, MonadIO m) => Patrol.Level -> Text -> m ()
 captureMessage_ lvl = void . captureMessage lvl
 
 -- | Internal event processing utility; performs the following steps:

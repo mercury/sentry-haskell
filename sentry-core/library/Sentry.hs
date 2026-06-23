@@ -1,22 +1,17 @@
 -- |  This module re-exports the API that consumers will typically use
--- when instrumenting: the 'Client' and 'ClientOptions' types, the
--- 'HasClient' capability and 'SentryT' carrier, the capture verbs, the
--- 'withScope' \/ 'withIsolationScope' helpers for enriching events with
--- contextual metadata, and the 'withSentry' \/ 'withSentryM' lifecycle
--- brackets for initializing the SDK.
---
--- The re-exported 'withScope' \/ 'withIsolationScope' come from
--- "Sentry.Scope.IO" and require 'Control.Monad.IO.Unlift.MonadUnliftIO'. If
--- your application stack only provides @MonadMask@ \/ @MonadIO@, import the
--- equivalent helpers from "Sentry.Scope.Monad" directly.
+-- when instrumenting: the 'Client' and 'ClientOptions' types, the capture
+-- verbs, the 'withScope' \/ 'withIsolationScope' \/ 'withClient' helpers for
+-- enriching events and binding a client, and the 'init' \/ 'close' lifecycle
+-- functions for initializing the SDK.
 --
 -- Plumbing modules ("Sentry.Transport", "Sentry.Integration", and the
 -- "Sentry.Scope" operations) are intentionally not re-exported here, and are
 -- intended to be imported with qualification.
 module Sentry
   ( -- * Lifecycle
+    init,
+    close,
     withSentry,
-    withSentryM,
 
     -- * Client
     Client,
@@ -33,15 +28,6 @@ module Sentry
     AttachCallStackIntegration (..),
     AttachExceptionContextIntegration (..),
     ProcessStacktraceIntegration (..),
-
-    -- * Ambient client capability
-    HasClient (..),
-    askClient,
-
-    -- * Concrete monad carrier
-    SentryT,
-    runSentryT,
-    withClient,
 
     -- * Capturing Events
     captureEvent,
@@ -60,6 +46,8 @@ module Sentry
     ScopeType (..),
     withScope,
     withIsolationScope,
+    withClient,
+    resolveClient,
 
     -- * Breadcrumbs
     addBreadcrumb,
@@ -72,13 +60,13 @@ import Sentry.Capture (captureEvent, captureEvent_, captureException, captureExc
 import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Event (CapturedEvent (..))
-import Sentry.Init (withSentry, withSentryM)
+import Sentry.Init (close, init, withSentry)
 import Sentry.Integration.Stacktrace
   ( AttachAnnotatedExceptionIntegration (..),
     AttachCallStackIntegration (..),
     AttachExceptionContextIntegration (..),
     ProcessStacktraceIntegration (..),
   )
-import Sentry.Monad (HasClient (..), SentryT, askClient, runSentryT, withClient)
-import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs)
-import Sentry.Scope.IO (withIsolationScope, withScope)
+import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs, resolveClient)
+import Sentry.Scope.IO (withClient, withIsolationScope, withScope)
+import Prelude hiding (init)

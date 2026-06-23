@@ -1,27 +1,28 @@
 module LifecycleTest where
 
-import Control.Exception (Exception, SomeException, throwIO, try)
+import Control.Exception (Exception, SomeException, bracket, throwIO, try)
 import Data.Default (def)
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.IORef qualified as IORef
 import Data.Kind (Type)
 import Data.Maybe (isJust)
+import Patrol.Type.Level qualified as Patrol.Level
+import Sentry qualified
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Init (withSentry, withSentryM)
-import Sentry.Monad (askClient)
 import Sentry.Test qualified as Test
+import Sentry.Test (withGlobalClient)
 import Sentry.Transport (FlushResponse (..), SendResponse (..), ShutdownResponse (..), SomeTransport (..), Transport (..))
 import Test.Hspec
 import Witch qualified
 
 spec_lifecycle :: Spec
 spec_lifecycle = do
-  describe "withSentry" do
+  describe "Sentry.init / Sentry.close" do
     it "flushes and shuts down the transport on normal exit" do
       lt <- newLifecycleTransport
       let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
-      withSentry opts \_ -> pure ()
+      withGlobalClient Nothing $ bracket (Sentry.init opts) Sentry.close \_ -> pure ()
       flushCount <- readIORef lt.flushes
       shutdownCount <- readIORef lt.shutdowns
       flushCount `shouldBe` 1
@@ -30,7 +31,10 @@ spec_lifecycle = do
     it "flushes and shuts down the transport on exception, and rethrows" do
       lt <- newLifecycleTransport
       let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
-      result <- try @SomeException $ withSentry opts \_ -> throwIO TestError
+      result <-
+        try @SomeException $
+          withGlobalClient Nothing $
+            bracket (Sentry.init opts) Sentry.close \_ -> throwIO TestError
       case result of
         Right _ -> expectationFailure "expected exception to propagate"
         Left _ -> pure ()
@@ -40,26 +44,25 @@ spec_lifecycle = do
       shutdownCount `shouldBe` 1
 
     it "is a no-op on exit when there is no transport" do
-      -- withSentry with no transport should not throw and should run the body
-      result <- withSentry def \_ -> pure (42 :: Int)
+      result <-
+        withGlobalClient Nothing $
+          bracket (Sentry.init def) Sentry.close \_ -> pure (42 :: Int)
       result `shouldBe` 42
 
-  describe "withSentryM" do
-    it "provides the client via askClient inside SentryT" do
+    it "returns a client carrying the configured transport" do
       lt <- newLifecycleTransport
       let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
-      client <- withSentryM opts askClient
-      -- The client should have a transport installed
-      isJust client.transport `shouldBe` True
+      withGlobalClient Nothing $ bracket (Sentry.init opts) Sentry.close \client ->
+        isJust client.transport `shouldBe` True
 
-    it "flushes and shuts down on exit from withSentryM" do
-      lt <- newLifecycleTransport
-      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
-      withSentryM opts (pure ())
-      flushCount <- readIORef lt.flushes
-      shutdownCount <- readIORef lt.shutdowns
-      flushCount `shouldBe` 1
-      shutdownCount `shouldBe` 1
+    it "binds the client to the global scope so capture works without scopes" do
+      transport <- Test.new
+      let opts = def{transport = Just (Witch.from (SomeTransport transport)), dsn = Just Test.TEST_DSN}
+      withGlobalClient Nothing $
+        bracket (Sentry.init opts) Sentry.close \_ ->
+          () <$ Sentry.captureMessage Patrol.Level.Info "scope-free capture"
+      events <- Test.fetchAndClearEvents transport
+      length events `shouldBe` 1
 
 -- Helpers
 

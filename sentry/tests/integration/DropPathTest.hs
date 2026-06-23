@@ -6,7 +6,7 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Monad (runSentryT)
+import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
@@ -35,7 +35,7 @@ deliveredUnder tweak =
       replicateM 10 $
         Patrol.Event.fromSomeException $
           SomeException (userError "boom")
-    void $ traverse (\e -> runSentryT client $ captureEvent e) events
+    void $ traverse (\e -> withClient client $ captureEvent e) events
     flushResult <- Transport.flush transport 5
     flushResult `shouldBe` FlushSucceeded
     length <$> Kent.listEvents kent

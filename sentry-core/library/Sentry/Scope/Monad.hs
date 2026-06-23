@@ -1,4 +1,4 @@
-module Sentry.Scope.Monad (withScope, withIsolationScope) where
+module Sentry.Scope.Monad (withScope, withIsolationScope, withClient) where
 
 import Control.Exception (SomeAsyncException, SomeException, fromException)
 import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
@@ -8,6 +8,7 @@ import Control.Monad.IO.Class (MonadIO)
 import Data.Maybe (isJust)
 import Data.Typeable (cast)
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
+import Sentry.Client (Client)
 import Sentry.Scope (Scope, ScopeData)
 import Sentry.Scope qualified as Scope
 
@@ -73,6 +74,40 @@ withIsolationScope action = MonadMask.bracket acquire release \(_, _, scope) ->
 
     release :: (Maybe Scope, Maybe Scope, Scope) -> m ()
     release (parentIsolation, parentCurrent, _) =
+      ThreadLocal.adjustContext \ctx ->
+        let withIso = maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentIsolation
+         in maybe (Scope.removeCurrent withIso) (`Scope.insertCurrent` withIso) parentCurrent
+
+-- | Run an action with the given 'Client' bound for its dynamic extent.
+--
+-- Forks fresh isolation and current scopes and binds the given 'Client' onto
+-- the newly forked isolation scope, so capture and breadcrumb calls within the
+-- enclosed action resolve to this client and the original client is restored
+-- once the enclosing scope is exited.
+--
+-- This is the @MonadMask@\/@MonadIO@ variant; see "Sentry.Scope.IO" for the
+-- @MonadUnliftIO@ version.
+withClient :: forall m a. (MonadMask m, MonadIO m) => Client -> m a -> m a
+withClient client action = MonadMask.bracket acquire release \_ ->
+  action
+  where
+    acquire :: m (Maybe Scope, Maybe Scope)
+    acquire = do
+      context <- ThreadLocal.getContext
+      isolationScope <- case Scope.lookupIsolation context of
+        Nothing -> Scope.create Scope.Isolation
+        Just s -> Scope.clone s
+      currentScope <- case Scope.lookupCurrent context of
+        Nothing -> Scope.create Scope.Current
+        Just s -> Scope.clone s
+      Scope.bindClient (Just client) isolationScope
+      let parentIsolation = Scope.lookupIsolation context
+          parentCurrent = Scope.lookupCurrent context
+      ThreadLocal.adjustContext (Scope.insertCurrent currentScope . Scope.insertIsolation isolationScope)
+      pure (parentIsolation, parentCurrent)
+
+    release :: (Maybe Scope, Maybe Scope) -> m ()
+    release (parentIsolation, parentCurrent) =
       ThreadLocal.adjustContext \ctx ->
         let withIso = maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentIsolation
          in maybe (Scope.removeCurrent withIso) (`Scope.insertCurrent` withIso) parentCurrent
