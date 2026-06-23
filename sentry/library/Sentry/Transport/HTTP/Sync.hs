@@ -204,10 +204,12 @@ instance Transport SyncHttpTransport where
             pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
         outcome <- toOutcome <$> transport.sendFn piggybacked
         -- Record send/network failures (a 429 is accounted for by the rate
-        -- limiter, not as a drop) against the pre-piggyback envelope.
+        -- limiter, not as a drop) against the actually-sent (post-piggyback)
+        -- envelope, so a failed delivery also charges any client report that
+        -- rode along (under 'Internal').
         for_ (Delivery.discardReason outcome) \reason ->
           for_ transport.clientReports \cr ->
-            ClientReport.recordEnvelopeDrop cr reason filteredEnvelope
+            ClientReport.recordEnvelopeDrop cr reason piggybacked
         atomicModifyIORefCAS_ transport.rateLimiter \current ->
           RateLimiter.updateFromResponse current now outcome
         pure Sentry.Transport.SendProcessed

@@ -147,7 +147,8 @@ spec_filterEnvelope = describe "filterEnvelope" do
   it "surfaces rate-limited items as dropped while keeping the rest" do
     let startTime = UTCTime systemEpochDay 0
         -- Limit the Error category only; the global limit stays clear, so the
-        -- category-less client-report item survives while the event is dropped.
+        -- client-report item (Internal category, never server-limited) survives
+        -- while the event is dropped.
         rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime "60:error:project"
         envelope = mkEnvelope [eventItem, reportItem]
         filtered = RateLimiter.filterEnvelope rl startTime envelope
@@ -181,7 +182,8 @@ mkEnvelope items =
 eventItem :: Patrol.Item
 eventItem = Patrol.Item.Event errorEvent
 
--- | A client-report item, which has no rate-limit category (global limit only).
+-- | A client-report item (Internal category); never server-limited, so in
+-- practice it is bounded only by the global rate limit.
 reportItem :: Patrol.Item
 reportItem =
   Patrol.Item.ClientReport

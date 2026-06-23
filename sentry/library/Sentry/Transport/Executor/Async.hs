@@ -174,7 +174,7 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
               mOutcome <-
                 fmap Just (sendFn piggybacked) `catchAny` \_ -> do
                   for_ (fmap (.accumulator) reports) \cr ->
-                    ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError filteredEnvelope
+                    ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError piggybacked
                   pure Nothing
               case mOutcome of
                 Nothing -> loop rateLimiter
@@ -182,10 +182,12 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
                   now' <- getCurrentTime
                   -- Account for send/network failures as drops (a 429 is
                   -- accounted for by the rate limiter via updateFromResponse,
-                  -- not as a drop).
+                  -- not as a drop). Accounted against the actually-sent
+                  -- (post-piggyback) envelope, so a failed delivery also charges
+                  -- any client report that rode along (under 'Internal').
                   for_ (Delivery.discardReason outcome) \reason ->
                     for_ (fmap (.accumulator) reports) \cr ->
-                      ClientReport.recordEnvelopeDrop cr reason filteredEnvelope
+                      ClientReport.recordEnvelopeDrop cr reason piggybacked
                   loop (RateLimiter.updateFromResponse rateLimiter now' outcome)
 
     -- Force-drain any pending client report, sending it immediately. Returns
@@ -200,12 +202,20 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
         ClientReport.takePending config.accumulator now True >>= \case
           Nothing -> pure rateLimiter
           Just report -> do
+            let reportEnvelope = config.toEnvelope report
             mOutcome <-
-              fmap Just (sendFn (config.toEnvelope report)) `catchAny` \_ -> pure Nothing
+              fmap Just (sendFn reportEnvelope) `catchAny` \_ -> do
+                ClientReport.recordEnvelopeDrop config.accumulator ClientReport.InternalSdkError reportEnvelope
+                pure Nothing
             case mOutcome of
               Nothing -> pure rateLimiter
               Just outcome -> do
                 now' <- getCurrentTime
+                -- A failed report delivery is itself charged (under 'Internal')
+                -- so it surfaces in the next report; 429s are left to the rate
+                -- limiter, not counted as a drop.
+                for_ (Delivery.discardReason outcome) \reason ->
+                  ClientReport.recordEnvelopeDrop config.accumulator reason reportEnvelope
                 pure (RateLimiter.updateFromResponse rateLimiter now' outcome)
 
 instance Sentry.Transport.Transport AsyncExecutor where

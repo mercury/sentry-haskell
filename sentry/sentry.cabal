@@ -106,11 +106,13 @@ library testkit
     , base
     , bytestring
     , containers
+    , crypton-connection
     , data-default
     , directory
     , file-embed
     , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-client
+    , http-client-tls
     , http-types
     , network
     , patrol ==1.2.*
@@ -118,6 +120,7 @@ library testkit
     , stm
     , text
     , time
+    , tls
     , transformers
     , typed-process
     , unagi-chan
@@ -225,6 +228,7 @@ test-suite integration
   main-is: Driver.hs
   other-modules:
       CaptureEventTest
+      ClientReportFailurePiggybackTest
       ClientReportTest
       DropPathTest
       Http2CaptureTest

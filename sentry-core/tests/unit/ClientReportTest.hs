@@ -6,6 +6,10 @@ import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory (..))
 import Patrol.Type.DiscardedEvent qualified as Patrol.DiscardedEvent
+import Patrol.Type.Envelope qualified as Patrol.Envelope
+import Patrol.Type.Headers qualified as Patrol.Headers
+import Patrol.Type.Item qualified as Patrol.Item
+import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.ClientReport (DiscardReason (..), piggybackInterval)
 import Sentry.ClientReport qualified as ClientReport
 import Test.Hspec
@@ -106,6 +110,38 @@ spec_clientReport = describe "ClientReport" do
                   ]
           length report.discardedEvents `shouldBe` length cells
           got `shouldBe` want
+
+  describe "recordEnvelopeDrop" do
+    it "charges a dropped client-report item under the Internal category" do
+      now <- getCurrentTime
+      cr <- ClientReport.new
+      -- An envelope whose only item is a client report (e.g. a report whose own
+      -- delivery failed). It must be accounted under 'Internal' so it surfaces
+      -- in the next report, matching the official SDKs (e.g. sentry-python).
+      let reportEnvelope =
+            Patrol.Envelope.Envelope
+              { Patrol.Envelope.headers = Patrol.Headers.empty,
+                Patrol.Envelope.items =
+                  Patrol.Items.EnvelopeItems
+                    [ Patrol.Item.ClientReport
+                        Patrol.ClientReport.ClientReport
+                          { Patrol.ClientReport.timestamp = Nothing,
+                            Patrol.ClientReport.discardedEvents = []
+                          }
+                    ]
+              }
+      ClientReport.recordEnvelopeDrop cr NetworkError reportEnvelope
+      result <- ClientReport.takePending cr now True
+      case result of
+        Nothing -> expectationFailure "expected a ClientReport"
+        Just report ->
+          [ ( Patrol.DiscardedEvent.reason de,
+              Patrol.DiscardedEvent.category de,
+              Patrol.DiscardedEvent.quantity de
+            )
+          | de <- report.discardedEvents
+          ]
+            `shouldBe` [("network_error", Internal, 1)]
 
   describe "interval" do
     it "returns Nothing when interval has not elapsed and force = False" do

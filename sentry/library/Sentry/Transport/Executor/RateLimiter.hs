@@ -304,9 +304,6 @@ data FilteredEnvelope = FilteredEnvelope
 -- Items whose categories are currently rate limited are removed and surfaced
 -- in 'dropped' (so callers can account for them); the rest are returned in
 -- 'kept'.
---
--- Items with no associated category (e.g. 'Patrol.Item.Raw',
--- 'Patrol.Item.ClientReport') are subject only to the global rate limit.
 filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> FilteredEnvelope
 filterEnvelope rl now envelope = case envelope.items of
   Patrol.Items.Raw _ ->

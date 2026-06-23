@@ -7,7 +7,9 @@ import Control.Monad (replicateM, void)
 import Control.Monad.STM (atomically)
 import Network.HTTP.Types qualified as HttpTypes
 import Patrol qualified
+import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory qualified as DataCategory
+import Patrol.Type.DiscardedEvent qualified as Patrol.DiscardedEvent
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
@@ -260,6 +262,40 @@ spec_flushClientReports = describe "flushing with client reports" do
     Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
     envs <- atomically $ flushTQueue q
     envs `shouldSatisfy` notElem testEnvelope
+
+  it "charges a client report whose own delivery fails (Internal)" do
+    q <- newTQueueIO
+    cr <- ClientReport.new
+    -- A pending discard gives the first forced drain something to send.
+    ClientReport.record cr ClientReport.NetworkError DataCategory.Error 1
+    let toEnvelope report =
+          Patrol.Envelope.Envelope
+            { Patrol.Envelope.headers = Patrol.Headers.empty,
+              Patrol.Envelope.items = Patrol.Items.EnvelopeItems [Patrol.Item.ClientReport report]
+            }
+        reports = AsyncExecutor.ClientReportConfig{AsyncExecutor.accumulator = cr, AsyncExecutor.toEnvelope}
+        -- Every send fails with a 500, which the executor accounts as a drop.
+        sendFn env = do
+          atomically $ writeTQueue q env
+          pure (Delivery.Responded HttpTypes.internalServerError500 [])
+    executor <- AsyncExecutor.new 3 (Just reports) sendFn
+    -- First flush drains the error/network_error report; its delivery fails,
+    -- recording an Internal drop for the undelivered report.
+    Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
+    -- Second flush drains that Internal drop as a fresh report.
+    Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
+    envs <- atomically $ flushTQueue q
+    foldMap reportCategories envs `shouldSatisfy` elem DataCategory.Internal
+
+-- | Every discarded-event category carried by an envelope's client reports.
+reportCategories :: Patrol.Envelope -> [DataCategory.DataCategory]
+reportCategories envelope = case envelope.items of
+  Patrol.Items.Raw _ -> []
+  Patrol.Items.EnvelopeItems items ->
+    [ Patrol.DiscardedEvent.category de
+    | Patrol.Item.ClientReport report <- items,
+      de <- report.discardedEvents
+    ]
 
 -- | A 200 OK outcome: transmit succeeded, no rate-limit change.
 okOutcome :: Delivery.Outcome

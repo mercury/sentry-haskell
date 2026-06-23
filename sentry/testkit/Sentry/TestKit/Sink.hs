@@ -19,6 +19,7 @@ module Sentry.TestKit.Sink
   ( -- * Recorded requests
     RecordedRequest (..),
     decodeBody,
+    envelopeValues,
 
     -- * Scripted responses
     SinkResponse (..),
@@ -41,20 +42,28 @@ module Sentry.TestKit.Sink
 
     -- * TLS configuration
     tlsSettings,
+    tlsManager,
   )
 where
 
 import Codec.Compression.GZip qualified as GZip
 import Control.Concurrent.Async qualified as Async
+import Data.Aeson qualified as Aeson
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.FileEmbed (embedFile, makeRelativeToProject)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
+import Network.Connection (TLSSettings (TLSSettings))
+import Network.HTTP.Client qualified as HttpClient
+import Network.HTTP.Client.TLS (mkManagerSettings)
 import Network.HTTP.Types qualified as Http
 import Network.Socket qualified as Socket
+import Network.TLS (ClientHooks (..), ClientParams (..), defaultParamsClient)
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp qualified as Warp
 import Network.Wai.Handler.WarpTLS qualified as WarpTLS
@@ -85,6 +94,16 @@ decodeBody :: RecordedRequest -> LBS.ByteString
 decodeBody req
   | Just "gzip" <- lookup "content-encoding" req.headers = GZip.decompress req.body
   | otherwise = req.body
+
+-- | Decode a recorded envelope's newline-delimited lines (after gunzipping via
+-- 'decodeBody') into JSON values, dropping any line that is not valid JSON.
+--
+-- A Sentry envelope is a sequence of lines — an envelope header, then alternating
+-- item-header and item-payload lines — so this surfaces every header and payload
+-- object for tests that need to assert on what was actually delivered (e.g. the
+-- @discarded_events@ inside a @client_report@ item).
+envelopeValues :: RecordedRequest -> [Aeson.Value]
+envelopeValues = mapMaybe Aeson.decode . LBS8.lines . decodeBody
 
 -- | The response the sink sends for a particular request.
 type SinkResponse :: Type
@@ -238,3 +257,17 @@ embeddedKey = $(makeRelativeToProject "testkit/certs/localhost.key" >>= embedFil
 -- | TLS settings for the sink server using the embedded self-signed cert.
 tlsSettings :: WarpTLS.TLSSettings
 tlsSettings = WarpTLS.tlsSettingsMemory embeddedCert embeddedKey
+
+-- | An @http-client@ 'HttpClient.Manager' that trusts the sink's self-signed
+-- certificate by disabling certificate validation.
+--
+-- This is the HTTP\/1.1 client-side counterpart to 'tlsSettings': the HTTP\/1.1
+-- transport (and the profiling probe) talk to the sink through @http-client@,
+-- which has no per-request @validateCert@ knob like the HTTP\/2 transport, so a
+-- no-verify 'HttpClient.Manager' is the way to accept the embedded cert.
+tlsManager :: IO HttpClient.Manager
+tlsManager =
+  HttpClient.newManager (mkManagerSettings (TLSSettings params) Nothing)
+  where
+    base = defaultParamsClient "127.0.0.1" ""
+    params = base{clientHooks = (clientHooks base){onServerCertificate = \_ _ _ _ -> pure []}}
