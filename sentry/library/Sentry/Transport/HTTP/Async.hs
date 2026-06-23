@@ -78,7 +78,7 @@ build opts clientReports queueSize manager dsn = do
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
       template = Request.prepare opts.compression dsn
       sendFn envelope = toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
-  executor <- AsyncExecutor.new queueSize reportConfig sendFn
+  executor <- AsyncExecutor.new queueSize 1 reportConfig sendFn
   pure AsyncHttpTransport{executor}
 
 instance Transport AsyncHttpTransport where

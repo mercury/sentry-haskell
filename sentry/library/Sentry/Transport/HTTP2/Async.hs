@@ -141,7 +141,7 @@ build opts clientReports queueSize dsn = do
       endpoint = Connection.mkEndpoint opts.compression dsn
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn = Connection.sendEnvelope manager
-  executor <- AsyncExecutor.new queueSize reportConfig sendFn
+  executor <- AsyncExecutor.new queueSize 1 reportConfig sendFn
   pure AsyncHttp2Transport{executor, manager}
 
 instance Transport AsyncHttp2Transport where

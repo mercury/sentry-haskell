@@ -1,18 +1,18 @@
 {-# LANGUAGE NumericUnderscores #-}
 
--- | Asynchronous executor with dedicated worker thread.
+-- | Asynchronous executor with dedicated dispatcher thread.
 --
 -- This implementation mirrors the Rust SDK's @tokio_thread@ executor:
 -- <https://github.com/getsentry/sentry-rust/blob/master/sentry/src/transports/tokio_thread.rs>
 --
 -- Uses a bounded queue with non-blocking sends (drops events when full) and a
--- dedicated worker thread for processing.
+-- dedicated dispatcher thread for processing.
 --
 -- The executor is generic over the actual sending mechanism - you provide
 -- a send function that handles envelope delivery:
 --
 -- > sendFn :: Patrol.Envelope -> IO Delivery.Outcome
--- > transport <- Sentry.Transport.Executor.Async.new defaultQueueSize Nothing sendFn
+-- > transport <- Sentry.Transport.Executor.Async.new defaultQueueSize 1 Nothing sendFn
 --
 -- The send function is responsible only for transmitting the envelope and
 -- returning an 'Delivery.Outcome', and it is up to the executor to apply
@@ -20,8 +20,13 @@
 --
 -- == Concurrency
 --
--- The worker drains the queue __serially__: at most one send is outstanding at
--- a time.
+-- The dispatcher fans out sends concurrently up to a configurable cap. At cap 1
+-- (the default) behaviour is byte-for-byte identical to a serial loop. At cap
+-- @k@, up to @k@ sends may be in flight simultaneously; ordering across sends is
+-- __not__ preserved (fine for independent Sentry events).
+--
+-- The in-flight count doubles as the flush\/shutdown drain barrier: 'flush' and
+-- 'shutdown' wait for all in-flight sends to complete before proceeding.
 module Sentry.Transport.Executor.Async
   ( AsyncExecutor (..),
     ClientReportConfig (..),
@@ -39,12 +44,14 @@ import Control.Concurrent.Async (Async, async)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar)
-import Control.Monad (void)
+import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, writeTVar)
+import Control.Monad (void, when)
+import Data.Atomics (atomicModifyIORefCAS_)
 import Data.Foldable (for_)
+import Data.IORef (IORef, newIORef, readIORef)
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime)
-import GHC.Conc.Sync (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
 import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory)
@@ -55,22 +62,22 @@ import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import UnliftIO.Exception (catchAny)
+import UnliftIO.Exception (catchAny, finally, mask_)
 import UnliftIO.Timeout qualified as UnliftIO (timeout)
 
--- | Tasks that can be sent to the worker thread.
+-- | Tasks that can be sent to the dispatcher thread.
 type Task :: Type
 data Task
   = -- | Send an envelope to Sentry.
     SendEnvelope Patrol.Envelope
   | -- | Flush pending envelopes, synchronizing completion with the caller.
     Flush (MVar ())
-  | -- | Signal the worker thread to shut down.
+  | -- | Signal the dispatcher thread to shut down.
     Shutdown
 
 -- | Asynchronous executor that can be used to construct a
 -- 'Sentry.Transport.Transport' which processes 'Patrol.Type.Envelope.Envelope's
--- on a dedicated worker thread.
+-- on a dedicated dispatcher thread.
 --
 -- Uses a bounded queue with non-blocking sends. When the queue is full, events
 -- are dropped and recorded as 'ClientReport.QueueOverflow' to prevent blocking
@@ -83,7 +90,10 @@ data AsyncExecutor = AsyncExecutor
   { taskQueue :: Unagi.InChan Task,
     shutdownRef :: TVar Bool,
     handle :: Async (),
-    clientReports :: Maybe ClientReports
+    clientReports :: Maybe ClientReports,
+    rateLimiter :: IORef RateLimiter,
+    inFlight :: TVar Int,
+    concurrency :: Int
   }
 
 -- | Default queue size (matches Rust SDK's @tokio_thread@ executor).
@@ -104,13 +114,18 @@ data ClientReportConfig = ClientReportConfig
 -- | Create a new 'AsyncExecutor'.
 --
 -- The send function handles the actual envelope delivery and is called
--- by the worker thread for each envelope. It is responsible only for
+-- by the dispatcher thread for each envelope. It is responsible only for
 -- transmitting the envelope and returning a 'Delivery.Outcome'; the
 -- executor owns the rate-limiter state and applies
 -- 'RateLimiter.updateFromResponse' after each successful send.
 --
 -- Pass @Just@ a 'ClientReportConfig' to enable client-report piggybacking, or
 -- 'Nothing' to disable client reports entirely.
+--
+-- The concurrency cap controls how many sends may be in flight simultaneously.
+-- Pass @1@ for serial behaviour (byte-for-byte identical to a single-threaded
+-- loop), or a larger value to fan out sends concurrently (useful with HTTP\/2
+-- multiplexing).
 --
 -- Example:
 --
@@ -119,88 +134,108 @@ data ClientReportConfig = ClientReportConfig
 -- >   -- Transmit the envelope via HTTP, return the outcome.
 -- >   myFancySendEnvelopeFn envelope
 -- >
--- > executor <- Sentry.Transport.Executor.Async.new defaultQueueSize Nothing sendFn
+-- > executor <- Sentry.Transport.Executor.Async.new defaultQueueSize 1 Nothing sendFn
 new ::
+  -- | Queue size (use 'defaultQueueSize' unless you have a specific reason to tune it).
+  Int ->
+  -- | Concurrency cap: max in-flight sends (@1@ = serial).
   Int ->
   Maybe ClientReportConfig ->
   (Patrol.Envelope -> IO Delivery.Outcome) ->
   IO AsyncExecutor
-new queueSize reports sendFn = do
+new queueSize cap reports sendFn = do
   (taskQueue, outChan) <- Unagi.newChan queueSize
   shutdownRef <- newTVarIO False
+  rateLimiter <- newIORef RateLimiter.new
+  inFlight <- newTVarIO 0
   let clientReports = fmap (.accumulator) reports
-  handle <- async $ mkWorker outChan reports sendFn
-  pure AsyncExecutor{taskQueue, shutdownRef, handle, clientReports}
+  handle <- async $ mkWorker outChan reports sendFn rateLimiter inFlight cap
+  pure AsyncExecutor{taskQueue, shutdownRef, handle, clientReports, rateLimiter, inFlight, concurrency = cap}
 
--- | Worker thread loop that processes tasks from the queue.
+-- | Dispatcher thread that reads tasks from the queue and fans out sends
+-- behind a bounded in-flight count.
 mkWorker ::
   Unagi.OutChan Task ->
   Maybe ClientReportConfig ->
   (Patrol.Envelope -> IO Delivery.Outcome) ->
+  IORef RateLimiter ->
+  TVar Int ->
+  Int ->
   IO ()
-mkWorker outChan reports sendFn = loop RateLimiter.new
+mkWorker outChan reports sendFn rlRef inFlight cap = loop
   where
-    loop :: RateLimiter -> IO ()
-    loop rateLimiter =
+    loop :: IO ()
+    loop =
       Unagi.readChan outChan >>= \case
         -- Drain any pending client report before exiting (best-effort).
-        Shutdown -> void $ drainReports rateLimiter
-        -- Drain, then signal completion, carrying any rate limit learned from
-        -- the drain's response into the rest of the loop.
+        Shutdown -> do
+          awaitDrained
+          drainReportsInline
+        -- Wait for all in-flight sends, drain any pending client report,
+        -- then signal the caller and continue.
         Flush syncVar -> do
-          rateLimiter' <- drainReports rateLimiter
-          tryPutMVar syncVar () *> loop rateLimiter'
+          awaitDrained
+          drainReportsInline
+          void $ tryPutMVar syncVar ()
+          loop
+        -- Acquire an in-flight slot under mask_ (so a cancellation between
+        -- acquire and fork cannot leak a slot), filter, piggyback, then fork
+        -- the actual send. The forked thread releases the slot via finally.
         SendEnvelope envelope -> do
-          now <- getCurrentTime
-          let filtered = RateLimiter.filterEnvelope rateLimiter now envelope
-          -- Account for every item dropped by rate limiting, whether the whole
-          -- envelope was filtered out or only some of its items.
-          for_ (fmap (.accumulator) reports) \cr ->
-            ClientReport.recordItemDrops cr ClientReport.RatelimitBackoff filtered.dropped
-          case filtered.kept of
-            Nothing -> loop rateLimiter
-            Just filteredEnvelope -> do
-              -- Piggyback any pending client report onto the outgoing envelope.
-              piggybacked <- case reports of
-                Nothing -> pure filteredEnvelope
-                Just config -> do
-                  mReport <- ClientReport.takePending config.accumulator now False
-                  pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
-              -- a misbehaving sendFn must never kill the worker thread.
-              --
-              -- the built-in HTTP sendFn already converts transport failures
-              -- into values, so this only catches genuinely unexpected
-              -- errors.
-              mOutcome <-
-                fmap Just (sendFn piggybacked) `catchAny` \_ -> do
-                  for_ (fmap (.accumulator) reports) \cr ->
-                    ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError piggybacked
-                  pure Nothing
-              case mOutcome of
-                Nothing -> loop rateLimiter
-                Just outcome -> do
-                  now' <- getCurrentTime
-                  -- Account for send/network failures as drops (a 429 is
-                  -- accounted for by the rate limiter via updateFromResponse,
-                  -- not as a drop). Accounted against the actually-sent
-                  -- (post-piggyback) envelope, so a failed delivery also charges
-                  -- any client report that rode along (under 'Internal').
-                  for_ (Delivery.discardReason outcome) \reason ->
-                    for_ (fmap (.accumulator) reports) \cr ->
-                      ClientReport.recordEnvelopeDrop cr reason piggybacked
-                  loop (RateLimiter.updateFromResponse rateLimiter now' outcome)
+          mask_ $ do
+            acquireSlot
+            now <- getCurrentTime
+            rl <- readIORef rlRef
+            let filtered = RateLimiter.filterEnvelope rl now envelope
+            -- Account for every item dropped by rate limiting, whether the
+            -- whole envelope was filtered out or only some of its items.
+            for_ (fmap (.accumulator) reports) \cr ->
+              ClientReport.recordItemDrops cr ClientReport.RatelimitBackoff filtered.dropped
+            case filtered.kept of
+              -- Nothing to send; hand the slot back and fall through to loop.
+              Nothing -> releaseSlot
+              Just filteredEnvelope -> do
+                -- Piggyback any pending client report onto the outgoing
+                -- envelope. Serial on the dispatcher (one report per send).
+                piggybacked <- case reports of
+                  Nothing -> pure filteredEnvelope
+                  Just config -> do
+                    mReport <- ClientReport.takePending config.accumulator now False
+                    pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
+                _ <- async (sendAndAccount piggybacked `finally` releaseSlot)
+                pure ()
+          loop
 
-    -- Force-drain any pending client report, sending it immediately. Returns
-    -- the (possibly updated) rate limiter so a limit learned from the drain's
-    -- response is not lost. Best-effort: a failed send is swallowed and the
-    -- prior rate limiter retained.
-    drainReports :: RateLimiter -> IO RateLimiter
-    drainReports rateLimiter = case reports of
-      Nothing -> pure rateLimiter
+    -- | Send an envelope and fold its outcome into the shared rate limiter.
+    -- Catches all exceptions so a misbehaving sendFn never kills the dispatcher.
+    sendAndAccount :: Patrol.Envelope -> IO ()
+    sendAndAccount e =
+      ( do
+          outcome <- sendFn e
+          now <- getCurrentTime
+          -- Account for send/network failures (a 429 is accounted for by the
+          -- rate limiter, not as a drop) against the actually-sent envelope.
+          for_ (Delivery.discardReason outcome) \reason ->
+            for_ (fmap (.accumulator) reports) \cr ->
+              ClientReport.recordEnvelopeDrop cr reason e
+          atomicModifyIORefCAS_ rlRef \cur ->
+            RateLimiter.updateFromResponse cur now outcome
+      )
+        `catchAny` \_ ->
+          for_ (fmap (.accumulator) reports) \cr ->
+            ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError e
+
+    -- | Force-drain any pending client report, sending it inline on the
+    -- dispatcher thread (after all in-flight sends have completed). Folds any
+    -- rate limit learned from the response into the shared rate limiter.
+    -- Best-effort: a failed send is swallowed.
+    drainReportsInline :: IO ()
+    drainReportsInline = case reports of
+      Nothing -> pure ()
       Just config -> do
         now <- getCurrentTime
         ClientReport.takePending config.accumulator now True >>= \case
-          Nothing -> pure rateLimiter
+          Nothing -> pure ()
           Just report -> do
             let reportEnvelope = config.toEnvelope report
             mOutcome <-
@@ -208,7 +243,7 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
                 ClientReport.recordEnvelopeDrop config.accumulator ClientReport.InternalSdkError reportEnvelope
                 pure Nothing
             case mOutcome of
-              Nothing -> pure rateLimiter
+              Nothing -> pure ()
               Just outcome -> do
                 now' <- getCurrentTime
                 -- A failed report delivery is itself charged (under 'Internal')
@@ -216,7 +251,27 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
                 -- limiter, not counted as a drop.
                 for_ (Delivery.discardReason outcome) \reason ->
                   ClientReport.recordEnvelopeDrop config.accumulator reason reportEnvelope
-                pure (RateLimiter.updateFromResponse rateLimiter now' outcome)
+                atomicModifyIORefCAS_ rlRef \cur ->
+                  RateLimiter.updateFromResponse cur now' outcome
+
+    -- | Acquire an in-flight slot, blocking until one is available.
+    -- Interruptible under mask_ (STM retry can receive async exceptions).
+    acquireSlot :: IO ()
+    acquireSlot =
+      atomically $
+        readTVar inFlight >>= \n ->
+          if n >= cap then retry else writeTVar inFlight (n + 1)
+
+    -- | Release an in-flight slot.
+    releaseSlot :: IO ()
+    releaseSlot = atomically $ modifyTVar' inFlight (subtract 1)
+
+    -- | Block until all in-flight sends have completed.
+    awaitDrained :: IO ()
+    awaitDrained =
+      atomically $
+        readTVar inFlight >>= \n ->
+          when (n > 0) retry
 
 instance Sentry.Transport.Transport AsyncExecutor where
   send :: AsyncExecutor -> Patrol.Envelope -> IO Sentry.Transport.SendResponse
@@ -242,7 +297,7 @@ instance Sentry.Transport.Transport AsyncExecutor where
 
   shutdown :: AsyncExecutor -> NominalDiffTime -> IO Sentry.Transport.ShutdownResponse
   shutdown executor timeout = unlessShutdown executor.shutdownRef Sentry.Transport.ShutdownFailed_AlreadyShutdown do
-    -- Refuse new work, then signal the worker to drain and exit.
+    -- Refuse new work, then signal the dispatcher to drain and exit.
     atomically $ writeTVar executor.shutdownRef True
     result <- UnliftIO.timeout (toMicroseconds timeout) do
       Unagi.writeChan executor.taskQueue Shutdown
