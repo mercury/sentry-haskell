@@ -1,18 +1,21 @@
-{-# LANGUAGE QualifiedDo #-}
-
 module ScopeMutationTest where
 
 import Data.Aeson qualified as Aeson
+import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
 import Data.Vector qualified as Vector
 import Patrol qualified
+import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Context qualified as Patrol.Context
+import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
+import Sentry.Event (CapturedEvent (..), fromMessage)
 import Sentry.Scope (ScopeData (..))
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.Update qualified as Update
 import Test.Hspec
+import Witch qualified
 
 testUser :: Patrol.User
 testUser =
@@ -136,22 +139,10 @@ spec_scopeUpdate = describe "Sentry.Scope.Update" do
     d.tags `shouldBe` Map.singleton "env" "prod"
     d.user `shouldBe` Just testUser
 
-  it "QualifiedDo desugars to the same result as Monoid composition" do
-    scope1 <- Scope.create Scope.Current
-    scope2 <- Scope.create Scope.Current
-    Update.apply scope1 $
-      Update.setLevel Patrol.Level.Warning
-        <> Update.setTag "env" "prod"
-        <> Update.setUser testUser
-    Update.apply scope2 Update.do
-      Update.setLevel Patrol.Level.Warning
-      Update.setTag "env" "prod"
-      Update.setUser testUser
-    d1 <- Scope.readScopeRef scope1
-    d2 <- Scope.readScopeRef scope2
-    d1.level `shouldBe` d2.level
-    d1.tags `shouldBe` d2.tags
-    d1.user `shouldBe` d2.user
+  it "the ScopeUpdate constructor and runScopeUpdate round-trip a modification" do
+    let upd = Update.ScopeUpdate \s -> s{level = Just Patrol.Level.Error}
+        result = Update.runScopeUpdate upd mempty
+    result.level `shouldBe` Just Patrol.Level.Error
 
   it "mempty :: ScopeUpdate is the identity (no-op)" do
     scope <- Scope.create Scope.Current
@@ -174,3 +165,44 @@ spec_scopeUpdate = describe "Sentry.Scope.Update" do
     scope `Update.apply` Update.clearTags
     d <- Scope.readScopeRef scope
     d.tags `shouldBe` Map.empty
+
+spec_scopeUpdateCoverage :: Spec
+spec_scopeUpdateCoverage = describe "Sentry.Scope.Update extended coverage" do
+  describe "breadcrumbs" do
+    let crumb m = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = m}
+
+    it "addBreadcrumb appends in order" do
+      let d = Update.runScopeUpdate (Update.addBreadcrumb (crumb "a") <> Update.addBreadcrumb (crumb "b")) mempty
+      map (.message) (toList d.breadcrumbs) `shouldBe` ["a", "b"]
+
+    it "addBreadcrumbs appends a batch in order" do
+      let d = Update.runScopeUpdate (Update.addBreadcrumbs [crumb "a", crumb "b", crumb "c"]) mempty
+      map (.message) (toList d.breadcrumbs) `shouldBe` ["a", "b", "c"]
+
+    it "clearBreadcrumbs empties the sequence" do
+      let d = Update.runScopeUpdate (Update.addBreadcrumbs [crumb "a", crumb "b"] <> Update.clearBreadcrumbs) mempty
+      toList d.breadcrumbs `shouldBe` []
+
+    it "trimBreadcrumbs keeps the most recent n" do
+      let d = Update.runScopeUpdate (Update.addBreadcrumbs [crumb "a", crumb "b", crumb "c"] <> Update.trimBreadcrumbs 2) mempty
+      map (.message) (toList d.breadcrumbs) `shouldBe` ["b", "c"]
+
+  describe "event processors" do
+    let ce = Witch.from (fromMessage Patrol.Level.Info "hi") :: CapturedEvent
+        setFatal c = Just c.event{Patrol.Event.level = Just Patrol.Level.Fatal}
+
+    it "setEventProcessor replaces the processor" do
+      let d = Update.runScopeUpdate (Update.setEventProcessor setFatal) mempty
+      ((.level) <$> d.eventProcessor ce) `shouldBe` Just (Just Patrol.Level.Fatal)
+
+    it "unsetEventProcessor restores the pass-through" do
+      let d = Update.runScopeUpdate (Update.setEventProcessor (const Nothing) <> Update.unsetEventProcessor) mempty
+      ((.level) <$> d.eventProcessor ce) `shouldBe` Just (Just Patrol.Level.Info)
+
+    it "addEventProcessor chains after the existing processor" do
+      let d = Update.runScopeUpdate (Update.addEventProcessor setFatal) mempty
+      ((.level) <$> d.eventProcessor ce) `shouldBe` Just (Just Patrol.Level.Fatal)
+
+    it "addEventProcessor is skipped once an earlier processor drops the event" do
+      let d = Update.runScopeUpdate (Update.setEventProcessor (const Nothing) <> Update.addEventProcessor setFatal) mempty
+      ((.level) <$> d.eventProcessor ce) `shouldBe` Nothing

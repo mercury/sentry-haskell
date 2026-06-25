@@ -2,6 +2,11 @@ packages:
     sentry
   , sentry-core
 
+-- Solve with test suites enabled so their dependencies (notably the
+-- 'tasty-hspec >= 1.2' floor that the tasty-discover driver's 'testSpec'
+-- requires) are part of the plan, rather than bolted onto a tests-off solve.
+tests: True
+
 source-repository-package
     type: git
     location: https://github.com/tfausak/patrol

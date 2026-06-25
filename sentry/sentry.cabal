@@ -268,7 +268,7 @@ test-suite integration
     , stm
     , tasty
     , tasty-discover
-    , tasty-hspec
+    , tasty-hspec >=1.2
     , testkit
     , text
     , time
@@ -321,7 +321,7 @@ test-suite unit
     , stm
     , tasty
     , tasty-discover
-    , tasty-hspec
+    , tasty-hspec >=1.2
     , text
     , time
     , transformers

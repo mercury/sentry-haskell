@@ -114,7 +114,7 @@ tests:
       - hspec
       - tasty
       - tasty-discover
-      - tasty-hspec
+      - tasty-hspec >= 1.2
 
   integration:
     source-dirs: tests/integration
@@ -135,7 +135,7 @@ tests:
       - hspec
       - tasty
       - tasty-discover
-      - tasty-hspec
+      - tasty-hspec >= 1.2
       # settings mapping test
       - http2-tls
 

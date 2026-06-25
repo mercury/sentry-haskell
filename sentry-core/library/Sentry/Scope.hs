@@ -97,7 +97,6 @@ import Data.Foldable (for_, toList)
 import Data.IORef (newIORef, readIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Time.Clock (getCurrentTime)
 import Data.Vector (Vector)
@@ -115,6 +114,7 @@ import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
 import Sentry.Scope.Internal qualified as Internal
+import Sentry.Scope.Update qualified as Update
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | Read the current state of the 'ScopeData' contained within the given
@@ -123,80 +123,83 @@ readScopeRef :: (MonadIO m) => Scope -> m ScopeData
 readScopeRef (Scope ref) = liftIO $ readIORef ref
 
 -- * Scalar setters
+--
+-- These are thin, immediate wrappers over the composable constructors in
+-- "Sentry.Scope.Update"; the mutation logic lives there.
 
 -- | Set the 'Patrol.Type.Level.Level' for the given 'Scope'.
 setLevel :: (MonadIO m) => Scope -> Patrol.Level -> m ()
-setLevel scope level = modifyScopeData scope \s -> s{level = Just level}
+setLevel scope level = Update.apply scope (Update.setLevel level)
 
 -- | Clear the 'Patrol.Type.Level.Level' from the given 'Scope'.
 unsetLevel :: (MonadIO m) => Scope -> m ()
-unsetLevel scope = modifyScopeData scope \s -> s{level = Nothing}
+unsetLevel scope = Update.apply scope Update.unsetLevel
 
 -- | Set the 'Patrol.Type.User.User' for the given 'Scope'.
 setUser :: (MonadIO m) => Scope -> Patrol.User -> m ()
-setUser scope u = modifyScopeData scope \s -> s{user = Just u}
+setUser scope u = Update.apply scope (Update.setUser u)
 
 -- | Clear the 'Patrol.Type.User.User' from the given 'Scope'.
 unsetUser :: (MonadIO m) => Scope -> m ()
-unsetUser scope = modifyScopeData scope \s -> s{user = Nothing}
+unsetUser scope = Update.apply scope Update.unsetUser
 
 -- | Set the fingerprint for the given 'Scope'.
 setFingerprint :: (MonadIO m) => Scope -> Vector Text -> m ()
-setFingerprint scope fp = modifyScopeData scope \s -> s{fingerprint = Just fp}
+setFingerprint scope fp = Update.apply scope (Update.setFingerprint fp)
 
 -- | Clear the fingerprint from the given 'Scope'.
 unsetFingerprint :: (MonadIO m) => Scope -> m ()
-unsetFingerprint scope = modifyScopeData scope \s -> s{fingerprint = Nothing}
+unsetFingerprint scope = Update.apply scope Update.unsetFingerprint
 
 -- | Set the transaction name for the given 'Scope'.
 setTransaction :: (MonadIO m) => Scope -> Text -> m ()
-setTransaction scope t = modifyScopeData scope \s -> s{transaction = Just t}
+setTransaction scope t = Update.apply scope (Update.setTransaction t)
 
 -- | Clear the transaction name from the given 'Scope'.
 unsetTransaction :: (MonadIO m) => Scope -> m ()
-unsetTransaction scope = modifyScopeData scope \s -> s{transaction = Nothing}
+unsetTransaction scope = Update.apply scope Update.unsetTransaction
 
 -- * Tag setters
 
 -- | Insert (or overwrite) a tag at the given key.
 setTag :: (MonadIO m) => Scope -> Text -> Text -> m ()
-setTag scope k v = modifyScopeData scope \s -> s{tags = Map.insert k v s.tags}
+setTag scope k v = Update.apply scope (Update.setTag k v)
 
 -- | Remove the tag at the given key, if present.
 removeTag :: (MonadIO m) => Scope -> Text -> m ()
-removeTag scope k = modifyScopeData scope \s -> s{tags = Map.delete k s.tags}
+removeTag scope k = Update.apply scope (Update.removeTag k)
 
 -- | Clear all tags from the given 'Scope'.
 clearTags :: (MonadIO m) => Scope -> m ()
-clearTags scope = modifyScopeData scope \s -> s{tags = Map.empty}
+clearTags scope = Update.apply scope Update.clearTags
 
 -- * Extra setters
 
 -- | Insert (or overwrite) an extra value at the given key.
 setExtra :: (MonadIO m) => Scope -> Text -> Aeson.Value -> m ()
-setExtra scope k v = modifyScopeData scope \s -> s{extras = Map.insert k v s.extras}
+setExtra scope k v = Update.apply scope (Update.setExtra k v)
 
 -- | Remove the extra value at the given key, if present.
 removeExtra :: (MonadIO m) => Scope -> Text -> m ()
-removeExtra scope k = modifyScopeData scope \s -> s{extras = Map.delete k s.extras}
+removeExtra scope k = Update.apply scope (Update.removeExtra k)
 
 -- | Clear all extras from the given 'Scope'.
 clearExtras :: (MonadIO m) => Scope -> m ()
-clearExtras scope = modifyScopeData scope \s -> s{extras = Map.empty}
+clearExtras scope = Update.apply scope Update.clearExtras
 
 -- * Context setters
 
 -- | Insert (or overwrite) a context at the given key.
 setContext :: (MonadIO m) => Scope -> Text -> Patrol.Context -> m ()
-setContext scope k v = modifyScopeData scope \s -> s{contexts = Map.insert k v s.contexts}
+setContext scope k v = Update.apply scope (Update.setContext k v)
 
 -- | Remove the context at the given key, if present.
 removeContext :: (MonadIO m) => Scope -> Text -> m ()
-removeContext scope k = modifyScopeData scope \s -> s{contexts = Map.delete k s.contexts}
+removeContext scope k = Update.apply scope (Update.removeContext k)
 
 -- | Clear all contexts from the given 'Scope'.
 clearContexts :: (MonadIO m) => Scope -> m ()
-clearContexts scope = modifyScopeData scope \s -> s{contexts = Map.empty}
+clearContexts scope = Update.apply scope Update.clearContexts
 
 -- | Resolve the global 'Scope' visible on the calling thread.
 --
@@ -305,7 +308,7 @@ bindClient mc scope = modifyScopeData scope \s -> s{client = mc}
 
 -- | Replace the 'Scope's event processor with the given function.
 setEventProcessor :: (MonadIO m) => Scope -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
-setEventProcessor scope f = modifyScopeData scope \s -> s{eventProcessor = f}
+setEventProcessor scope f = Update.apply scope (Update.setEventProcessor f)
 
 -- | Chain a new processor after the existing one.
 --
@@ -314,14 +317,12 @@ setEventProcessor scope f = modifyScopeData scope \s -> s{eventProcessor = f}
 -- processor is not called. Matches the left-to-right chaining of the
 -- 'Semigroup' instance.
 addEventProcessor :: (MonadIO m) => Scope -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
-addEventProcessor scope g =
-  modifyScopeData scope \s ->
-    s{eventProcessor = \ce -> s.eventProcessor ce >>= \ev -> g ce{event = ev}}
+addEventProcessor scope g = Update.apply scope (Update.addEventProcessor g)
 
 -- | Reset the 'Scope's event processor to the default pass-through (no
 -- filtering or mutation).
 unsetEventProcessor :: (MonadIO m) => Scope -> m ()
-unsetEventProcessor scope = modifyScopeData scope \s -> s{eventProcessor = \ce -> Just ce.event}
+unsetEventProcessor scope = Update.apply scope Update.unsetEventProcessor
 
 -- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
 -- 'eventProcessor' as the final step.
@@ -395,23 +396,22 @@ addBreadcrumbs crumbs = do
 
 -- | Clear all breadcrumbs from the given 'Scope'.
 clearBreadcrumbs :: (MonadIO m) => Scope -> m ()
-clearBreadcrumbs scope = modifyScopeData scope \s -> s{breadcrumbs = mempty}
+clearBreadcrumbs scope = Update.apply scope Update.clearBreadcrumbs
 
 -- | Enforce 'ClientOptions.beforeBreadcrumb' and trim to
 -- 'ClientOptions.maxBreadcrumbs', then append to the scope.
+--
+-- The append + trim mutation is expressed via "Sentry.Scope.Update"; only the
+-- effectful policy (timestamp defaulting, 'beforeBreadcrumb', the bound) lives
+-- here.
 addBreadcrumbToScope :: (MonadIO m) => ClientOptions -> Scope -> Patrol.Breadcrumb -> m ()
 addBreadcrumbToScope opts scope crumb0 = liftIO do
   now <- getCurrentTime
   -- Default timestamp and type_ when absent.
   let crumb1 = crumb0{Patrol.Breadcrumb.timestamp = crumb0.timestamp <|> Just now}
       crumb2 = crumb1{Patrol.Breadcrumb.type_ = crumb1.type_ <|> Just Patrol.BreadcrumbType.Default}
+      maxN = fromIntegral opts.maxBreadcrumbs :: Int
   -- Run beforeBreadcrumb; Nothing from the callback drops the crumb.
   case maybe (Just crumb2) ($ crumb2) opts.beforeBreadcrumb of
     Nothing -> pure ()
-    Just crumb3 -> modifyScopeData scope (appendAndTrim crumb3)
-  where
-    maxN = fromIntegral opts.maxBreadcrumbs :: Int
-    appendAndTrim crumb s =
-      let extended = s.breadcrumbs Seq.|> crumb
-          len = Seq.length extended
-       in s{breadcrumbs = if len > maxN then Seq.drop (len - maxN) extended else extended}
+    Just crumb3 -> Update.apply scope (Update.addBreadcrumb crumb3 <> Update.trimBreadcrumbs maxN)

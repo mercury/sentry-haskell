@@ -1,29 +1,23 @@
 {-# LANGUAGE DerivingVia #-}
 
--- | Apply updates to 'Sentry.Scope.Internal.ScopeData'; may be used either in
--- terms of the 'Semigroup' instance for 'ScopeUpdate' methods or via 'QualifiedDo':
+-- | Apply updates to 'Sentry.Scope.Internal.ScopeData' via the composable
+-- 'ScopeUpdate' value.
+--
+-- 'ScopeUpdate's are built from the named smart constructors below and combined
+-- with '<>'; applying one to a 'Scope' is a single atomic update. The left
+-- operand of '<>' is applied first, so later updates win on conflicting scalar
+-- fields:
 --
 -- @
 -- import Sentry.Scope.Update qualified as Update
 --
--- -- Monoid composition
 -- Update.apply scope $
 --   Update.setLevel Warning
 --     <> Update.setTag \"env\" \"prod\"
 --     <> Update.setUser u
 -- @
 --
--- @
--- {-\# LANGUAGE QualifiedDo \#-}
--- import Sentry.Scope.Update qualified as Update
---
--- Update.apply scope Update.do
---   Update.setLevel Warning
---   Update.setTag \"env\" \"prod\"
---   Update.setUser u
--- @
---
--- 'ScopeData' edits bundles can also be factored out and reused:
+-- Update bundles can be factored out and reused:
 --
 -- @
 -- let stagingTags = Update.setTag \"env\" \"staging\" <> Update.setTag \"tier\" \"free\"
@@ -31,7 +25,7 @@
 -- @
 module Sentry.Scope.Update
   ( -- * Type
-    ScopeUpdate,
+    ScopeUpdate (..),
 
     -- * Application
     apply,
@@ -63,44 +57,50 @@ module Sentry.Scope.Update
     removeContext,
     clearContexts,
 
-    -- * QualifiedDo support
-    (>>),
+    -- ** Breadcrumbs
+    addBreadcrumb,
+    addBreadcrumbs,
+    clearBreadcrumbs,
+    trimBreadcrumbs,
+
+    -- ** Event processors
+    setEventProcessor,
+    addEventProcessor,
+    unsetEventProcessor,
   )
 where
 
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson qualified as Aeson
+import Data.Foldable (toList)
 import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Dual (..), Endo (..))
+import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Vector (Vector)
 import Patrol qualified
+import Sentry.Event (CapturedEvent (..))
 import Sentry.Scope.Internal (Scope, ScopeData (..), modifyScopeData)
-import Prelude hiding ((>>))
 
 -- | A pending modification to a 'Scope'.
 --
--- Updates can be chained with '<>' or via `QualifiedDo`.
+-- Updates can be chained with '<>'; the left operand is applied first, so later
+-- updates win on conflicting scalar fields. Build one with a smart constructor
+-- below or the 'ScopeUpdate' constructor directly; recover the wrapped
+-- 'ScopeData -> ScopeData' with 'runScopeUpdate' (e.g. @'runScopeUpdate' upd
+-- 'mempty'@ yields the 'ScopeData' the update produces against an empty scope).
 type ScopeUpdate :: Type
-newtype ScopeUpdate = ScopeUpdate (ScopeData -> ScopeData)
+newtype ScopeUpdate = ScopeUpdate {runScopeUpdate :: ScopeData -> ScopeData}
   deriving (Semigroup, Monoid) via (Dual (Endo ScopeData))
 
 -- | Apply a 'ScopeUpdate' to a 'Scope' as a single atomic 'IORef' update.
 apply :: (MonadIO m) => Scope -> ScopeUpdate -> m ()
-apply scope (ScopeUpdate f) = modifyScopeData scope f
+apply scope = modifyScopeData scope . runScopeUpdate
 
--- | Wrap a pure 'ScopeData' modification in a 'ScopeUpdate'. Internal helper
--- used by every smart constructor; not exported so the public surface stays
--- the curated set of named operations.
+-- | Internal builder shared by the smart constructors below.
 edit :: (ScopeData -> ScopeData) -> ScopeUpdate
 edit = ScopeUpdate
-
--- | 'QualifiedDo' hook. The body of an @Update.do@ block desugars
--- @Update.do { a; b }@ to @a Update.>> b@; we point that at '(<>)' so the
--- block accumulates updates without introducing a real monad.
-(>>) :: ScopeUpdate -> ScopeUpdate -> ScopeUpdate
-(>>) = (<>)
 
 -- * Scalar field updates
 
@@ -177,3 +177,52 @@ removeContext k = edit \s -> s{contexts = Map.delete k s.contexts}
 -- | Clear all contexts.
 clearContexts :: ScopeUpdate
 clearContexts = edit \s -> s{contexts = Map.empty}
+
+-- * Breadcrumb updates
+
+-- | Append a 'Patrol.Type.Breadcrumb.Breadcrumb' verbatim.
+--
+-- This is the pure mutation primitive: it does /not/ default the timestamp, run
+-- 'Sentry.Client.Options.ClientOptions.beforeBreadcrumb', or trim to
+-- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'. Use
+-- 'Sentry.Scope.addBreadcrumb' for the policy-applying, timestamp-defaulting
+-- entry point.
+addBreadcrumb :: Patrol.Breadcrumb -> ScopeUpdate
+addBreadcrumb crumb = edit \s -> s{breadcrumbs = s.breadcrumbs Seq.|> crumb}
+
+-- | Append several 'Patrol.Type.Breadcrumb.Breadcrumb's verbatim, in order. See
+-- 'addBreadcrumb' for the caveats around policy and defaulting.
+addBreadcrumbs :: (Foldable f) => f Patrol.Breadcrumb -> ScopeUpdate
+addBreadcrumbs crumbs = edit \s -> s{breadcrumbs = s.breadcrumbs <> Seq.fromList (toList crumbs)}
+
+-- | Clear all breadcrumbs.
+clearBreadcrumbs :: ScopeUpdate
+clearBreadcrumbs = edit \s -> s{breadcrumbs = mempty}
+
+-- | Drop the oldest breadcrumbs so that at most @n@ remain. A non-positive @n@
+-- clears them entirely.
+trimBreadcrumbs :: Int -> ScopeUpdate
+trimBreadcrumbs n = edit \s ->
+  let len = Seq.length s.breadcrumbs
+   in if len > n then s{breadcrumbs = Seq.drop (len - n) s.breadcrumbs} else s
+
+-- * Event-processor updates
+
+-- | Replace the scope's event processor with the given function.
+setEventProcessor :: (CapturedEvent -> Maybe Patrol.Event) -> ScopeUpdate
+setEventProcessor f = edit \s -> s{eventProcessor = f}
+
+-- | Chain a new processor after the existing one.
+--
+-- The existing processor runs first; its output is then passed to the new
+-- processor. If the existing processor drops the event ('Nothing'), the new
+-- processor is not called. Matches the left-to-right chaining of the 'ScopeData'
+-- 'Semigroup'.
+addEventProcessor :: (CapturedEvent -> Maybe Patrol.Event) -> ScopeUpdate
+addEventProcessor g = edit \s ->
+  s{eventProcessor = \ce -> s.eventProcessor ce >>= \ev -> g ce{event = ev}}
+
+-- | Reset the scope's event processor to the default pass-through (no filtering
+-- or mutation).
+unsetEventProcessor :: ScopeUpdate
+unsetEventProcessor = edit \s -> s{eventProcessor = \ce -> Just ce.event}

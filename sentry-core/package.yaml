@@ -46,7 +46,7 @@ tests:
       - sentry-core
       - tasty
       - tasty-discover
-      - tasty-hspec
+      - tasty-hspec >= 1.2
 
 benchmarks:
   time:
