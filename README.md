@@ -23,10 +23,12 @@ enriched with whatever contextual metadata the surrounding scope has accumulated
 - [How It Works](#how-it-works)
 - [Installation](#installation)
 - [Usage](#usage)
+  - [Import Conventions](#import-conventions)
   - [Initializing the SDK](#initializing-the-sdk)
   - [Capturing Messages and Exceptions](#capturing-messages-and-exceptions)
   - [Scopes](#scopes)
   - [Breadcrumbs](#breadcrumbs)
+  - [Optics (optional)](#optics-optional)
   - [Choosing a Transport](#choosing-a-transport)
   - [Testing](#testing)
 - [Reference](#reference)
@@ -101,10 +103,50 @@ source-repository-package
 
 </details>
 
+The optics-based API (see [Optics](#optics-optional)) is **optional** and lives
+in its own `sentry-optics` package, built on `patrol-optics`; `sentry` and
+`sentry-core` carry no `optics` dependency. To use it, add these stanzas as well
+(`optics` itself resolves from Hackage):
+
+<details> <summary>cabal.project fragment (optics, optional)</summary>
+
+```
+source-repository-package
+  type: git
+  location: https://github.com/MercuryTechnologies/sentry-haskell
+  tag: main
+  subdir: sentry-optics
+
+source-repository-package
+  type: git
+  location: https://github.com/MercuryTechnologies/sentry-haskell
+  tag: main
+  subdir: patrol-optics
+```
+
+</details>
+
 The SDK targets GHC 9.10 and 9.12 and is written against the GHC2024 language
 edition.
 
 ## Usage
+
+### Import Conventions
+
+The API is meant to be used through qualified imports. The examples below — and
+recommended usage generally — alias the modules like so:
+
+```haskell
+import Sentry                qualified as Sentry          -- lifecycle, capture, the core surface
+import Sentry.Scope          qualified as Scope           -- scope mutators (setTag, setLevel, …)
+import Sentry.Level          qualified as Level           -- severity values (Level.Warning, …)
+import Sentry.BreadcrumbType qualified as BreadcrumbType  -- breadcrumb kinds (BreadcrumbType.Navigation, …)
+```
+
+`Sentry.Level` and `Sentry.BreadcrumbType` re-export the corresponding `patrol`
+sum types under the `Sentry` namespace, so their constructors can be named without
+depending on `patrol` directly. The optional optics API swaps this set of
+imports for its own — see [Optics](#optics-optional).
 
 ### Initializing the SDK
 
@@ -138,7 +180,7 @@ Once a client is bound to the global scope, the capture functions can be called
 from anywhere:
 
 ```haskell
-import Patrol.Type.Level qualified as Level
+import Sentry.Level qualified as Level
 import Sentry qualified
 
 reportTrouble :: IO ()
@@ -158,7 +200,7 @@ scope is forked on entry and restored on exit, and any synchronous exception
 that escapes carries the merged scope with it.
 
 ```haskell
-import Patrol.Type.Level qualified as Level
+import Sentry.Level qualified as Level
 import Patrol.Type.User qualified as User
 import Sentry qualified
 import Sentry.Scope qualified as Scope
@@ -212,6 +254,78 @@ trackClick =
 The number of breadcrumbs retained per scope is capped by
 `ClientOptions.maxBreadcrumbs`.
 
+### Optics (optional)
+
+For composable scope and record manipulation, the optional `sentry-optics`
+package provides an [`optics`](https://github.com/well-typed/optics)-based layer
+on top of `patrol-optics`. It's entirely opt-in; `sentry` and `sentry-core`
+carry no `optics` dependency.
+
+It is used through two imports, one qualified and one not, with the
+`OverloadedLabels` extension enabled:
+
+```haskell
+{-# LANGUAGE OverloadedLabels #-}
+
+import Sentry.Optics qualified as Sentry  -- the full Sentry surface + editScope/empty*
+import Sentry.Optics.Prelude              -- import unqualified, *in place of* `import Optics`
+```
+
+`Sentry.Optics` is a drop-in for `Sentry` (imported qualified) that additionally
+exports `editScope`, the `apply` / `runScopeUpdate` / `ScopeUpdate` trio, and
+`empty`-prefixed record seeds (`emptyUser`, `emptyBreadcrumb`, `emptyRequest`,
+`emptyEvent`).
+
+`Sentry.Optics.Prelude` re-exports the `optics` vocabulary, the state operators
+(`?=` / `.=` / `%=`), `&~` for applying those operators to a plain value, as
+well as the field and value labels, so it replaces `import Optics` entirely.
+
+
+#### Scope Updates
+
+`editScope` applies a block of optic assignments to a scope as a single atomic
+update — the optics counterpart to the effectful `Sentry.Scope` setters:
+
+```haskell
+Sentry.withIsolationScope \scope ->
+  Sentry.editScope scope do
+    #level ?= #warning
+    #tags % at "feature" ?= "checkout"
+    #user  ?= (Sentry.emptyUser & #email .~ "alice@example.com")
+```
+
+#### Value Labels
+
+`#warning`, `#error`, `#navigation`, ... are labels that correspond to
+`patrol`'s sum types, resolved by the type the surrounding optic expects.
+
+That is to say, the same `#error` is a `Level` under `#level` and a
+`BreadcrumbType` under `#type_`.
+
+#### Field Labels
+
+The `#field` lenses and `#_Constructor` prisms for `patrol`'s own types come
+from the `patrol-optics` package (`Patrol.Optics`). Paired with the `empty*`
+seeds, they let you build a record field by field:
+
+```haskell
+user = Sentry.emptyUser & #email .~ "alice@example.com" & #username .~ "alice"
+```
+
+For longer records, `&~` applies a block of optic assignments to a plain value
+— the value-level counterpart to `editScope`, which applies one to a live scope:
+
+```haskell
+crumb =
+  Sentry.emptyBreadcrumb &~ do
+    #type_ ?= #navigation
+    #category .= "ui"
+    #message .= "user clicked 'pay'"
+```
+
+The same labels work on values you already have, so a `ClientOptions.beforeSend`
+hook can rewrite a captured `Patrol.Event` the same way.
+
 ### Choosing a Transport
 
 The `sentry` package provides asynchronous HTTP transports backed by a dedicated
@@ -252,7 +366,7 @@ that drain the collected data:
 
 ```haskell
 import Data.Default (def)
-import Patrol.Type.Level qualified as Level
+import Sentry.Level qualified as Level
 import Sentry (ClientOptions (..))
 import Sentry qualified
 import Sentry.Test qualified as Test
@@ -321,6 +435,19 @@ Each has a `_`-suffixed variant that discards the returned `Maybe EventId`.
 | `AttachExceptionContextIntegration`    | Attaches exception context as event context                  |
 | `ProcessStacktraceIntegration`         | Post-processes frames, applying in-app include/exclude rules |
 
+### Optics modules
+
+The optional optics layer (see [Optics](#optics-optional)) is split across:
+
+| Module                  | Package         | Provides                                                                         |
+| ----------------------- | --------------- | -------------------------------------------------------------------------------- |
+| `Sentry.Optics`         | `sentry-optics` | Drop-in for `Sentry` (qualified) + `editScope` / `apply` / `runScopeUpdate` + `empty*` seeds |
+| `Sentry.Optics.Prelude` | `sentry-optics` | Unqualified batteries: the `optics` vocabulary, `?=` / `.=` / `%=`, field & value labels |
+| `Patrol.Optics`         | `patrol-optics` | Orphan `#field` lenses and `#_Constructor` prisms for the `patrol` protocol types |
+
+Without optics, `Sentry.Level` and `Sentry.BreadcrumbType` (in `sentry-core`)
+re-export the `patrol` types for qualified import.
+
 ### Transport Responses
 
 Transport operations return explicit sum types rather than throwing:
@@ -388,6 +515,9 @@ inspired much of this project's architecture.
 
 [`hs-opentelemetry`](https://github.com/iand675/hs-opentelemetry), which provides
 the thread-local context machinery the scope system is built on.
+
+[`optics`](https://github.com/well-typed/optics), which powers the optional
+optics-based authoring API in `sentry-optics` and `patrol-optics`.
 
 [`sentry-rust`]: https://github.com/getsentry/sentry-rust
 [`patrol`]: https://github.com/tfausak/patrol

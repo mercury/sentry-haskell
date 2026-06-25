@@ -2,6 +2,7 @@ packages:
     sentry
   , sentry-core
   , patrol-optics
+  , sentry-optics
 
 -- Solve with test suites enabled so their dependencies (notably the
 -- 'tasty-hspec >= 1.2' floor that the tasty-discover driver's 'testSpec'
