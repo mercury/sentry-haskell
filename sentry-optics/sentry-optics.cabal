@@ -52,6 +52,42 @@ library
     , sentry-core
   default-language: GHC2024
 
+executable checkout
+  main-is: Main.hs
+  other-modules:
+      Paths_sentry_optics
+  autogen-modules:
+      Paths_sentry_optics
+  hs-source-dirs:
+      examples/checkout
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      MultiWayIf
+      OverloadedRecordDot
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base
+    , data-default
+    , mtl
+    , optics ==0.4.*
+    , optics-core ==0.4.*
+    , optics-extra ==0.4.*
+    , optics-th ==0.4.*
+    , patrol ==1.2.*
+    , patrol-optics
+    , pretty-simple
+    , sentry-core
+    , sentry-optics
+    , text
+  default-language: GHC2024
+
 test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs

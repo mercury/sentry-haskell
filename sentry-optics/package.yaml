@@ -26,6 +26,18 @@ dependencies:
 library:
   source-dirs: library
 
+executables:
+  checkout:
+    source-dirs: examples/checkout
+    main: Main.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    dependencies:
+      - data-default
+      - pretty-simple
+      - sentry-core
+      - sentry-optics
+      - text
+
 tests:
   unit:
     source-dirs: tests/unit
