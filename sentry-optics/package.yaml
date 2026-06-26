@@ -32,11 +32,17 @@ executables:
     main: Main.hs
     ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
     dependencies:
+      - containers
       - data-default
+      - hs-opentelemetry-api ^>= 1.0
+      - prettyprinter
+      - prettyprinter-ansi-terminal
       - pretty-simple
       - sentry-core
       - sentry-optics
       - text
+      - unordered-containers
+      - vector
 
 tests:
   unit:

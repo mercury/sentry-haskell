@@ -55,6 +55,7 @@ library
 executable checkout
   main-is: Main.hs
   other-modules:
+      Otel
       Paths_sentry_optics
   autogen-modules:
       Paths_sentry_optics
@@ -74,7 +75,9 @@ executable checkout
   ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base
+    , containers
     , data-default
+    , hs-opentelemetry-api ==1.0.*
     , mtl
     , optics ==0.4.*
     , optics-core ==0.4.*
@@ -83,9 +86,13 @@ executable checkout
     , patrol ==1.2.*
     , patrol-optics
     , pretty-simple
+    , prettyprinter
+    , prettyprinter-ansi-terminal
     , sentry-core
     , sentry-optics
     , text
+    , unordered-containers
+    , vector
   default-language: GHC2024
 
 test-suite unit
