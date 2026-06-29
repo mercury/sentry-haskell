@@ -35,6 +35,19 @@ dependencies:
 library:
   source-dirs: library
 
+executables:
+  # The non-optics counterpart to `sentry-optics:checkout`: the same OpenTelemetry
+  # span-harvesting demo, authored against the core "Sentry.Scope" setters and
+  # plain Patrol record syntax instead of the optics API.
+  checkout:
+    source-dirs: examples/checkout
+    main: Main.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    dependencies:
+      - prettyprinter
+      - prettyprinter-ansi-terminal
+      - sentry-core
+
 tests:
   unit:
     source-dirs: tests/unit

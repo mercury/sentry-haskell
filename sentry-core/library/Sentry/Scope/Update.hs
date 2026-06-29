@@ -17,6 +17,21 @@
 --     <> Update.setUser u
 -- @
 --
+-- The same bundle can also be written as a 'QualifiedDo' block, which reads as a
+-- sequence of edits rather than a '<>'-chained expression. The block desugars
+-- through '(>>)' (pointed at '(<>)'), so it is exactly the monoidal composition
+-- above — there is no real monad, and @\<-@ \/ @let@ have no meaning in it:
+--
+-- @
+-- {-\# LANGUAGE QualifiedDo \#-}
+-- import Sentry.Scope.Update qualified as Update
+--
+-- Update.apply scope Update.do
+--   Update.setLevel Warning
+--   Update.setTag \"env\" \"prod\"
+--   Update.setUser u
+-- @
+--
 -- Update bundles can be factored out and reused:
 --
 -- @
@@ -29,6 +44,9 @@ module Sentry.Scope.Update
 
     -- * Application
     apply,
+
+    -- * QualifiedDo support
+    (>>),
 
     -- * Smart constructors
 
@@ -82,6 +100,7 @@ import Data.Vector (Vector)
 import Patrol qualified
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Scope.Internal (Scope, ScopeData (..), modifyScopeData)
+import Prelude hiding ((>>))
 
 -- | A pending modification to a 'Scope'.
 --
@@ -97,6 +116,13 @@ newtype ScopeUpdate = ScopeUpdate {runScopeUpdate :: ScopeData -> ScopeData}
 -- | Apply a 'ScopeUpdate' to a 'Scope' as a single atomic 'IORef' update.
 apply :: (MonadIO m) => Scope -> ScopeUpdate -> m ()
 apply scope = modifyScopeData scope . runScopeUpdate
+
+-- | 'QualifiedDo' hook. The body of an @Update.do@ block desugars
+-- @Update.do { a; b }@ to @a Update.>> b@; we point that at '(<>)' so the block
+-- accumulates updates without introducing a real monad. See the module header
+-- for an example.
+(>>) :: ScopeUpdate -> ScopeUpdate -> ScopeUpdate
+(>>) = (<>)
 
 -- | Internal builder shared by the smart constructors below.
 edit :: (ScopeData -> ScopeData) -> ScopeUpdate

@@ -1,3 +1,5 @@
+{-# LANGUAGE QualifiedDo #-}
+
 module ScopeMutationTest where
 
 import Data.Aeson qualified as Aeson
@@ -138,6 +140,23 @@ spec_scopeUpdate = describe "Sentry.Scope.Update" do
     d.level `shouldBe` Just Patrol.Level.Warning
     d.tags `shouldBe` Map.singleton "env" "prod"
     d.user `shouldBe` Just testUser
+
+  it "QualifiedDo desugars to the same result as Monoid composition" do
+    scope1 <- Scope.create Scope.Current
+    scope2 <- Scope.create Scope.Current
+    Update.apply scope1 $
+      Update.setLevel Patrol.Level.Warning
+        <> Update.setTag "env" "prod"
+        <> Update.setUser testUser
+    Update.apply scope2 Update.do
+      Update.setLevel Patrol.Level.Warning
+      Update.setTag "env" "prod"
+      Update.setUser testUser
+    d1 <- Scope.readScopeRef scope1
+    d2 <- Scope.readScopeRef scope2
+    d1.level `shouldBe` d2.level
+    d1.tags `shouldBe` d2.tags
+    d1.user `shouldBe` d2.user
 
   it "the ScopeUpdate constructor and runScopeUpdate round-trip a modification" do
     let upd = Update.ScopeUpdate \s -> s{level = Just Patrol.Level.Error}
