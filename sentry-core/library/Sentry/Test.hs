@@ -46,8 +46,8 @@ import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
 import Sentry.Scope qualified as Scope
-import Sentry.Scope.Internal qualified as Internal
 import Sentry.Scope.IO qualified as ScopeIO
+import Sentry.Scope.Internal qualified as Internal
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Transport
 import Witch qualified

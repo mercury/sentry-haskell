@@ -28,7 +28,7 @@ spec_integration_setup = do
           opts = def{integrations = Vector.fromList [fromIntegration int]}
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
       recorded <- readIORef ref
-      -- resolveOptionDefaults fills environment = "production" before setup runs
+      -- Env.resolve fills environment = "production" before setup runs
       recorded `shouldBe` ["production"]
       client.options.environment `shouldBe` Just "set-by-setup"
 
@@ -43,9 +43,10 @@ spec_integration_setup = do
               }
       client <- Client.new opts{dsn = Just Test.TEST_DSN}
       recorded <- readIORef ref
-      -- resolveOptionDefaults fills "production"; ContextIntegration (builtin) runs first
-      -- but doesn't write to `ref`.  int1 sees "production", sets "set-by-setup".
-      -- int2 sees "set-by-setup", sets "observed-by-second".
+      -- \* Env.resolve fills "production".
+      -- \* ContextIntegration (builtin) runs first but doesn't write to `ref`.
+      -- \* int1 sees "production", sets "set-by-setup".
+      -- \* int2 sees "set-by-setup", sets "observed-by-second".
       recorded `shouldBe` ["production", "set-by-setup"]
       -- the last write wins in the chain
       client.options.environment `shouldBe` Just "observed-by-second"

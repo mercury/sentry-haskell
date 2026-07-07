@@ -10,8 +10,8 @@ import Patrol.Type.Level qualified as Patrol.Level
 import Sentry qualified
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Test qualified as Test
 import Sentry.Test (withGlobalScope)
+import Sentry.Test qualified as Test
 import Sentry.Transport (FlushResponse (..), SendResponse (..), ShutdownResponse (..), SomeTransport (..), Transport (..))
 import Test.Hspec
 import Witch qualified

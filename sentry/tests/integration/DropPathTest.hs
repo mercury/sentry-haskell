@@ -43,7 +43,7 @@ deliveredUnder tweak =
 spec_dropPaths :: Spec
 spec_dropPaths = describe "events dropped before the wire" do
   it "delivers nothing when the sample rate is 0" do
-    delivered <- deliveredUnder \opts -> opts{sampleRate = 0}
+    delivered <- deliveredUnder \opts -> opts{sampleRate = Just 0}
     delivered `shouldBe` 0
 
   it "delivers nothing when beforeSend rejects every event" do

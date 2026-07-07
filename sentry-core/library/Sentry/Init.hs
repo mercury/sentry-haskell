@@ -15,7 +15,7 @@
 -- @
 --
 -- __NOTE__: 'init' sets the /process default/ client.
--- 
+--
 -- For per-execution-context or concurrent clients (tests, multi-tenant), bind a
 -- client onto the isolation scope using 'Sentry.Scope.IO.withClient' instead.
 module Sentry.Init

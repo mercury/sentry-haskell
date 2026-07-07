@@ -123,6 +123,7 @@ readScopeRef :: (MonadIO m) => Scope -> m ScopeData
 readScopeRef (Scope ref) = liftIO $ readIORef ref
 
 -- * Scalar setters
+
 --
 -- These are thin, immediate wrappers over the composable constructors in
 -- "Sentry.Scope.Update"; the mutation logic lives there.

@@ -165,7 +165,7 @@ captureWith client captured =
         -- sample /after/ processing events, so that an event processor has the
         -- opportunity to drop an event even if it wasn't going to be sampled;
         -- this ensures more accurate discard counts in Sentry's dashboards.
-        sampled <- liftIO $ sample client.options.sampleRate
+        sampled <- liftIO $ sample (fromMaybe 1.0 client.options.sampleRate)
         unless sampled $ throwError ClientReport.SampleRate
         let envelope = Patrol.Envelope.fromEvent dsn finalEvent
         response <- liftIO $ Transport.send transport envelope
@@ -202,7 +202,7 @@ noteDrop :: (MonadIO m) => Client -> DiscardReason -> Patrol.DataCategory.DataCa
 noteDrop client reason category = liftIO do
   for_ client.transport \t ->
     Transport.recordDiscards t reason category 1
-  when client.options.debug $
+  when (fromMaybe False client.options.debug) $
     hPutStrLn stderr $
       "[sentry] event dropped: " <> Text.unpack (ClientReport.reasonText reason)
 

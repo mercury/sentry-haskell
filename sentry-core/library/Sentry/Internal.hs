@@ -56,8 +56,9 @@ data ClientOptions = ClientOptions
     dsn :: Maybe Patrol.Dsn,
     -- | Whether the SDK should enable debug logging.
     --
-    -- Defaults to @False@.
-    debug :: Bool,
+    -- Defaults to @False@ when resolved against the @SENTRY_DEBUG@ environment
+    -- variable.
+    debug :: Maybe Bool,
     -- | The instrumented application's release version, which must be unique
     -- across all projects in your organization.
     --
@@ -72,10 +73,33 @@ data ClientOptions = ClientOptions
     -- @SENTRY_ENVIRONMENT@ if set) by 'Sentry.Client.new' at initialisation
     -- time.
     environment :: Maybe Text,
-    -- | Error event sample rate; defaults to @1.0@.
+    -- | Error event sample rate.
     --
-    -- Values outside of @[0,1]@ will be clamped.
-    sampleRate :: Float,
+    -- Defaults to @1.0@ when resolved against the @SENTRY_SAMPLE_RATE@
+    -- environment variable.
+    --
+    -- Values sourced from the environment outside of @[0,1]@ are clamped.
+    sampleRate :: Maybe Float,
+    -- | Trace/transaction sample rate.
+    --
+    -- Defaults to @Nothing@ when resolved against the
+    -- @SENTRY_TRACES_SAMPLE_RATE@ environment variable.
+    --
+    -- @Nothing@ means tracing is disabled\/unset.
+    --
+    -- __NOTE__: Reserved for forward compatibility. It is parsed and validated,
+    -- but not yet consumed, as there is no tracing subsystem.
+    tracesSampleRate :: Maybe Float,
+    -- | Sample rate for transactions that include profiling data.
+    --
+    -- Defaults to @Nothing@; falls back to the @SENTRY_PROFILES_SAMPLE_RATE@
+    -- environment variable, resolved by 'Sentry.Client.new'.
+    --
+    -- @Nothing@ means profiling is disabled\/unset.
+    --
+    -- __NOTE__: Reserved for forward compatibility. It is parsed and validated,
+    -- but not yet consumed, as there is no profiling subsystem.
+    profilesSampleRate :: Maybe Float,
     -- | Maximum number of breadcrumbs; defaults to 100.
     maxBreadcrumbs :: Word,
     -- | Whether capturing personally identifying information (PII) is
@@ -167,10 +191,12 @@ pattern DEFAULT_CLIENT_OPTIONS :: ClientOptions
 pattern DEFAULT_CLIENT_OPTIONS <-
   ClientOptions
     { dsn = Nothing,
-      debug = False,
+      debug = Nothing,
       release = Nothing,
       environment = Nothing,
-      sampleRate = 1.0,
+      sampleRate = Nothing,
+      tracesSampleRate = Nothing,
+      profilesSampleRate = Nothing,
       maxBreadcrumbs = 100,
       sendDefaultPII = False,
       serverName = Nothing,
@@ -190,10 +216,12 @@ pattern DEFAULT_CLIENT_OPTIONS <-
     DEFAULT_CLIENT_OPTIONS =
       ClientOptions
         { dsn = Nothing,
-          debug = False,
+          debug = Nothing,
           release = Nothing,
           environment = Nothing,
-          sampleRate = 1.0,
+          sampleRate = Nothing,
+          tracesSampleRate = Nothing,
+          profilesSampleRate = Nothing,
           maxBreadcrumbs = 100,
           sendDefaultPII = False,
           serverName = Nothing,

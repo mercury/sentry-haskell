@@ -22,6 +22,7 @@ library
       Sentry.Capture
       Sentry.Client
       Sentry.Client.Options
+      Sentry.Client.Options.Env
       Sentry.ClientReport
       Sentry.Event
       Sentry.Init
@@ -95,6 +96,7 @@ test-suite unit
       ClientResolutionTest
       IntegrationSetupTest
       LifecycleTest
+      OptionsEnvTest
       ScopeDataTest
       ScopeMutationTest
       ScopeTest

@@ -13,13 +13,15 @@ module Sentry.Client
     -- * Helpers
     disableIntegration,
     realizePrebuilt,
-    resolveOptionDefaults,
   )
 where
 
 import Control.Exception.Backtrace (BacktraceMechanism (..), setBacktraceMechanismState)
+import Control.Monad (when)
+import Data.Foldable (for_)
 import Data.Function ((&))
 import Data.Kind (Type)
+import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (Proxy))
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -28,6 +30,7 @@ import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options.Env qualified as Env
 import Sentry.Integration (Integration (..), SomeIntegration (..), fromIntegration)
 import Sentry.Integration.Context (ContextIntegration (..))
 import Sentry.Integration.Stacktrace
@@ -39,7 +42,7 @@ import Sentry.Integration.Stacktrace
 import Sentry.Internal (TransportProvider (..))
 import Sentry.Internal qualified as Internal
 import Sentry.Transport (SomeTransport)
-import System.Environment (lookupEnv)
+import System.IO (hPutStrLn, stderr)
 import Type.Reflection (SomeTypeRep, someTypeRep)
 import Witch qualified
 
@@ -149,7 +152,10 @@ new initialOpts = do
   -- CostCentre, Execution (DWARF), and IPE untouched — those require
   -- specific build flags and are opt-in by the user.
   setBacktraceMechanismState HasCallStackBacktrace True
-  resolvedOpts <- resolveOptionDefaults initialOpts
+  (resolvedOpts, envWarnings) <- Env.resolve initialOpts
+  when (fromMaybe False resolvedOpts.debug) $
+    for_ envWarnings \w ->
+      hPutStrLn stderr $ "[sentry] " <> Text.unpack (Env.renderWarning w)
   let typeReps = Set.fromList [r | SomeIntegration r _ <- Vector.toList resolvedOpts.integrations]
       kept
         | resolvedOpts.defaultIntegrations =
@@ -190,25 +196,3 @@ pattern NON_RECORDING_CLIENT <- Client{transport = Nothing}
           transport = Nothing,
           integrations = Vector.empty
         }
-
--- | Resolve environment-variable and other computed defaults into
--- 'ClientOptions' once, at client construction time.
---
--- Fields that are already set to a @'Just'@ value by the caller are left
--- untouched — explicit configuration always wins.
---
--- * 'release': falls back to @SENTRY_RELEASE@ if unset.
--- * 'environment': falls back to @SENTRY_ENVIRONMENT@, then @"production"@.
-resolveOptionDefaults :: ClientOptions -> IO ClientOptions
-resolveOptionDefaults opts = do
-  release <- case opts.release of
-    Just r -> pure (Just r)
-    Nothing -> do
-      mval <- lookupEnv "SENTRY_RELEASE"
-      pure $ Text.pack <$> mval
-  environment <- case opts.environment of
-    Just e -> pure (Just e)
-    Nothing -> do
-      mval <- lookupEnv "SENTRY_ENVIRONMENT"
-      pure . Just $ maybe "production" Text.pack mval
-  pure opts{release, environment}

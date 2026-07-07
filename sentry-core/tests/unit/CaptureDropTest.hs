@@ -43,7 +43,7 @@ spec_captureDrop = describe "drop-site instrumentation" do
       -- captureMessage reads the ambient scope; the default ambient scope has
       -- eventProcessor = Just, so we force a drop via sampleRate instead and
       -- just verify the pipeline records a drop for the message category too.
-      let opts = (def @ClientOptions){sampleRate = 0.0}
+      let opts = (def @ClientOptions){sampleRate = Just 0.0}
       (result, transport) <-
         Test.withCustomClient opts \_ ->
           captureMessage Patrol.Level.Error "dropped message"
@@ -53,7 +53,7 @@ spec_captureDrop = describe "drop-site instrumentation" do
 
   describe "sample rate drop" do
     it "records SampleRate when sampleRate = 0" do
-      let opts = (def @ClientOptions){sampleRate = 0.0}
+      let opts = (def @ClientOptions){sampleRate = Just 0.0}
       (result, transport) <-
         Test.withCustomClient opts \_ ->
           captureException (userError "sampled out")
@@ -62,7 +62,7 @@ spec_captureDrop = describe "drop-site instrumentation" do
       drops `shouldBe` [(SampleRate, Error, 1)]
 
     it "does not record a drop when sampleRate = 1" do
-      let opts = (def @ClientOptions){sampleRate = 1.0}
+      let opts = (def @ClientOptions){sampleRate = Just 1.0}
       (_, transport) <-
         Test.withCustomClient opts \_ ->
           captureException (userError "passes through")
@@ -106,7 +106,7 @@ spec_captureDrop = describe "drop-site instrumentation" do
       -- sampling) against regressing to sample-first.
       let opts =
             (def @ClientOptions)
-              { sampleRate = 0.0,
+              { sampleRate = Just 0.0,
                 beforeSend = Just (\_ -> Nothing)
               }
       (result, transport) <-
@@ -120,7 +120,7 @@ spec_captureDrop = describe "drop-site instrumentation" do
       let droppingIntegration = fromIntegration DroppingIntegration
           opts =
             (def @ClientOptions)
-              { sampleRate = 0.0,
+              { sampleRate = Just 0.0,
                 integrations = Vector.singleton droppingIntegration
               }
       (result, transport) <-

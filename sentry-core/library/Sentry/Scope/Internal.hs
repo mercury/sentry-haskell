@@ -13,6 +13,7 @@ module Sentry.Scope.Internal
     modifyScopeData,
 
     -- * Process-global scope and thread-local override
+
     --
     -- $global-override
     processGlobal,
