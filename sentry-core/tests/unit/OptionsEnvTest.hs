@@ -88,7 +88,7 @@ spec_optionsEnv = describe "environment-variable resolution" do
     it "ignores a malformed DSN and warns (without throwing)" do
       let (opts, warnings) = resolvePure [("SENTRY_DSN", "not a url")] def
       opts.dsn `shouldBe` Nothing
-      warnings `shouldBe` [MalformedDsn "not a url"]
+      warnings `shouldBe` [Env.MalformedDsn "not a url"]
 
   describe "sample-rate parsing" do
     it "clamps values above 1 down to 1" do
@@ -100,16 +100,16 @@ spec_optionsEnv = describe "environment-variable resolution" do
     it "ignores unparseable values, warns, and falls back to the default" do
       let (opts, warnings) = resolvePure [("SENTRY_SAMPLE_RATE", "abc")] def
       opts.sampleRate `shouldBe` Just 1.0
-      warnings `shouldBe` [MalformedRate "SENTRY_SAMPLE_RATE" "abc"]
+      warnings `shouldBe` [Env.MalformedRate "SENTRY_SAMPLE_RATE" "abc"]
 
     it "warns for a malformed traces rate and leaves the field unset" do
       let (opts, warnings) = resolvePure [("SENTRY_TRACES_SAMPLE_RATE", "nope")] def
       opts.tracesSampleRate `shouldBe` Nothing
-      warnings `shouldBe` [MalformedRate "SENTRY_TRACES_SAMPLE_RATE" "nope"]
+      warnings `shouldBe` [Env.MalformedRate "SENTRY_TRACES_SAMPLE_RATE" "nope"]
 
   describe "debug parsing" do
     it "recognises truthy and falsy spellings case-insensitively" do
-      map parseBool ["1", "true", "YES", "On", "0", "false", "No", "OFF"]
+      map Env.parseBool ["1", "true", "YES", "On", "0", "false", "No", "OFF"]
         `shouldBe` [Just True, Just True, Just True, Just True, Just False, Just False, Just False, Just False]
 
     it "treats an empty SENTRY_DEBUG as unset (no warning)" do
@@ -120,9 +120,9 @@ spec_optionsEnv = describe "environment-variable resolution" do
     it "warns for an unrecognised SENTRY_DEBUG value and falls back to the default" do
       let (opts, warnings) = resolvePure [("SENTRY_DEBUG", "maybe")] def
       opts.debug `shouldBe` Just False
-      warnings `shouldBe` [UnrecognizedBool "maybe"]
+      warnings `shouldBe` [Env.UnrecognizedBool "maybe"]
 
   describe "parseRate helper" do
     it "parses and clamps" do
-      map parseRate ["0.0", "0.5", "1.0", "2.0", "-3", "bogus"]
+      map Env.parseRate ["0.0", "0.5", "1.0", "2.0", "-3", "bogus"]
         `shouldBe` [Just 0.0, Just 0.5, Just 1.0, Just 1.0, Just 0.0, Nothing]
