@@ -123,8 +123,15 @@ updateFromResponse rl now = \case
 
 -- | Update the global rate limit to end 1 minute after the provided time, in
 -- response to a HTTP 429 status code.
+--
+-- Takes the maximum of the existing and new deadlines so the update is
+-- monotonic: under concurrent fan-out several sends may fold 429 outcomes into
+-- the shared limiter in nondeterministic order (each sampling its own @now@),
+-- and a later-sampled-but-earlier-applied update must never shorten an
+-- already-recorded backoff.
 updateFrom429 :: RateLimiter -> UTCTime -> RateLimiter
-updateFrom429 rateLimiter now = rateLimiter{global = Just $ defaultDelay `addUTCTime` now}
+updateFrom429 rateLimiter now =
+  rateLimiter{global = Just $ maxTime rateLimiter.global (defaultDelay `addUTCTime` now)}
 
 -- | Update rate limits from a @Retry-After@ header value:
 --
@@ -304,9 +311,6 @@ data FilteredEnvelope = FilteredEnvelope
 -- Items whose categories are currently rate limited are removed and surfaced
 -- in 'dropped' (so callers can account for them); the rest are returned in
 -- 'kept'.
---
--- Items with no associated category (e.g. 'Patrol.Item.Raw',
--- 'Patrol.Item.ClientReport') are subject only to the global rate limit.
 filterEnvelope :: RateLimiter -> UTCTime -> Patrol.Envelope -> FilteredEnvelope
 filterEnvelope rl now envelope = case envelope.items of
   Patrol.Items.Raw _ ->

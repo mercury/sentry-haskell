@@ -51,6 +51,7 @@ import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
+import Sentry.Transport.Executor.Async (ExecutorOptions (ExecutorOptions))
 import Sentry.Transport.HTTP.Async qualified as AsyncHttp
 import Sentry.Transport.HTTP.Sync qualified as SyncHttp
 import Sentry.Transport.HTTP2.Async (Http2TransportOptions (..))
@@ -124,7 +125,7 @@ runH2 cfg dsn = do
       <> " payloadBytes="
       <> show cfg.payloadBytes
   start <- getCurrentTime
-  transport <- Http2.build opts Nothing cfg.queueSize dsn
+  transport <- Http2.build opts Nothing (ExecutorOptions cfg.queueSize 1) dsn
   counts <- drive transport cfg.count envelope
   _ <- Transport.flush transport 300
   _ <- Transport.shutdown transport 300
@@ -153,7 +154,7 @@ runH1 cfg manager dsn = do
       _ <- Transport.shutdown transport 300
       pure counts
     Async -> do
-      transport <- AsyncHttp.build def Nothing cfg.queueSize manager dsn
+      transport <- AsyncHttp.build def Nothing (ExecutorOptions cfg.queueSize 1) manager dsn
       counts <- drive transport cfg.count envelope
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300

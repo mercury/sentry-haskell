@@ -15,9 +15,7 @@ module Sentry.Transport.HTTP.Async
   )
 where
 
-import Data.Foldable (for_)
 import Data.Kind (Type)
-import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Client.TLS (getGlobalManager)
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
@@ -29,10 +27,8 @@ import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
-import Sentry.Transport.Delivery qualified as Delivery
-import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
+import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..), ExecutorOptions)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
-import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
 import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope, toOutcome)
@@ -46,32 +42,33 @@ data AsyncHttpTransport = AsyncHttpTransport
 -- | Create a 'TransportProvider' that will build an 'AsyncHttpTransport' when
 -- called as part of 'Client.new'
 --
--- Pass 'AsyncExecutor.defaultQueueSize' for @queueSize@ unless you have a
--- specific reason to tune it.
-new :: HttpTransportOptions -> Int -> TransportProvider
-new httpOpts queueSize = DeferredTransport \dsn clientOpts -> do
+-- Pass 'Data.Default.def' for @executorOpts@ for the serial defaults, or
+-- override the queue size\/concurrency (e.g. @def{concurrency = 8}@ to fan out
+-- sends across the connection pool).
+new :: HttpTransportOptions -> ExecutorOptions -> TransportProvider
+new httpOpts executorOpts = DeferredTransport \dsn clientOpts -> do
   manager <- maybe getGlobalManager pure httpOpts.manager
   clientReports <-
     if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  SomeTransport <$> build httpOpts clientReports queueSize manager dsn
+  SomeTransport <$> build httpOpts clientReports executorOpts manager dsn
 
 -- | Build an 'AsyncHttpTransport' directly, bypassing the 'TransportProvider'.
 --
 -- Use this when you need a transport handle directly (e.g. for testing or
 -- profiling).
 --
--- Pass 'AsyncExecutor.defaultQueueSize' for @queueSize@ unless you have a
--- specific reason to tune it.
+-- Pass 'Data.Default.def' for @executorOpts@ for the serial defaults, or
+-- override the queue size\/concurrency.
 build ::
   HttpTransportOptions ->
   Maybe ClientReports ->
-  Int ->
+  ExecutorOptions ->
   HttpClient.Manager ->
   Patrol.Dsn ->
   IO AsyncHttpTransport
-build opts clientReports queueSize manager dsn = do
+build opts clientReports executorOpts manager dsn = do
   let toEnvelope report =
         Patrol.Envelope.Envelope
           { Patrol.Envelope.headers =
@@ -81,16 +78,8 @@ build opts clientReports queueSize manager dsn = do
           }
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
       template = Request.prepare opts.compression dsn
-      sendFn envelope rateLimiter = do
-        now <- getCurrentTime
-        outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
-        -- Record send/network failures as drops (a 429 is accounted for by the
-        -- rate limiter via updateFromResponse, not as a drop).
-        for_ (Delivery.discardReason outcome) \reason ->
-          for_ (fmap (.accumulator) reportConfig) \cr ->
-            ClientReport.recordEnvelopeDrop cr reason envelope
-        pure $ RateLimiter.updateFromResponse rateLimiter now outcome
-  executor <- AsyncExecutor.new queueSize reportConfig sendFn
+      sendFn envelope = toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
+  executor <- AsyncExecutor.new executorOpts reportConfig sendFn
   pure AsyncHttpTransport{executor}
 
 instance Transport AsyncHttpTransport where

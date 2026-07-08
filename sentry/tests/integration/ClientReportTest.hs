@@ -16,6 +16,7 @@ import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
+import Sentry.Transport.Executor.Async (ExecutorOptions (ExecutorOptions))
 import Test.Hspec
 import UnliftIO.Exception (SomeException (..))
 import Witch qualified
@@ -29,7 +30,7 @@ spec_clientReport = describe "client report delivery" do
       -- Client reports enabled on the transport; beforeSend drops every event,
       -- so each capture records a 'before_send' discard but sends no event.
       clientReports <- ClientReport.new
-      transport <- AsyncHttpTransport.build def (Just clientReports) 100 kent.manager dsn
+      transport <- AsyncHttpTransport.build def (Just clientReports) (ExecutorOptions 100 1) kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,

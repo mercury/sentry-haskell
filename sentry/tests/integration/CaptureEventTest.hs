@@ -13,6 +13,7 @@ import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
+import Sentry.Transport.Executor.Async (ExecutorOptions (ExecutorOptions))
 import Sentry.Transport.HTTP.Sync qualified as SyncHttpTransport
 import Test.Hspec
 import UnliftIO.Exception (SomeException (..))
@@ -24,7 +25,7 @@ spec_captureEvent = describe "captureEvent against kent (async transport)" do
     Kent.withKent \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
+      transport <- AsyncHttpTransport.build def Nothing (ExecutorOptions 100 1) kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Just dsn,

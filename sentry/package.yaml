@@ -53,6 +53,10 @@ internal-libraries:
       - directory
       - file-embed
       - http-client
+      # no-verify TLS client manager for the HTTP/1.1 leg against the sink
+      - http-client-tls
+      - crypton-connection
+      - tls
       - network
       - typed-process
       - wai
@@ -138,6 +142,8 @@ tests:
       - tasty-hspec >= 1.2
       # settings mapping test
       - http2-tls
+      # JSON inspection of delivered envelope bodies (Sink.envelopeValues)
+      - aeson
 
 benchmarks:
   time:

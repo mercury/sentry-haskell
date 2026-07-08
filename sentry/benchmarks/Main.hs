@@ -9,9 +9,9 @@ import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Transport qualified as Transport
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async (AsyncExecutor)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
-import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Test.Tasty (TestTree, withResource)
 import Test.Tasty.Bench qualified as Bench
@@ -50,14 +50,14 @@ benchRateLimiter =
 withNoopExecutor :: Int -> (IO (AsyncExecutor, Patrol.Envelope) -> TestTree) -> TestTree
 withNoopExecutor queueSize =
   withResource
-    ((,) <$> AsyncExecutor.new queueSize Nothing noopSend <*> mkTestEnvelope)
+    ((,) <$> AsyncExecutor.new (AsyncExecutor.ExecutorOptions queueSize 1) Nothing noopSend <*> mkTestEnvelope)
     (\(executor, _) -> void $ Transport.shutdown executor 1)
 
 withTestEnvelope :: (IO Patrol.Envelope -> TestTree) -> TestTree
 withTestEnvelope = withResource mkTestEnvelope (const $ pure ())
 
-noopSend :: Patrol.Envelope -> RateLimiter -> IO RateLimiter
-noopSend (!_) (!rl) = pure rl
+noopSend :: Patrol.Envelope -> IO Delivery.Outcome
+noopSend !_ = pure (Delivery.NetworkFailure "noop")
 
 sendNTimes :: Int -> IO (AsyncExecutor, Patrol.Envelope) -> IO ()
 sendNTimes times acquire = do

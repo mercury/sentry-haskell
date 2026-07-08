@@ -224,16 +224,20 @@ drain cr = do
     grid = [(reason, category) | reason <- [minBound ..], category <- allCategories]
 
 -- | Resolve the 'DataCategory' an envelope item is accounted under, if any.
+--
+-- Client reports are accounted under 'Internal' (matching the official SDKs,
+-- e.g. sentry-python's @"internal"@ data category): a dropped or undelivered
+-- client report is itself recorded, and surfaces in the next client report.
 categoryFromItem :: Patrol.Item -> Maybe DataCategory
 categoryFromItem = \case
   Patrol.Item.Event _ -> Just Error
-  Patrol.Item.ClientReport _ -> Nothing
+  Patrol.Item.ClientReport _ -> Just Internal
   Patrol.Item.Raw -> Nothing
 
 -- | Record one drop per rateable item in a list of envelope items.
 --
--- Items whose 'categoryFromItem' is 'Nothing' are skipped, so self-reporting
--- items are never counted.
+-- Items whose 'categoryFromItem' is 'Nothing' (e.g. 'Patrol.Item.Raw') are
+-- skipped, since they cannot be charged to a client report.
 recordItemDrops :: ClientReports -> DiscardReason -> [Patrol.Item] -> IO ()
 recordItemDrops cr reason items =
   for_ items \item ->

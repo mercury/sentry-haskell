@@ -11,6 +11,7 @@ import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
+import Sentry.Transport.Executor.Async (ExecutorOptions (ExecutorOptions))
 import Test.Hspec
 import UnliftIO.Exception (SomeException (..))
 import Witch qualified
@@ -22,7 +23,7 @@ deliveredUnder tweak =
   Kent.withKent \kent -> do
     Kent.flushKent kent
     let dsn = Kent.dsnFor kent "1"
-    transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
+    transport <- AsyncHttpTransport.build def Nothing (ExecutorOptions 100 1) kent.manager dsn
     let opts =
           tweak
             (def @ClientOptions)
