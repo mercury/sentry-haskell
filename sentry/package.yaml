@@ -8,6 +8,12 @@ extra-source-files:
   - testkit/certs/localhost.crt
   - testkit/certs/localhost.key
 
+flags:
+  kent:
+    description: Test against the 'kent' mock Sentry backend server.
+    default: false
+    manual: true
+
 # common dependencies, shared between all targets
 dependencies:
   # core libraries
@@ -138,6 +144,30 @@ tests:
       - tasty-hspec >= 1.2
       # settings mapping test
       - http2-tls
+
+  kent:
+    source-dirs: tests/kent
+    main: Driver.hs
+    when:
+      - condition: "!flag(kent)"
+        buildable: false
+    ghc-options:
+      - -g
+      - -Wno-missed-specialisations
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    build-tools: ["tasty-discover:tasty-discover"]
+    dependencies:
+      # library under test
+      - sentry
+      # kent driver + event generators
+      - testkit
+      # test frameworks
+      - hspec
+      - tasty
+      - tasty-discover
+      - tasty-hspec >= 1.2
 
 benchmarks:
   time:

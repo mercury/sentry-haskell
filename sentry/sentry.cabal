@@ -18,6 +18,11 @@ extra-source-files:
     testkit/certs/localhost.crt
     testkit/certs/localhost.key
 
+flag kent
+  description: Test against the 'kent' mock Sentry backend server.
+  manual: True
+  default: False
+
 library
   exposed-modules:
       Sentry.Transport.Delivery
@@ -224,12 +229,8 @@ test-suite integration
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
-      CaptureEventTest
-      ClientReportTest
-      DropPathTest
       Http2CaptureTest
       Http2ConcurrencyTest
-      ShutdownTest
       Paths_sentry
   autogen-modules:
       Paths_sentry
@@ -277,6 +278,63 @@ test-suite integration
     , unliftio
     , witch
   default-language: GHC2024
+
+test-suite kent
+  type: exitcode-stdio-1.0
+  main-is: Driver.hs
+  other-modules:
+      CaptureEventTest
+      ClientReportTest
+      DropPathTest
+      ShutdownTest
+      Paths_sentry
+  autogen-modules:
+      Paths_sentry
+  hs-source-dirs:
+      tests/kent
+  default-extensions:
+      BlockArguments
+      DeriveAnyClass
+      DerivingStrategies
+      ImportQualifiedPost
+      MultiWayIf
+      OverloadedRecordDot
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StrictData
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      tasty-discover:tasty-discover
+  build-depends:
+      aeson
+    , async
+    , atomic-primops
+    , attoparsec
+    , base
+    , bytestring
+    , containers
+    , data-default
+    , hs-opentelemetry-instrumentation-http-client ==1.0.*
+    , hspec
+    , http-types
+    , patrol ==1.2.*
+    , sentry
+    , sentry-core
+    , stm
+    , tasty
+    , tasty-discover
+    , tasty-hspec >=1.2
+    , testkit
+    , text
+    , time
+    , transformers
+    , unagi-chan
+    , unliftio
+    , witch
+  default-language: GHC2024
+  if !flag(kent)
+    buildable: False
 
 test-suite unit
   type: exitcode-stdio-1.0
