@@ -1,7 +1,7 @@
 module ClientResolutionTest where
 
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry qualified
+import Sentry.Core qualified as Sentry
 import Sentry.Test (withGlobalScope)
 import Sentry.Test qualified as Test
 import Test.Hspec

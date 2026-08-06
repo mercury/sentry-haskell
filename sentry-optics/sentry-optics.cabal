@@ -6,7 +6,7 @@ cabal-version: 3.0
 
 name:           sentry-optics
 version:        0.0.0
-synopsis:       Optics-based authoring for Sentry scope updates.
+synopsis:       Optics-based authoring for Sentry scope updates, with the default HTTP transport.
 author:         jkachmar
 maintainer:     stability@mercury.com
 copyright:      2025 jkachmar
@@ -19,9 +19,7 @@ tested-with:
 library
   exposed-modules:
       Sentry.Optics
-      Sentry.Optics.Internal
       Sentry.Optics.Prelude
-      Sentry.Optics.Values
   other-modules:
       Paths_sentry_optics
   autogen-modules:
@@ -39,60 +37,18 @@ library
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -Wno-orphans
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
   build-depends:
       base
-    , mtl
-    , optics ==0.4.*
-    , optics-core ==0.4.*
-    , optics-extra ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-    , patrol-optics
-    , sentry-core
-  default-language: GHC2024
-
-executable checkout
-  main-is: Main.hs
-  other-modules:
-      Paths_sentry_optics
-  autogen-modules:
-      Paths_sentry_optics
-  hs-source-dirs:
-      examples/checkout
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-      base
-    , data-default
-    , mtl
-    , optics ==0.4.*
-    , optics-core ==0.4.*
-    , optics-extra ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-    , patrol-optics
-    , pretty-simple
-    , sentry-core
-    , sentry-optics
-    , text
+    , sentry
+    , sentry-core-optics
   default-language: GHC2024
 
 test-suite unit
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
-      OpticsTest
+      DefaultTransportTest
       Paths_sentry_optics
   autogen-modules:
       Paths_sentry_optics
@@ -109,20 +65,16 @@ test-suite unit
       PatternSynonyms
       ScopedTypeVariables
       StrictData
-  ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
       base
+    , data-default
     , hspec
-    , mtl
-    , optics ==0.4.*
-    , optics-core ==0.4.*
-    , optics-extra ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-    , patrol-optics
+    , sentry
     , sentry-core
+    , sentry-core-optics
     , sentry-optics
     , tasty
     , tasty-discover

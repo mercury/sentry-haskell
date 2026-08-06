@@ -4,10 +4,20 @@
 -- enriching events and binding a client, and the 'init' \/ 'close' lifecycle
 -- functions for initializing the SDK.
 --
+-- This is the transport-agnostic surface: 'init' \/ 'withSentry' leave
+-- 'Sentry.Client.Options.ClientOptions.transport' as 'Nothing' unless the
+-- caller sets it explicitly, so a 'Sentry.Client.Client' built here is
+-- non-recording by default. It's intended for integration authors,
+-- custom-transport authors, and tests that don't want an HTTP dependency.
+--
+-- Application authors should generally prefer the @sentry@ package's
+-- "Sentry" module instead, which re-exports this entire surface and adds a
+-- default HTTP transport.
+--
 -- Plumbing modules ("Sentry.Transport", "Sentry.Integration", and the
 -- "Sentry.Scope" operations) are intentionally not re-exported here, and are
 -- intended to be imported with qualification.
-module Sentry
+module Sentry.Core
   ( -- * Lifecycle
     init,
     close,

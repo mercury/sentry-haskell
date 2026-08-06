@@ -4,13 +4,13 @@ module OpticsTest where
 
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Optics qualified as Sentry
-import Sentry.Optics.Prelude
+import Sentry.Core.Optics qualified as Sentry
+import Sentry.Core.Optics.Prelude
 import Sentry.Scope qualified as Scope
 import Test.Hspec
 
 spec_editScope :: Spec
-spec_editScope = describe "Sentry.Optics (qualified) + Sentry.Optics.Prelude (unqualified)" do
+spec_editScope = describe "Sentry.Core.Optics (qualified) + Sentry.Core.Optics.Prelude (unqualified)" do
   it "edits a live scope: qualified verbs/values, unqualified operators/labels/values" do
     scope <- Scope.create Sentry.Current
     Sentry.editScope scope do

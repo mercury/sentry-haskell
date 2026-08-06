@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedLabels #-}
 
--- | A small, runnable tour of the optional optics API (@sentry-optics@).
+-- | A small, runnable tour of the optional, transport-agnostic optics API
+-- (@sentry-core-optics@).
 --
 -- It instruments a trivial "checkout" workflow end to end:
 --
@@ -12,16 +13,16 @@
 -- It uses the in-memory 'Sentry.Test' transport to collect what the SDK would
 -- send, then pretty-prints the captured events on the way out:
 --
--- > cabal run sentry-optics:checkout
+-- > cabal run sentry-core-optics:checkout
 module Main (main) where
 
 import Control.Exception (Exception, throwIO, try)
 import Data.Default (def)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Sentry (CapturedEvent (..), ClientOptions (..))
-import Sentry.Optics qualified as Sentry
-import Sentry.Optics.Prelude
+import Sentry.Core (CapturedEvent (..), ClientOptions (..))
+import Sentry.Core.Optics qualified as Sentry
+import Sentry.Core.Optics.Prelude
 import Sentry.Test qualified as Test
 import Text.Pretty.Simple (pPrint)
 

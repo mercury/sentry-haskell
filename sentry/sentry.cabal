@@ -25,6 +25,7 @@ flag kent
 
 library
   exposed-modules:
+      Sentry
       Sentry.Transport.Delivery
       Sentry.Transport.Executor.Async
       Sentry.Transport.Executor.RateLimiter
@@ -60,6 +61,7 @@ library
     , bytestring
     , containers
     , data-default
+    , exceptions
     , hs-opentelemetry-instrumentation-http-client ==1.0.*
     , http-client-tls
     , http-semantics

@@ -3,40 +3,15 @@
 name:               sentry-optics
 version:            0.0.0
 build-type:         Simple
-synopsis:           Optics-based authoring for Sentry scope updates.
-
-# The 'ScopeData' 'LabelOptic' instances defined here are orphans (the type
-# lives in sentry-core, the class in optics-core). This is the deliberate cost
-# of keeping sentry-core optics-free; sentry-optics is their sole definer, so
-# there is no coherence risk.
-ghc-options:
-  - -Wno-orphans
+synopsis:           Optics-based authoring for Sentry scope updates, with the default HTTP transport.
 
 dependencies:
   - base
-  - mtl
-  - optics ^>= 0.4
-  - optics-core ^>= 0.4
-  - optics-extra ^>= 0.4
-  - optics-th ^>= 0.4
-  - patrol ^>= 1.2
-  - patrol-optics
-  - sentry-core
+  - sentry
+  - sentry-core-optics
 
 library:
   source-dirs: library
-
-executables:
-  checkout:
-    source-dirs: examples/checkout
-    main: Main.hs
-    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
-    dependencies:
-      - data-default
-      - pretty-simple
-      - sentry-core
-      - sentry-optics
-      - text
 
 tests:
   unit:
@@ -45,7 +20,9 @@ tests:
     ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
     build-tools: ["tasty-discover:tasty-discover"]
     dependencies:
+      - data-default
       - hspec
+      - sentry-core
       - sentry-optics
       - tasty
       - tasty-discover

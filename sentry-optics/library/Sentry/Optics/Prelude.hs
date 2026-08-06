@@ -1,33 +1,6 @@
--- | A batteries-included optics surface for authoring scope updates. Import it
--- __unqualified, in place of__ @import Optics@:
---
--- @
--- import Sentry.Optics qualified as Sentry
--- import Sentry.Optics.Prelude
--- @
---
--- It re-exports the full @optics@ vocabulary and the @optics@ state operators
--- (@?=@ \/ @.=@ \/ @%=@) that drive @Sentry.editScope@ blocks, plus @('&~')@ for
--- running the same do-notation over a plain value. The
--- 'Sentry.Scope.Internal.ScopeData' and @patrol@ field\/constructor labels, plus
--- the enum /value/ labels (@#error@, @#navigation@; see "Sentry.Optics.Values"),
--- come into scope with it.
---
--- __Do not import this alongside @import Optics@__ — it is a replacement, and
--- importing both unqualified would make the shared optics names ambiguous.
-module Sentry.Optics.Prelude
-  ( module Optics,
-    (?=),
-    (.=),
-    (%=),
-    (&~),
-  )
-where
+-- | Thin re-export of "Sentry.Core.Optics.Prelude", for import-pair parity
+-- with "Sentry.Optics" in this package. Import unqualified, in place of
+-- @import Optics@ — see "Sentry.Optics".
+module Sentry.Optics.Prelude (module Sentry.Core.Optics.Prelude) where
 
-import Optics
-import Optics.State.Operators ((%=), (.=), (?=))
-import Sentry.Optics.Internal ((&~))
-
--- 'Sentry.Optics.Internal' also brings the orphan 'ScopeData' field labels into
--- scope; 'Sentry.Optics.Values' brings the enum value labels.
-import Sentry.Optics.Values ()
+import Sentry.Core.Optics.Prelude

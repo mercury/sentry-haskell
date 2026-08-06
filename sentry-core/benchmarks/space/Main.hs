@@ -39,7 +39,7 @@ import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry qualified
+import Sentry.Core qualified as Sentry
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Scope (Scope)
 import Sentry.Scope qualified as Scope

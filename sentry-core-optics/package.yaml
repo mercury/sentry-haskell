@@ -1,0 +1,52 @@
+<<: !include ../hpack-defaults.yaml
+
+name:               sentry-core-optics
+version:            0.0.0
+build-type:         Simple
+synopsis:           Optics-based authoring for Sentry scope updates (transport-agnostic).
+
+# The 'ScopeData' 'LabelOptic' instances defined here are orphans (the type
+# lives in sentry-core, the class in optics-core). This is the deliberate cost
+# of keeping sentry-core optics-free; sentry-core-optics is their sole
+# definer, so there is no coherence risk.
+ghc-options:
+  - -Wno-orphans
+
+dependencies:
+  - base
+  - mtl
+  - optics ^>= 0.4
+  - optics-core ^>= 0.4
+  - optics-extra ^>= 0.4
+  - optics-th ^>= 0.4
+  - patrol ^>= 1.2
+  - patrol-optics
+  - sentry-core
+
+library:
+  source-dirs: library
+
+executables:
+  checkout:
+    source-dirs: examples/checkout
+    main: Main.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    dependencies:
+      - data-default
+      - pretty-simple
+      - sentry-core
+      - sentry-core-optics
+      - text
+
+tests:
+  unit:
+    source-dirs: tests/unit
+    main: Driver.hs
+    ghc-options: -g -threaded -rtsopts -with-rtsopts=-N
+    build-tools: ["tasty-discover:tasty-discover"]
+    dependencies:
+      - hspec
+      - sentry-core-optics
+      - tasty
+      - tasty-discover
+      - tasty-hspec >= 1.2

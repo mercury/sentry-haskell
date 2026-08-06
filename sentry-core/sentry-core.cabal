@@ -17,13 +17,13 @@ tested-with:
 
 library
   exposed-modules:
-      Sentry
       Sentry.BreadcrumbType
       Sentry.Capture
       Sentry.Client
       Sentry.Client.Options
       Sentry.Client.Options.Env
       Sentry.ClientReport
+      Sentry.Core
       Sentry.Event
       Sentry.Init
       Sentry.Integration

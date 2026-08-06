@@ -22,7 +22,7 @@
 -- @Optic@), and a shared label like @#error@ resolves to whichever enum the
 -- optic expects. Orphans (the @IsLabel@ class is from @base@, the enums from
 -- @patrol@); importing this module brings them into scope.
-module Sentry.Optics.Values () where
+module Sentry.Core.Optics.Values () where
 
 import GHC.OverloadedLabels (IsLabel (..))
 import Patrol.Type.BreadcrumbType qualified as BreadcrumbType

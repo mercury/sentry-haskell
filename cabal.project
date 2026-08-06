@@ -2,6 +2,7 @@ packages:
     sentry
   , sentry-core
   , patrol-optics
+  , sentry-core-optics
   , sentry-optics
 
 tests: True

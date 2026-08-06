@@ -20,6 +20,7 @@ enriched with whatever contextual metadata the surrounding scope has accumulated
 - [Installation](#installation)
 - [Usage](#usage)
   - [Import Conventions](#import-conventions)
+  - [Environment Variables](#environment-variables)
   - [Initializing the SDK](#initializing-the-sdk)
   - [Capturing Messages and Exceptions](#capturing-messages-and-exceptions)
   - [Scopes](#scopes)
@@ -90,12 +91,18 @@ source-repository-package
 
 </details>
 
-The optics-based API (see [Optics](#optics-optional)) is **optional** and lives
-in its own `sentry-optics` package, built on `patrol-optics`; `sentry` and
-`sentry-core` carry no `optics` dependency. To use it, add these stanzas as well
-(`optics` itself resolves from Hackage):
+The optics-based API (see [Optics](#optics-optional)) is optional and depends
+on orphan instances for `patrol` types defined in the `patrol-optics` package.
 
-<details> <summary>cabal.project fragment (optics, optional)</summary>
+Neither `sentry` nor `sentry-core` carries an `optics` dependency on its own:
+
+- `sentry-optics` acts as an opinionated drop-in replacement for`sentry`
+- `sentry-core-optics` provides a transport-agnostic base, intended as a
+  drop-in replacement for `sentry-core`
+
+`sentry-optics` depends on `sentry-core-optics`:
+
+<details> <summary>cabal.project fragment (sentry-optics)</summary>
 
 ```
 source-repository-package
@@ -103,6 +110,30 @@ source-repository-package
   location: https://github.com/MercuryTechnologies/sentry-haskell
   tag: main
   subdir: sentry-optics
+
+source-repository-package
+  type: git
+  location: https://github.com/MercuryTechnologies/sentry-haskell
+  tag: main
+  subdir: sentry-core-optics
+
+source-repository-package
+  type: git
+  location: https://github.com/MercuryTechnologies/sentry-haskell
+  tag: main
+  subdir: patrol-optics
+```
+
+</details>
+
+<details> <summary>cabal.project fragment (sentry-core-optics only)</summary>
+
+```
+source-repository-package
+  type: git
+  location: https://github.com/MercuryTechnologies/sentry-haskell
+  tag: main
+  subdir: sentry-core-optics
 
 source-repository-package
   type: git
@@ -135,17 +166,61 @@ sum types under the `Sentry` namespace, so their constructors can be named witho
 depending on `patrol` directly. The optional optics API swaps this set of
 imports for its own — see [Optics](#optics-optional).
 
+### Environment Variables
+
+`Sentry.Client.new` (which both `Sentry.Core.init`/`withSentry` and the
+`sentry` package's `Sentry.init`/`withSentry` build on) resolves a standard
+set of environment variables to fill in whatever `ClientOptions` fields the
+caller left unset. **Code configuration always wins**: if you set a field
+explicitly, its environment variable is ignored entirely.
+
+| Variable                       | `ClientOptions` field  | Terminal default if unset by both code and env     |
+| ------------------------------ | ---------------------- | -------------------------------------------------- |
+| `SENTRY_DSN`                   | `dsn`                  | `Nothing` (non-recording client)                   |
+| `SENTRY_RELEASE`               | `release`              | `Nothing`                                          |
+| `SENTRY_ENVIRONMENT`           | `environment`          | `"production"`                                     |
+| `SENTRY_DEBUG`                 | `debug`                | `False`                                            |
+| `SENTRY_SAMPLE_RATE`           | `sampleRate`           | `1.0`                                              |
+| `SENTRY_TRACES_SAMPLE_RATE`    | `tracesSampleRate`     | `Nothing`                                          |
+| `SENTRY_PROFILES_SAMPLE_RATE`  | `profilesSampleRate`   | `Nothing`                                          |
+
+Booleans (`SENTRY_DEBUG`) accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`,
+case-insensitively; anything else is treated as unset.
+
+Sample rates parse as floats and are clamped to `[0, 1]`.
+
+A variable that's set but fails to parse is **ignored** and will only log a
+message if the SDK initialized in debug mode.
+
 ### Initializing the SDK
 
-`withSentry` brackets the SDK's lifecycle: it builds a client from your options,
-binds it to the global scope, runs your application, and then flushes and shuts
-the transport down on the way out (bounded by `shutdownTimeout`).
+`withSentry` brackets the SDK's lifecycle:
+
+* it builds a client from your options
+* binds it to the global scope
+* runs your application
+* then flushes and shuts the transport down on exit
+
+```haskell
+import Data.Default (def)
+import Sentry qualified as Sentry
+
+main :: IO ()
+main =
+  Sentry.withSentry def \_client ->
+    runApplication
+```
+
+This reads `SENTRY_DSN` (and other `SENTRY_*` environment variables), and uses
+the HTTP/1.1 transport by default.
+
+To configure from code instead, or to override the transport:
 
 ```haskell
 import Data.Default (def)
 import Patrol.Type.Dsn qualified as Dsn
 import Sentry (ClientOptions (..))
-import Sentry qualified
+import Sentry qualified as Sentry
 import Sentry.Transport.HTTP2.Async qualified as Http2
 
 main :: IO ()
@@ -154,8 +229,8 @@ main = do
   let clientOptions =
         def
           { dsn = Just dsn,
-            transport = Just (Http2.new def 1000),
-            environment = Just "production"
+            environment = Just "production",
+            transport = Just (Http2.new def 1000) -- overrides the default HTTP/1.1 transport
           }
   Sentry.withSentry clientOptions \_client ->
     runApplication
@@ -245,8 +320,7 @@ The number of breadcrumbs retained per scope is capped by
 
 For composable scope and record manipulation, the optional `sentry-optics`
 package provides an [`optics`](https://github.com/well-typed/optics)-based layer
-on top of `patrol-optics`. It's entirely opt-in; `sentry` and `sentry-core`
-carry no `optics` dependency.
+on top of `patrol-optics`.
 
 It is used through two imports, one qualified and one not, with the
 `OverloadedLabels` extension enabled:
@@ -258,10 +332,15 @@ import Sentry.Optics qualified as Sentry  -- the full Sentry surface + editScope
 import Sentry.Optics.Prelude              -- import unqualified, *in place of* `import Optics`
 ```
 
-`Sentry.Optics` is a drop-in for `Sentry` (imported qualified) that additionally
-exports `editScope`, the `apply` / `runScopeUpdate` / `ScopeUpdate` trio, and
-`empty`-prefixed record values (`emptyUser`, `emptyBreadcrumb`, `emptyRequest`,
-`emptyEvent`).
+> [!NOTE]
+> Instrumentation/integration authors who want the optics API without the HTTP
+> transport dependency should depend on `sentry-core-optics` and import
+> `Sentry.Core.Optics`/`Sentry.Core.Optics.Prelude` instead.
+
+`Sentry.Optics` is a drop-in for `Sentry` that additionally exports `editScope`,
+`apply` / `runScopeUpdate` / `ScopeUpdate`, and `empty`-prefixed record values
+(e.g. `emptyUser`, `emptyBreadcrumb`, `emptyRequest`, `emptyEvent`) that can
+be used as builders for record construction.
 
 `Sentry.Optics.Prelude` re-exports the `optics` vocabulary, the state operators
 (`?=` / `.=` / `%=`), `&~` for applying those operators to a plain value, as
@@ -325,7 +404,13 @@ rather than blocking the caller.
 >
 > This behavior is not configurable.
 
-Pick one by setting `ClientOptions.transport` and providing a queue size:
+`Sentry.withSentry`/`Sentry.init` (from the `sentry` package) already default
+`ClientOptions.transport` to the HTTP/1.1 async transport with a queue size of
+`Sentry.Transport.Executor.Async.defaultQueueSize` when left unset (see
+[Initializing the SDK](#initializing-the-sdk)).
+
+Set `transport` explicitly to override it, e.g. to switch to HTTP/2 or tune the
+queue size:
 
 ```haskell
 import Sentry.Transport.HTTP2.Async qualified as Http2
@@ -426,11 +511,13 @@ Each has a `_`-suffixed variant that discards the returned `Maybe EventId`.
 
 The optional optics layer (see [Optics](#optics-optional)) is split across:
 
-| Module                  | Package         | Provides                                                                         |
-| ----------------------- | --------------- | -------------------------------------------------------------------------------- |
-| `Sentry.Optics`         | `sentry-optics` | Drop-in for `Sentry` (qualified) + `editScope` / `apply` / `runScopeUpdate` + `empty*` values |
-| `Sentry.Optics.Prelude` | `sentry-optics` | Unqualified batteries: the `optics` vocabulary, `?=` / `.=` / `%=`, field & value labels |
-| `Patrol.Optics`         | `patrol-optics` | Orphan `#field` lenses and `#_Constructor` prisms for the `patrol` protocol types |
+| Module                        | Package                | Provides                                                                                             |
+| ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `Sentry.Optics`               | `sentry-optics`        | Drop-in for `Sentry` + `editScope` / `apply` / `runScopeUpdate` + `empty*`                           |
+| `Sentry.Optics.Prelude`       | `sentry-optics`        | Unqualified batteries, same as below                                                                 |
+| `Sentry.Core.Optics`          | `sentry-core-optics`   | Drop-in for `Sentry.Core` (transport-agnostic) + `editScope` / `apply` / `runScopeUpdate` + `empty*` |
+| `Sentry.Core.Optics.Prelude`  | `sentry-core-optics`   | Unqualified batteries: the `optics` vocabulary, `?=` / `.=` / `%=`, field & value labels             |
+| `Patrol.Optics`               | `patrol-optics`        | Orphan `#field` lenses and `#_Constructor` prisms for the `patrol` protocol types                    |
 
 Without optics, `Sentry.Level` and `Sentry.BreadcrumbType` (in `sentry-core`)
 re-export the `patrol` types for qualified import.
@@ -504,7 +591,8 @@ inspired much of this project's architecture.
 the thread-local context machinery the scope system is built on.
 
 [`optics`](https://github.com/well-typed/optics), which powers the optional
-optics-based authoring API in `sentry-optics` and `patrol-optics`.
+optics-based authoring API in `sentry-optics`, `sentry-core-optics`, and
+`patrol-optics`.
 
 [`sentry-rust`]: https://github.com/getsentry/sentry-rust
 [`patrol`]: https://github.com/tfausak/patrol

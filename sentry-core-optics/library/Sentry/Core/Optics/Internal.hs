@@ -4,9 +4,9 @@
 -- | This module provides orphan field labels for 'ScopeData', the 'edits'
 -- combinator, the 'editScope' verb, and the @('&~')@ value-builder.
 --
--- /Not a public module._ Import "Sentry.Optics" (qualified) or
--- "Sentry.Optics.Prelude" (unqualified) instead.
-module Sentry.Optics.Internal
+-- /Not a public module._ Import "Sentry.Core.Optics" (qualified) or
+-- "Sentry.Core.Optics.Prelude" (unqualified) instead.
+module Sentry.Core.Optics.Internal
   ( editScope,
     edits,
     (&~),

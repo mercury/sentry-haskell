@@ -1,25 +1,18 @@
--- | The optics-flavored Sentry entry point, intended to be imported qualified
--- __in place of__ "Sentry":
+-- | The "batteries-included" optics-based entry point: re-exports "Sentry"
+-- (the @sentry@ package's default-transport 'init' \/ 'withSentry', plus
+-- everything from "Sentry.Core") and adds the optics conveniences from
+-- "Sentry.Core.Optics" — 'editScope', the 'apply' \/ 'runScopeUpdate' \/
+-- 'ScopeUpdate' trio, and the @empty@-prefixed record values.
 --
 -- @
 -- import Sentry.Optics qualified as Sentry
 -- import Sentry.Optics.Prelude
---
--- f = Sentry.withIsolationScope \\scope ->
---       Sentry.editScope scope do
---         #level ?= #warning
---         #tags % at \"env\" ?= \"prod\"
---         #user ?= (Sentry.emptyUser & #email .~ \"a\@b.com\")
 -- @
 --
--- It re-exports the entire "Sentry" surface and adds the optics conveniences:
--- 
--- * 'editScope' for editing scopes with optics
--- * 'apply' \/ 'runScopeUpdate' \/ 'ScopeUpdate' for working with 'ScopeUpdate'
---   values directly
--- * @empty@-prefixed record values for building entries with labels
+-- Depend on "Sentry.Core.Optics" (from @sentry-core-optics@) directly instead
+-- if you don't want the HTTP transport dependency.
 module Sentry.Optics
-  ( -- * The Sentry SDK surface
+  ( -- * The Sentry SDK surface (with default transport)
     module Sentry,
 
     -- * Authoring scope updates
@@ -36,27 +29,14 @@ module Sentry.Optics
   )
 where
 
-import Patrol.Type.Breadcrumb qualified as Breadcrumb
-import Patrol.Type.Event qualified as Event
-import Patrol.Type.Request qualified as Request
-import Patrol.Type.User qualified as User
 import Sentry
-import Sentry.Optics.Internal (editScope)
-import Sentry.Scope.Update (ScopeUpdate, apply, runScopeUpdate)
-
--- | An empty 'Patrol.Type.User.User' to build from with labels:
--- @emptyUser & #email .~ \"a\@b.com\"@.
-emptyUser :: User.User
-emptyUser = User.empty
-
--- | An empty 'Patrol.Type.Breadcrumb.Breadcrumb'.
-emptyBreadcrumb :: Breadcrumb.Breadcrumb
-emptyBreadcrumb = Breadcrumb.empty
-
--- | An empty 'Patrol.Type.Request.Request'.
-emptyRequest :: Request.Request
-emptyRequest = Request.empty
-
--- | An empty 'Patrol.Type.Event.Event'.
-emptyEvent :: Event.Event
-emptyEvent = Event.empty
+import Sentry.Core.Optics
+  ( ScopeUpdate,
+    apply,
+    editScope,
+    emptyBreadcrumb,
+    emptyEvent,
+    emptyRequest,
+    emptyUser,
+    runScopeUpdate,
+  )

@@ -7,7 +7,7 @@ import Data.IORef qualified as IORef
 import Data.Kind (Type)
 import Data.Maybe (isJust)
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry qualified
+import Sentry.Core qualified as Sentry
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Test (withGlobalScope)

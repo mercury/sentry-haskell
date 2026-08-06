@@ -41,6 +41,7 @@ dependencies:
 library:
   source-dirs: library
   dependencies:
+    - exceptions
     - http-client-tls
     - http-semantics
     - http2
