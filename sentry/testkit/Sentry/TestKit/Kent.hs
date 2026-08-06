@@ -130,8 +130,8 @@ instance Aeson.FromJSON EventList where
 
 -- | Fetch a single stored event by its kent event id.
 --
--- Returns the full top-level object: @{event_id, project_id, payload}@, where
--- @payload@ carries the envelope item's @header@, @body@, and @envelope_header@.
+-- The response includes the full top-level object: @{event_id, project_id, payload}@,
+-- where @payload@ carries the envelope item's @header@, @body@, and @envelope_header@.
 getEvent :: KentHandle -> Text -> IO Aeson.Value
 getEvent handle eid = do
   req <- HttpClient.parseRequest (eventUrl handle eid)
@@ -142,8 +142,7 @@ getEvent handle eid = do
 
 -- | The kent event id of every stored event, in the order kent returns them.
 --
--- Note these are kent's own ids, /not/ the SDK's @event_id@ (which lives in the
--- delivered payload body); use them only to address 'getEvent'.
+-- These are kent's internal ids; use them only to address 'getEvent'.
 eventIds :: KentHandle -> IO [Text]
 eventIds handle = do
   events <- listEvents handle

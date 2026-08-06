@@ -35,8 +35,8 @@ import Sentry.Scope qualified as Scope
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Prelude hiding (init)
 
--- | Build a 'Client' from 'ClientOptions' (running all the lifecycle hooks
--- first) and bind it onto the process-wide 'Sentry.Scope.global' scope.
+-- | Build a 'Client' from 'ClientOptions', running all the lifecycle hooks first,
+-- then bind it onto the process-wide 'Sentry.Scope.global' scope.
 --
 -- __NOTE__: This function should be called no more than once throughout the
 -- application's lifecycle; for concurrent or scoped clients, use one of the
@@ -48,9 +48,9 @@ init opts = do
   Scope.bindClient (Just client) g
   pure client
 
--- | Flush and shut down the 'Client's transport (bounded by
--- 'Sentry.Client.Options.ClientOptions.shutdownTimeout'), then unbind the
--- client from the 'Sentry.Scope.global' scope.
+-- | Flush and shut down the 'Client's transport within
+-- 'Sentry.Client.Options.ClientOptions.shutdownTimeout', then unbind the client
+-- from the 'Sentry.Scope.global' scope.
 close :: Client -> IO ()
 close client = do
   for_ client.transport \(SomeTransport t) -> do

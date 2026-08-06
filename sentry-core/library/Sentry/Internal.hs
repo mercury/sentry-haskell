@@ -297,9 +297,9 @@ class (Typeable t) => Integration t where
   -- The main purpose behind the 'Integration' abstraction is to process
   -- 'Patrol.Type.Event.Event's flowing through it.
   --
-  -- The accompanying 'CapturedEvent' carries metadata about the event \-\-
-  -- most notably the originating 'Control.Exception.SomeException' when one
-  -- is available \-\- so integrations can downcast it to a library-specific
+  -- The accompanying 'CapturedEvent' carries metadata about the event, most
+  -- notably the originating 'Control.Exception.SomeException' when one is
+  -- available, so integrations can downcast it to a library-specific
   -- type (e.g. @HttpException@, @SqlException@) and enrich the event
   -- accordingly.
   --

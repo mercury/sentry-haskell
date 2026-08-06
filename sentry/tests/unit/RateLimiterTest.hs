@@ -181,7 +181,7 @@ mkEnvelope items =
 eventItem :: Patrol.Item
 eventItem = Patrol.Item.Event errorEvent
 
--- | A client-report item, which has no rate-limit category (global limit only).
+-- | A client-report item with no rate-limit category, governed by the global limit only.
 reportItem :: Patrol.Item
 reportItem =
   Patrol.Item.ClientReport

@@ -12,14 +12,15 @@
 -- ctx  ^? #_Device                 -- sum constructor (a prism)
 -- @
 --
--- Field-name collisions across @patrol@ records (@name@, @type_@, @version@,
--- @data_@, …) make plain per-field lenses unusable; the type-directed
--- @#label@ surface resolves each by the structure's type.
+-- Field-name collisions across @patrol@ records (e.g. @name@, @type_@,
+-- @version@, @data_@) make plain per-field lenses unusable.
 --
--- The instances are orphans by necessity — the types are defined in @patrol@
--- and the 'Optics.Label.LabelOptic' class in @optics-core@ — which is also why
--- they are isolated in this dedicated package. This module exports no names of
--- its own; importing it brings the instances into scope.
+-- The type-directed @#label@ API resolves each field by the structure's type.
+--
+-- The instances are orphans by necessity, as the types are defined in @patrol@.
+--
+-- This module exports no names of its own; importing it brings the instances
+-- into scope.
 module Patrol.Optics () where
 
 import Optics.TH (makeFieldLabelsNoPrefix, makePrismLabels)

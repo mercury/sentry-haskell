@@ -240,8 +240,7 @@ unlessShutdown ref a ma =
     False -> ma
 {-# INLINE unlessShutdown #-}
 
--- | Helper to convert 'Data.Time.Clock.NominalDiffTime' (whose integer form
--- represents whole seconds, but which has picosecond precision) to an integer
--- representing whole microseconds.
+-- | Convert a 'Data.Time.Clock.NominalDiffTime' duration to an integer
+-- number of microseconds.
 toMicroseconds :: NominalDiffTime -> Int
 toMicroseconds dt = floor $ dt * 1_000_000

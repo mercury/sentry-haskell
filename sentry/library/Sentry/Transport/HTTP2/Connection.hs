@@ -137,9 +137,9 @@ data Http2Settings = Http2Settings
     --
     -- Default: @Just 100@.
     --
-    -- The @http2-tls@ library default is 10\/s, which is low enough to trigger
-    -- against some aggressive load balancers or TLS-terminating proxies.
-    --
+    -- Raise this limit if you experience connection resets from peers that send
+    -- frequent PING frames.
+    -- 
     -- Set to @Just maxBound@ to disable this protection entirely when
     -- connecting to a fully trusted peer.
     pingRateLimit :: Maybe Int,
@@ -161,8 +161,7 @@ data Http2Settings = Http2Settings
     -- | HTTP\/2 connection flow-control window size in bytes.
     --
     -- Default: @Nothing@ (keep @http2-tls@ default, currently 16 MiB).
-    -- Only relevant under concurrent stream use; the current transport sends
-    -- one stream at a time so the default is safe.
+    -- Relevant when multiple HTTP\/2 streams are open concurrently.
     connectionWindowSize :: Maybe Int,
     -- | HTTP\/2 per-stream flow-control window size in bytes
     -- (@SETTINGS_INITIAL_WINDOW_SIZE@).

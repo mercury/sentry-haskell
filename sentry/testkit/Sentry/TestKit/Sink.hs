@@ -5,8 +5,8 @@
 -- The server speaks TLS and advertises ALPN @h2@ and @http\/1.1@, so a single
 -- sink serves __both__ transports: the HTTP\/2 client negotiates @h2@ and the
 -- HTTP\/1.1 client negotiates @http\/1.1@ against the same port.  This is the
--- one sink the test suite and the profiling harness share — there is no
--- separate plaintext sink, which matches production (Sentry is always TLS).
+-- one sink the test suite and the profiling harness share. Sentry is always TLS
+-- in production, so there is no separate plaintext sink.
 --
 -- Two flavours are provided:
 --
@@ -93,11 +93,11 @@ data SinkResponse = SinkResponse
     responseHeaders :: Http.ResponseHeaders
   }
 
--- | 200 OK with no extra headers — the default response.
+-- | 200 OK with no extra headers. This is the default response.
 ok :: SinkResponse
 ok = SinkResponse{status = Http.status200, responseHeaders = []}
 
--- | @f i req@ maps request index @i@ (0-based) and the recorded request to the
+-- | @f i req@ maps the index, @i@, and the recorded request to the
 -- response the sink should return.
 --
 -- Swap the responder mid-test with 'setResponder' to inject error codes or
@@ -112,10 +112,12 @@ data SinkHandle = SinkHandle
     -- | @(request-count, requests-in-reverse-arrival-order)@
     recordRef :: IORef (Int, [RecordedRequest]),
     responderRef :: IORef Responder,
-    -- | Count of TCP connections accepted by the server.  For an HTTP\/2 client
-    -- multiplexing many streams this stays at @1@; the HTTP\/1.1 client opens
-    -- one per pooled connection.  Useful for asserting single-flight connection
-    -- behaviour under concurrent sends.
+    -- | Count of TCP connections accepted by the server.
+    --
+    -- HTTP\/2 clients multiplexing many streams keep this at @1@, while
+    -- HTTP\/1.1 clients open one connection per pooled connection.
+    --
+    -- Useful for asserting single-flight connection behavior under concurrency.
     connRef :: IORef Int
   }
 
@@ -128,7 +130,7 @@ withSink action =
     responderRef <- newIORef (\_ _ -> pure ok)
     connRef <- newIORef 0
     let handle = SinkHandle{port, recordRef, responderRef, connRef}
-        -- Count each accepted TCP connection; returning 'True' accepts it.
+        -- Count each accepted TCP connection by returning 'True' to accept it.
         settings = Warp.setOnOpen (\_ -> atomicModifyIORef' connRef \n -> (n + 1, True)) Warp.defaultSettings
         runner = WarpTLS.runTLSSocket tlsSettings settings sock (recordingApp recordRef responderRef)
     Async.withAsync runner \serverAsync -> do
@@ -137,11 +139,11 @@ withSink action =
       Async.link serverAsync
       action handle
 
--- | Start a non-recording TLS sink (drains and discards bodies) on an
--- OS-assigned free port, run the action with that port, then tear it down.
+-- | Start a non-recording TLS sink on an OS-assigned free port, run the action
+-- with that port, then tear it down.
 --
--- Use this for profiling: unlike 'withSink' it keeps no per-request state, so
--- pushing millions of envelopes doesn't grow the sink's memory.
+-- Use this for profiling: it keeps no per-request state, so pushing millions of
+-- envelopes doesn't grow the sink's memory.
 withDiscardingSink :: (Int -> IO a) -> IO a
 withDiscardingSink action =
   bracket Warp.openFreePort (Socket.close . snd) \(port, sock) -> do
@@ -150,7 +152,7 @@ withDiscardingSink action =
       Async.link serverAsync
       action port
 
--- | Run a non-recording TLS sink on a fixed port, forever (until killed).
+-- | Run a non-recording TLS sink on a fixed port indefinitely, until the process is killed.
 --
 -- This is the entry point for the standalone @sentry-sink@ process used to
 -- profile the transports out-of-process.  Bound to @127.0.0.1@.
@@ -162,7 +164,7 @@ runDiscardingSink port =
 
 -- | A DSN pointing at a recording sink for the given project ID.
 --
--- Always uses the @https@ scheme (TLS with ALPN).
+-- Always uses the @https@ scheme with TLS and ALPN.
 dsnFor :: SinkHandle -> Text -> Patrol.Dsn
 dsnFor handle pid =
   Patrol.Dsn.Dsn
@@ -185,16 +187,15 @@ received handle = do
 connectionsOpened :: SinkHandle -> IO Int
 connectionsOpened handle = readIORef handle.connRef
 
--- | Replace the active 'Responder'.  Takes effect for the next request; a
--- request already being processed may still use the previous responder.
+-- | Replace the active 'Responder' for subsequent requests. A request already
+-- being processed may still use the previous responder.
 setResponder :: SinkHandle -> Responder -> IO ()
 setResponder handle = writeIORef handle.responderRef
 
--- | Read the request body strictly into a lazy 'LBS.ByteString'.
+-- | Read the request body strictly into a lazy 'LBS.ByteString' before responding.
 --
--- The eager read matters: draining all HTTP\/2 DATA frames before 'respond'
--- prevents a flow-control deadlock where the server blocks waiting for body
--- data while the client blocks waiting for the response.
+-- Draining all HTTP\/2 DATA frames first avoids a flow-control deadlock where the
+-- server waits for body data while the client waits for the response.
 strictBody :: Wai.Request -> IO LBS.ByteString
 strictBody req = fmap (LBS.fromChunks . reverse) $ go []
   where
@@ -219,15 +220,15 @@ recordingApp recordRef responderRef request respond = do
   SinkResponse{status, responseHeaders} <- responder idx req
   respond (Wai.responseLBS status responseHeaders mempty)
 
--- | The discarding application: drain the body (so the connection\/stream stays
--- healthy) and return 200, keeping no state.
+-- | The discarding application drains the body to keep the connection healthy,
+-- returns 200, and keeps no state.
 discardingApp :: Wai.Application
 discardingApp request respond = do
   _ <- strictBody request
   respond (Wai.responseLBS Http.status200 [] mempty)
 
--- | P-256 self-signed certificate (10-year validity, SAN for 127.0.0.1 and
--- localhost), embedded at compile time.
+-- | P-256 self-signed certificate with 10-year validity and SAN entries for
+-- 127.0.0.1 and localhost, embedded at compile time.
 embeddedCert :: ByteString
 embeddedCert = $(makeRelativeToProject "testkit/certs/localhost.crt" >>= embedFile)
 

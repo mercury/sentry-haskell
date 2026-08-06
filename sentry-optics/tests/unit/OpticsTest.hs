@@ -11,7 +11,7 @@ import Test.Hspec
 
 spec_editScope :: Spec
 spec_editScope = describe "Sentry.Optics (qualified) + Sentry.Optics.Prelude (unqualified)" do
-  it "edits a live scope: qualified verbs/seeds, unqualified operators/labels/values" do
+  it "edits a live scope: qualified verbs/values, unqualified operators/labels/values" do
     scope <- Scope.create Sentry.Current
     Sentry.editScope scope do
       #level ?= #error
@@ -36,7 +36,7 @@ spec_valueLabels = describe "#-labels as enum values are type-directed by the op
 
 spec_editValue :: Spec
 spec_editValue = describe "(&~) runs an editScope-style block over a plain value" do
-  it "builds a record from an empty seed with do-notation" do
+  it "builds a record from an empty value with do-notation" do
     let crumb =
           Sentry.emptyBreadcrumb &~ do
             #type_ ?= #navigation

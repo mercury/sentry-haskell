@@ -11,8 +11,8 @@
 --
 -- == What is compared
 --
--- Both legs talk to the __same TLS sink__ ('Sentry.TestKit.Sink') over the same
--- wire — Sentry is always TLS in production, so there is no plaintext leg.  The
+-- Both legs talk to the same TLS sink, 'Sentry.TestKit.Sink', over the same
+-- wire. Sentry is always TLS in production, so there is no plaintext leg. The
 -- sink advertises ALPN @h2@ + @http\/1.1@; the client picks:
 --
 --   * @h1@ — HTTP\/1.1 over TLS via @http-client@ ('Sentry.Transport.HTTP.Sync'
@@ -23,9 +23,9 @@
 -- == Sink selection
 --
 -- If @SENTRY_PROFILE_SINK_PORT@ is set, the harness talks to an already-running
--- standalone @sentry-sink@ on @SENTRY_PROFILE_SINK_HOST@ (default @127.0.0.1@)
--- so the sink's CPU\/allocation stays out of the profiled process.  Otherwise it
--- spins up an in-process discarding TLS sink (convenient for a one-shot
+-- standalone @sentry-sink@ on @SENTRY_PROFILE_SINK_HOST@, which defaults to
+-- @127.0.0.1@, keeping the sink's CPU and allocation out of the profiled process.
+-- Otherwise it spins up an in-process discarding TLS sink (convenient for a one-shot
 -- @just profile-prof@, but then the profile includes the server side).
 --
 -- Usage:
@@ -60,7 +60,7 @@ import System.Exit (die)
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 
--- | Which HTTP\/1.1 transport to exercise (h2 is always async).
+-- | Which HTTP\/1.1 transport to exercise. HTTP\/2 is always asynchronous.
 type Mode :: Type
 data Mode = Sync | Async
 
@@ -131,7 +131,7 @@ runH2 cfg dsn = do
   end <- getCurrentTime
   report counts (realToFrac (diffUTCTime end start))
 
--- | Drive a profiling run against the HTTP\/1.1 transport (sync or async).
+-- | Drive a profiling run against the HTTP\/1.1 transport in sync or async mode.
 runH1 :: Config -> HttpClient.Manager -> Patrol.Dsn -> IO ()
 runH1 cfg manager dsn = do
   let envelope = mkEnvelope cfg dsn

@@ -17,10 +17,10 @@ import Test.Tasty (TestTree, withResource)
 import Test.Tasty.Bench qualified as Bench
 import UnliftIO.Exception (SomeException (..))
 
--- | These benchmarks measure the /in-process/ overhead of the executor and rate
--- limiter only — they use a no-op send function, so no HTTP backend is
--- involved. For end-to-end timing against a real backend, use the
--- @sentry-profile@ executable with @hyperfine@.
+-- | These benchmarks measure the in-process overhead of the executor and rate
+-- limiter only, using a no-op send function so no HTTP backend is involved.
+-- For end-to-end timing against a real backend, use the @sentry-profile@
+-- executable with @hyperfine@.
 main :: IO ()
 main = do
   Bench.defaultMain

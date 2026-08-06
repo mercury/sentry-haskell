@@ -1,10 +1,6 @@
 > [!CAUTION]
 > This is a `0.0.0` release and the surface area is still moving. Module layout,
 > option names, and transport APIs may change between commits without ceremony.
->
-> In addition, the implementation involved a fair bit of LLM-assisted development
-> and we are still in the process of reviewing everything that the robot spat
-> out.
 
 > [!NOTE]
 > This is not an official Mercury Technologies product, nor is it affiliated
@@ -52,18 +48,9 @@ The SDK is organized around the following abstractions:
   they pass through the `Client` on their way to a `Transport`
 - A `Transport`, which delivers a serialized envelope to Sentry
 
-When an artifact is captured using `captureException` or `captureMessage`, the
-function attempts to resolve the `Client` bound to the nearest `Scope`, merges
-the three scope layers and applies it to the `Event`, runs each integration's
-`processEvent` call _in order_, supplies default values where necessary, runs
-the user-provided `beforeSend` hook, samples the event according to the
-configured sample rate, wraps the result in an `Envelope`, and hands it off to
-the transport.
+When an artifact is captured using `captureException` or `captureMessage`, the SDK follows this pipeline: resolve the `Client` bound to the nearest `Scope`, merge the three scope layers and apply them to the `Event`, run each integration's `processEvent` hook in order, fill in default values, invoke the user-provided `beforeSend` hook, apply sampling based on the configured rate, wrap the result in an `Envelope`, and deliver it to the transport.
 
-If an event is discarded at any point during this process, the SDK will
-increment an internal counter associated with the stage at which the discard
-occurred; a client report consisting of each stage and the associated counters
-is sent to Sentry at regular reporting intervals.
+If an event is discarded at any point in this pipeline, the SDK increments an internal counter for the discard stage. A client report with counters for each stage is sent to Sentry at regular intervals.
 
 > [!IMPORTANT]
 > `init` (and therefore `withSentry`) binds the client onto the _global_ scope,
@@ -273,7 +260,7 @@ import Sentry.Optics.Prelude              -- import unqualified, *in place of* `
 
 `Sentry.Optics` is a drop-in for `Sentry` (imported qualified) that additionally
 exports `editScope`, the `apply` / `runScopeUpdate` / `ScopeUpdate` trio, and
-`empty`-prefixed record seeds (`emptyUser`, `emptyBreadcrumb`, `emptyRequest`,
+`empty`-prefixed record values (`emptyUser`, `emptyBreadcrumb`, `emptyRequest`,
 `emptyEvent`).
 
 `Sentry.Optics.Prelude` re-exports the `optics` vocabulary, the state operators
@@ -306,7 +293,7 @@ That is to say, the same `#error` is a `Level` under `#level` and a
 
 The `#field` lenses and `#_Constructor` prisms for `patrol`'s own types come
 from the `patrol-optics` package (`Patrol.Optics`). Paired with the `empty*`
-seeds, they let you build a record field by field:
+values, they let you build a record field by field:
 
 ```haskell
 user = Sentry.emptyUser & #email .~ "alice@example.com" & #username .~ "alice"
@@ -399,7 +386,7 @@ spec = it "captures a message" do
 `ClientOptions` is constructed with `def` (or the `DEFAULT_CLIENT_OPTIONS`
 pattern) and updated record-style.
 
-A brief survey of some of the most commonly set fields is as follows:
+Commonly set `ClientOptions` fields:
 
 | Field               | Type                                          | Purpose                                                                 |
 | ------------------- | --------------------------------------------- | ------------------------------------------------------------------      |
@@ -441,7 +428,7 @@ The optional optics layer (see [Optics](#optics-optional)) is split across:
 
 | Module                  | Package         | Provides                                                                         |
 | ----------------------- | --------------- | -------------------------------------------------------------------------------- |
-| `Sentry.Optics`         | `sentry-optics` | Drop-in for `Sentry` (qualified) + `editScope` / `apply` / `runScopeUpdate` + `empty*` seeds |
+| `Sentry.Optics`         | `sentry-optics` | Drop-in for `Sentry` (qualified) + `editScope` / `apply` / `runScopeUpdate` + `empty*` values |
 | `Sentry.Optics.Prelude` | `sentry-optics` | Unqualified batteries: the `optics` vocabulary, `?=` / `.=` / `%=`, field & value labels |
 | `Patrol.Optics`         | `patrol-optics` | Orphan `#field` lenses and `#_Constructor` prisms for the `patrol` protocol types |
 
@@ -484,8 +471,8 @@ recipes drive the transport harness against a local TLS sink; the latter two use
 profile reflects optimized code.
 
 > [!IMPORTANT]
-> Package configuration lives in `package.yaml` files (this project uses hpack).
-> building.
+> Package configuration lives in `package.yaml` files; this project uses hpack.
+> Regenerate `.cabal` files with `hpack` after editing, before building.
 
 Formatting is handled by `nix fmt`.
 

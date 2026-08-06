@@ -6,12 +6,11 @@
 --
 --   * a @beforeSend@ hook that rewrites every outgoing event with optics,
 --   * an isolation scope stamped with a single @editScope@ block,
---   * a breadcrumb trail built from @empty*@ seeds, and
+--   * a breadcrumb trail built from @empty*@ values, and
 --   * a captured exception.
 --
--- Rather than talk to a real Sentry, it uses the in-memory 'Sentry.Test'
--- transport to collect whatever the SDK would have sent, then pretty-prints the
--- captured events on the way out:
+-- It uses the in-memory 'Sentry.Test' transport to collect what the SDK would
+-- send, then pretty-prints the captured events on the way out:
 --
 -- > cabal run sentry-optics:checkout
 module Main (main) where
@@ -38,9 +37,9 @@ main = do
           { release = Just "checkout-demo@1.0.0",
             environment = Just "demo",
             -- A `beforeSend` hook is just a function over the captured event.
-            -- Here we reach the wire-format `Patrol.Event` via `ce.event` and
-            -- rewrite it with optics: stamp the server name and redact the
-            -- user's email through the optional `#user` with the `_Just` prism.
+            -- We reach the wire-format `Patrol.Event` via `ce.event` and rewrite
+            -- it with optics, stamping the server name and redacting the user's
+            -- email through the optional `#user` field with the `_Just` prism.
             beforeSend = Just \ce ->
               Just (ce.event & #serverName .~ "demo-host" & #user % _Just % #email .~ "[redacted]")
           }
@@ -68,8 +67,8 @@ checkout email amount =
       #tags % at "currency" ?= "usd"
       #user ?= (Sentry.emptyUser & #email .~ email)
 
-    -- Breadcrumbs built from `empty*` seeds with `&~`. `#ui` / `#info` are
-    -- values here, type-directed by the `#type_` they sit under.
+    -- Breadcrumbs are built from `empty*` values with `&~`. `#ui` and `#info` are
+    -- values here, type-directed by the `#type_` field they sit under.
     Sentry.addBreadcrumb $
       Sentry.emptyBreadcrumb &~ do
         #type_ ?= #ui

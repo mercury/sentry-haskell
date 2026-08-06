@@ -1,12 +1,11 @@
--- The HTTP/2 connection layer is deliberately under test here (driven
--- concurrently, bypassing the serial executor), so silence its experimental
--- warning for this module.
+-- The HTTP/2 connection layer is deliberately under test here with concurrent calls
+-- that bypass the serial executor, so silence its experimental warning for this module.
 {-# OPTIONS_GHC -Wno-x-sentry-experimental #-}
 
 -- | Concurrency tests for the HTTP/2 connection manager.
 --
--- These drive 'Connection.sendEnvelope' directly from many threads — bypassing
--- the (serial) async executor — to exercise the lock-free 'State'
+-- These call 'Connection.sendEnvelope' directly from many threads, skipping
+-- the serial async executor, to exercise the lock-free 'State'
 -- single-flight machine and stream multiplexing under genuine contention.
 module Http2ConcurrencyTest where
 

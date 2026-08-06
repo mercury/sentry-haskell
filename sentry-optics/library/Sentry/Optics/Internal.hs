@@ -1,9 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | Internal plumbing for the optics facades: the orphan 'ScopeData' field
--- labels, the 'edits' combinator, the 'editScope' verb, and the @('&~')@
--- value-builder.
+-- | This module provides orphan field labels for 'ScopeData', the 'edits'
+-- combinator, the 'editScope' verb, and the @('&~')@ value-builder.
 --
 -- /Not a public module._ Import "Sentry.Optics" (qualified) or
 -- "Sentry.Optics.Prelude" (unqualified) instead.
@@ -22,10 +21,12 @@ import Sentry.Scope.Internal (Scope, ScopeData)
 import Sentry.Scope.Update (ScopeUpdate (..), apply)
 
 -- Orphan @OverloadedLabels@ field labels for the user-facing 'ScopeData' fields
--- (e.g. @#level@, @#tags@). The internal @type_@, @client@, and (function-typed)
--- @eventProcessor@ fields are deliberately omitted via the allowlist. These are
--- orphans (ScopeData is defined in sentry-core) — sentry-optics is their sole
--- definer.
+-- like @#level@ and @#tags@.
+--
+-- The internal @type_@, @client@, and function-typed @eventProcessor@ fields
+-- are deliberately omitted via the allowlist.
+--
+-- 'ScopeData' is defined in sentry-core, so these instances are orphans.
 makeFieldLabelsFor
   [ ("level", "level"),
     ("fingerprint", "fingerprint"),
@@ -48,24 +49,26 @@ makeFieldLabelsFor
 --     #tags % at "env" ?= "prod"
 -- @
 --
--- The block is pure ('State', no @IO@); it is collected into a single
--- 'ScopeUpdate' and applied as one atomic step. This is the optics counterpart
--- to the effectful @Sentry.Scope@ setters — reach for it when authoring several
--- edits at once.
+-- The block is a pure 'State' computation with no @IO@; it is collected into a
+-- single 'ScopeUpdate' and applied as one atomic step.
+--
+-- This is the optics counterpart to the effectful @Sentry.Scope@ setters.
 editScope :: (MonadIO m) => Scope -> State ScopeData () -> m ()
 editScope scope = apply scope . edits
 
 -- | Collect a block of optic assignments into a 'ScopeUpdate' without applying
--- it. 'editScope' is @'apply' scope . 'edits'@; this is the internal seam they
--- share.
+-- it.
+--
+-- Shared with 'editScope', defined as @'apply' scope . 'edits'@.
 edits :: State ScopeData () -> ScopeUpdate
 edits = ScopeUpdate . execState
 
 -- | Apply a block of optic assignments to a plain value, returning the updated
--- value — the value-level counterpart to 'editScope'. Where 'editScope' applies
--- such a block to a live 'Scope', @('&~')@ applies one to any record (a
--- 'Patrol.Type.Breadcrumb.Breadcrumb', 'Patrol.Type.User.User', …), so you can
--- build one up from an @empty@ seed:
+-- value as the value-level counterpart to 'editScope'.
+--
+-- Where 'editScope' applies such a block to a live 'Scope', @('&~')@ applies
+-- one to any record, such as 'Patrol.Type.Breadcrumb.Breadcrumb' or
+-- 'Patrol.Type.User.User', so you can build one up from an @empty@ value:
 --
 -- @
 -- crumb = emptyBreadcrumb &~ do
@@ -74,7 +77,7 @@ edits = ScopeUpdate . execState
 --   #message .= \"user clicked 'pay'\"
 -- @
 --
--- @optics@ (unlike @lens@) does not provide this operator, so we define it here.
+-- The @optics@ library does not provide this operator, so it is defined here.
 infixl 1 &~
 
 (&~) :: s -> State s a -> s

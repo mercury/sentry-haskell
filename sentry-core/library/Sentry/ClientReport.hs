@@ -1,15 +1,12 @@
 -- | Client-side event-loss accounting.
 --
--- This module provides two things:
+-- 'DiscardReason' is a typed vocabulary for every point in the SDK where an event
+-- can be dropped, used both to populate client reports on the wire and to emit
+-- human-readable debug log lines.
 --
---   * 'DiscardReason': a typed vocabulary for every point in the SDK where an
---     event can be dropped, used both to populate client reports on the wire
---     and to emit human-readable debug log lines.
---
---   * 'ClientReports': a thread-safe accumulator used by transports to record
---     event drops (with 'record') and drain the queue (with 'takePending')
---     to build a 'Patrol.Type.ClientReport.ClientReport' that can be appended
---     to an outgoing envelope.
+-- 'ClientReports' is a thread-safe accumulator used by transports to record
+-- dropped events and drain the queue to build a 'Patrol.Type.ClientReport.ClientReport'
+-- that can be appended to an outgoing envelope.
 --
 -- <https://develop.sentry.dev/sdk/telemetry/client-reports/>
 module Sentry.ClientReport

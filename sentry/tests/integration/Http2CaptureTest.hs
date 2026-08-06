@@ -111,9 +111,8 @@ spec_rateLimitSentryHeader =
         reqs2 <- Sink.received sink
         length reqs2 `shouldBe` 1 -- unchanged
 
--- | Pure unit test for 'applyHttp2Settings': verify that 'Just' overrides
--- replace the corresponding field in the base settings, and 'Nothing' fields
--- leave the base value unchanged.
+-- | Tests 'applyHttp2Settings': 'Just' overrides replace their corresponding
+-- fields in the base settings, and 'Nothing' fields preserve the base values.
 spec_settingsMapping :: Spec
 spec_settingsMapping =
   describe "applyHttp2Settings" do
@@ -144,8 +143,8 @@ spec_settingsMapping =
       HTTP2TLS.settingsSettingsRateLimit result
         `shouldBe` HTTP2TLS.settingsSettingsRateLimit base
 
--- | Smoke test: build the transport with non-default 'Http2Settings' and
--- confirm that the h2\/TLS handshake still succeeds and envelopes are delivered.
+-- | Tests envelope delivery with non-default 'Http2Settings', confirming the
+-- h2\/TLS handshake succeeds.
 spec_customSettingsDelivery :: Spec
 spec_customSettingsDelivery =
   describe "custom Http2Settings: handshake and delivery" do

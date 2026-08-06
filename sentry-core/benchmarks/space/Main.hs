@@ -9,19 +9,24 @@
 -- in its own subprocess, so the process-global scope mutations below do not
 -- leak between cases.
 --
--- The client is installed on the __global__ scope (the 'Sentry.init' path), and
--- the metadata cases model a realistic server request: a little data on the
--- global scope (set once at init), per-request data on the isolation scope
--- (tags, extras, a breadcrumb trail), and per-operation data on the current
--- scope. Keys are __disjoint across layers__ — as in real apps (@release@ on
--- global, @request_id@ on isolation, @span@ data on current) — so every capture
--- genuinely merges all three (@global \<> isolation \<> current@), which is what
--- the three-scope model does per capture (matching @sentry-python@'s
--- @_merge_scopes@).
+-- The client is installed on the global scope via the 'Sentry.init' path. The
+-- metadata models a realistic server request by placing data at three
+-- layers:
+--
+-- * the global scope holds data set once at init
+-- * the isolation scope holds per-request data such as tags, extras, and a
+--   breadcrumb trail
+-- *  current scope holds per-operation data
+--
+-- Keys are disjoint across layers, matching real apps where @release@ lives on
+-- the global scope, @request_id@ on the isolation scope, and @span@ data on the
+-- current scope, so every capture genuinely merges all three.
+--
+-- This matches what the three-scope model does per capture, similar to
+-- @sentry-python@'s @_merge_scopes@.
 --
 -- The "no scope data" cases are the floor (pipeline only); "typical" is an
--- ordinary instrumented error; "heavy" is a heavily-instrumented upper bound
--- (more tags, a breadcrumb trail near the usual 100-crumb cap).
+-- ordinary instrumented error; "heavy" is a heavily-instrumented upper bound.
 module Main where
 
 import Control.Monad (replicateM_)

@@ -1,7 +1,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
 -- | Thread-local scope management for enriching Sentry events with contextual
--- metadata (tags, breadcrumbs, user info, etc.).
+-- metadata like tags, breadcrumbs, and user info.
 --
 -- Sentry uses a three-layer scope model:
 --
