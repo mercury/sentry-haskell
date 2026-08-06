@@ -65,11 +65,15 @@ module Sentry.Core
     withIsolationScope,
     withClient,
     resolveClient,
+    resolveClientAt,
 
     -- * Breadcrumbs
     addBreadcrumb,
+    addBreadcrumbAt,
     addBreadcrumbs,
+    addBreadcrumbsAt,
     clearBreadcrumbs,
+    clearBreadcrumbsAt,
   )
 where
 
@@ -96,6 +100,18 @@ import Sentry.Integration.Stacktrace
     AttachExceptionContextIntegration (..),
     ProcessStacktraceIntegration (..),
   )
-import Sentry.Scope (Scope, ScopeData (..), ScopeType (..), addBreadcrumb, addBreadcrumbs, clearBreadcrumbs, resolveClient)
+import Sentry.Scope
+  ( Scope,
+    ScopeData (..),
+    ScopeType (..),
+    addBreadcrumb,
+    addBreadcrumbAt,
+    addBreadcrumbs,
+    addBreadcrumbsAt,
+    clearBreadcrumbs,
+    clearBreadcrumbsAt,
+    resolveClient,
+    resolveClientAt,
+  )
 import Sentry.Scope.IO (withClient, withIsolationScope, withScope)
 import Prelude hiding (init)
