@@ -17,20 +17,28 @@ module Sentry.Event
 
     -- * Pure event builders
     fromException,
+    fromExceptionWith,
     fromMessage,
+
+    -- * Event enrichment
+    attachMechanism,
   )
 where
 
 import Control.Exception (SomeException)
 import Data.Kind (Type)
+import Data.List (unsnoc)
 import Data.Text (Text)
+import Data.Text qualified as Text
 import GHC.Stack (CallStack)
 import Patrol qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventType qualified as Patrol.EventType
+import Patrol.Type.Exception qualified as Patrol.Exception
 import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.LogEntry qualified as Patrol.LogEntry
+import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Witch qualified
 
 -- | A 'Patrol.Type.Event.Event' plus any contextual metadata that integrations
@@ -93,7 +101,8 @@ withException event exception originalException =
       captureCallStack = Nothing
     }
 
--- | Build a minimal 'Patrol.Event' from a 'SomeException'.
+-- | Build a minimal 'Patrol.Event' from a 'SomeException'. Attaches no
+-- 'Patrol.Type.Mechanism.Mechanism' — use 'fromExceptionWith' for that.
 --
 -- Sets 'exception', 'level', and 'type_'; leaves 'eventId', 'timestamp',
 -- 'sdk', 'platform', and all option-derived fields ('release', 'environment',
@@ -104,12 +113,43 @@ withException event exception originalException =
 -- own exception event builder, ensuring no pre-baked defaults from
 -- 'Patrol.Type.Event.initial' can mask configuration values.
 fromException :: SomeException -> Patrol.Event
-fromException e =
-  Patrol.Event.empty
-    { Patrol.Event.exception = Just (Patrol.Exceptions.fromSomeException e),
-      Patrol.Event.level = Just Patrol.Level.Error,
-      Patrol.Event.type_ = Just Patrol.EventType.Default
-    }
+fromException = fromExceptionWith Nothing
+
+-- | Like 'fromException', but attaches the given
+-- 'Patrol.Type.Mechanism.Mechanism' to the exception.
+fromExceptionWith :: Maybe Patrol.Mechanism.Mechanism -> SomeException -> Patrol.Event
+fromExceptionWith mMechanism e =
+  let event =
+        Patrol.Event.empty
+          { Patrol.Event.exception = Just (Patrol.Exceptions.fromSomeException e),
+            Patrol.Event.level = Just Patrol.Level.Error,
+            Patrol.Event.type_ = Just Patrol.EventType.Default
+          }
+   in maybe event (`attachMechanism` event) mMechanism
+
+-- | Attach a 'Patrol.Type.Mechanism.Mechanism' to the /last/ entry in the
+-- event's @exception.values@, which /should/ be the exception that is actually
+-- unhandled.
+--
+-- __NOTE__: If 'Patrol.Type.Mechanism.type_' is empty, it is normalized to
+-- @\"generic\"@.
+attachMechanism :: Patrol.Mechanism.Mechanism -> Patrol.Event -> Patrol.Event
+attachMechanism mechanism event =
+  case event.exception of
+    Nothing -> event
+    Just exceptions ->
+      case unsnoc (Patrol.Exceptions.values exceptions) of
+        Nothing -> event
+        Just (rest, lastExc) ->
+          let normalized =
+                if Text.null mechanism.type_
+                  then mechanism{Patrol.Mechanism.type_ = "generic"}
+                  else mechanism
+              updated = lastExc{Patrol.Exception.mechanism = Just normalized}
+           in event
+                { Patrol.Event.exception =
+                    Just exceptions{Patrol.Exceptions.values = rest <> [updated]}
+                }
 
 -- | Build a minimal 'Patrol.Event' for a plain text message at the given
 -- severity level.

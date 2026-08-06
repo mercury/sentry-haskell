@@ -7,9 +7,9 @@ import Data.IORef qualified as IORef
 import Data.Kind (Type)
 import Data.Maybe (isJust)
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Core qualified as Sentry
 import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Core qualified as Sentry
 import Sentry.Test (withGlobalScope)
 import Sentry.Test qualified as Test
 import Sentry.Transport (FlushResponse (..), SendResponse (..), ShutdownResponse (..), SomeTransport (..), Transport (..))

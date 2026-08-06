@@ -139,7 +139,7 @@ data Http2Settings = Http2Settings
     --
     -- Raise this limit if you experience connection resets from peers that send
     -- frequent PING frames.
-    -- 
+    --
     -- Set to @Just maxBound@ to disable this protection entirely when
     -- connecting to a fully trusted peer.
     pingRateLimit :: Maybe Int,

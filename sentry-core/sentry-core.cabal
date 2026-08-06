@@ -31,6 +31,7 @@ library
       Sentry.Integration.Stacktrace
       Sentry.Internal
       Sentry.Level
+      Sentry.Mechanism
       Sentry.Scope
       Sentry.Scope.Internal
       Sentry.Scope.IO
@@ -92,6 +93,7 @@ test-suite unit
       CaptureDefaultsTest
       CaptureDropTest
       CaptureExceptionTest
+      CaptureMechanismTest
       ClientReportTest
       ClientResolutionTest
       IntegrationSetupTest

@@ -8,7 +8,7 @@ import Data.Kind (Type)
 import Data.Vector qualified as Vector
 import Patrol.Type.DataCategory (DataCategory (..))
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Capture (captureException, captureMessage)
+import Sentry.Capture (captureException, captureExceptionWith, captureMessage, captureUnhandledException)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason (..))
 import Sentry.Event (CapturedEvent (..))
@@ -35,6 +35,30 @@ spec_captureDrop = describe "drop-site instrumentation" do
               (toException $ userError "boom")
       (result, transport) <- Test.withClient \_ ->
         captureException annotated
+      result `shouldBe` Nothing
+      drops <- liftIO $ Test.fetchAndClearDrops transport
+      drops `shouldBe` [(EventProcessor, Error, 1)]
+
+    it "records EventProcessor when captureExceptionWith scope drops the event" do
+      let scopeData = (def @ScopeData){eventProcessor = \_ -> Nothing}
+          annotated =
+            AnnotatedException
+              [Annotation scopeData]
+              (toException $ userError "boom")
+      (result, transport) <- Test.withClient \_ ->
+        captureExceptionWith def annotated
+      result `shouldBe` Nothing
+      drops <- liftIO $ Test.fetchAndClearDrops transport
+      drops `shouldBe` [(EventProcessor, Error, 1)]
+
+    it "records EventProcessor when captureUnhandledException scope drops the event" do
+      let scopeData = (def @ScopeData){eventProcessor = \_ -> Nothing}
+          annotated =
+            AnnotatedException
+              [Annotation scopeData]
+              (toException $ userError "boom")
+      (result, transport) <- Test.withClient \_ ->
+        captureUnhandledException "warp.onException" annotated
       result `shouldBe` Nothing
       drops <- liftIO $ Test.fetchAndClearDrops transport
       drops `shouldBe` [(EventProcessor, Error, 1)]

@@ -96,7 +96,7 @@ instance Integration ProcessStacktraceIntegration where
 -- an exception capture.
 --
 -- Message events use a 'Patrol.Type.Thread.Thread' as the frame container;
--- exception events attach frames to the first entry in @exception.values@.
+-- exception events attach frames to the last entry in @exception.values@.
 isMessage :: CapturedEvent -> Bool
 isMessage ce = case ce.exception of
   Nothing -> True

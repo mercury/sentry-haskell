@@ -7,8 +7,12 @@ import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
 import Patrol.Type.Event qualified as Patrol.Event
+import Patrol.Type.Exception qualified as Patrol.Exception
+import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
+import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.Capture (captureException)
+import Sentry.Mechanism qualified as Mechanism
 import Sentry.Scope (ScopeData (..))
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
@@ -76,3 +80,20 @@ spec_captureException = describe "captureException" do
       captureException ThreadKilled
     events <- Test.fetchAndClearEvents transport
     length events `shouldBe` 1
+
+  it "attaches the generic, handled mechanism (see CaptureMechanismTest for detail)" do
+    (_, transport) <- Test.withClient \_ ->
+      captureException (userError "boom")
+    events <- Test.fetchAndClearEvents transport
+    case events of
+      [event] -> lastMechanism event `shouldBe` Just Mechanism.generic
+      _ -> expectationFailure $ "expected one event, got " <> show (length events)
+
+-- | The 'Patrol.Mechanism' attached to the last exception value in an event,
+-- if any.
+lastMechanism :: Patrol.Event.Event -> Maybe Patrol.Mechanism.Mechanism
+lastMechanism event = do
+  excs <- event.exception
+  case Patrol.Exceptions.values excs of
+    [] -> Nothing
+    xs -> Patrol.Exception.mechanism (last xs)

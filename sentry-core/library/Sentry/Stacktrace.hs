@@ -14,14 +14,17 @@ module Sentry.Stacktrace
     -- * In-app classification
     classifyInApp,
     wellKnownNotInApp,
+    packageName,
   )
 where
 
 import Control.Exception (SomeException)
+import Data.Char (isDigit)
 import Data.Functor ((<&>))
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HashSet
 import Data.Kind (Type)
+import Data.List (unsnoc)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -42,8 +45,9 @@ import Data.Annotation (tryAnnotations)
 
 -- Merge utilities
 
--- | Merge the frames from a 'CallStack' into the first exception value in
--- the event's @exception.values@ list.
+-- | Merge the frames from a 'CallStack' into the /last/ exception value in
+-- the event's @exception.values@ list, which /should/ be the exception that
+-- is actually unhandled.
 --
 -- If the event has no @exception@, it is left untouched (use
 -- 'mergeCallStackIntoThread' for message events).
@@ -57,11 +61,11 @@ mergeCallStackIntoException callStack event =
     Nothing -> event
     Just exceptions ->
       let newStack = Patrol.Stacktrace.fromCallStack callStack
-          mergedValues = case Patrol.Exceptions.values exceptions of
-            [] -> []
-            (exc : rest) ->
+          mergedValues = case unsnoc (Patrol.Exceptions.values exceptions) of
+            Nothing -> []
+            Just (rest, exc) ->
               let merged = mergeStacktraces newStack (fromMaybe Patrol.Stacktrace.empty exc.stacktrace)
-               in exc{Patrol.Exception.stacktrace = Just merged} : rest
+               in rest <> [exc{Patrol.Exception.stacktrace = Just merged}]
        in event
             { Patrol.Event.exception =
                 Just exceptions{Patrol.Exceptions.values = mergedValues}
@@ -133,9 +137,12 @@ callStackFromAnnotations anns =
 --
 -- __Implementation note__: GHC 9.10\/base-4.20 re-exports the 'Backtraces'
 -- type from @Control.Exception.Backtrace@ but does /not/ export its record
--- field accessors (they remain in @ghc-internal@).  Until @base@ exposes a
--- stable API for reading 'Backtraces' fields, this function always returns
--- 'Nothing'.  The 'Sentry.Integration.Stacktrace.AttachExceptionContextIntegration'
+-- field accessors (they remain in @ghc-internal@).
+--
+-- Until @base@ exposes a stable API for reading 'Backtraces' fields, this
+-- function always returns 'Nothing'.
+--
+-- The 'Sentry.Integration.Stacktrace.AttachExceptionContextIntegration'
 -- integration is therefore a no-op in the current GHC version but is kept as
 -- a stub so it can be enabled without a breaking API change when the accessor
 -- becomes available.
@@ -189,6 +196,16 @@ wellKnownNotInApp =
     "sentry-core"
   ]
 
+-- | Extract the bare package name from a GHC-style package-id string, e.g.
+-- @"sentry-core-0.0.0-inplace"@ or @"text-2.1.1"@, by dropping the trailing
+-- version component.
+--
+-- Splits on @\'-\'@ and keeps segments up to the first digit.
+packageName :: Text -> Text
+packageName = Text.intercalate "-" . takeWhile (not . startsWithDigit) . Text.splitOn "-"
+  where
+    startsWithDigit t = maybe False (isDigit . fst) (Text.uncons t)
+
 -- | Classify each frame in an event as in-app or not-in-app according to the
 -- 'ClientOptions' include\/exclude sets and the built-in 'wellKnownNotInApp'
 -- denylist.
@@ -234,11 +251,12 @@ classifyInApp include exclude event =
     matchesBuiltinDenylist frame =
       any (isPrefixOf frame) wellKnownNotInApp
 
-    -- A frame matches prefix @p@ if either its @module_@ or its @package@
-    -- equals @p@ exactly or starts with @p <> "."@.
+    -- A frame matches prefix @p@ if its @module_@ equals @p@ exactly or
+    -- starts with @p <> "."@, or if its @package@'s bare name equals @p@
+    -- exactly or starts with @p <> "."@.
     isPrefixOf :: Patrol.Frame.Frame -> Text -> Bool
     isPrefixOf frame p =
-      fieldMatches frame.module_ || fieldMatches frame.package
+      fieldMatches frame.module_ || fieldMatches (packageName frame.package)
       where
         fieldMatches f =
           not (Text.null f)

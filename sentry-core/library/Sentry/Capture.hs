@@ -2,12 +2,20 @@
 
 -- | Capture an 'Patrol.Event' and dispatch it through a 'Client'.
 module Sentry.Capture
-  ( captureEvent,
+  ( -- * Capture overrides
+    CaptureOverrides (..),
+
+    -- * Capturing events
+    captureEvent,
     captureEvent_,
     captureException,
     captureException_,
+    captureExceptionWith,
+    captureExceptionWith_,
     captureMessage,
     captureMessage_,
+    captureUnhandledException,
+    captureUnhandledException_,
   )
 where
 
@@ -18,7 +26,9 @@ import Control.Monad (unless, void, when)
 import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
+import Data.Default (Default (def))
 import Data.Foldable (for_)
+import Data.Kind (Type)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -26,7 +36,7 @@ import Data.Time.Clock (getCurrentTime)
 import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
-import GHC.Stack (HasCallStack, callStack)
+import GHC.Stack (CallStack, HasCallStack, callStack, withFrozenCallStack)
 import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.DataCategory qualified as Patrol.DataCategory
@@ -42,6 +52,7 @@ import Sentry.ClientReport qualified as ClientReport
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Event qualified as Event
 import Sentry.Integration (Integration (..), SomeIntegration)
+import Sentry.Mechanism qualified as Mechanism
 import Sentry.Scope (ScopeData, resolveClient)
 import Sentry.Scope qualified as Scope
 import Sentry.Sdk qualified as Sdk
@@ -65,6 +76,25 @@ captureEvent event = do
 captureEvent_ :: (MonadIO m) => Patrol.Event -> m ()
 captureEvent_ = void . captureEvent
 
+-- | 'Patrol.Type.Event.Event' overrides for the fields that are associated
+-- with capturing exceptions.
+--
+-- Its 'Default' instance apply no overrides at all.
+type CaptureOverrides :: Type
+data CaptureOverrides = CaptureOverrides
+  { -- | The 'Patrol.Mechanism' to attach to the exception, if any.
+    --
+    -- See "Sentry.Mechanism" for smart constructors.
+    mechanismOverride :: Maybe Patrol.Mechanism,
+    -- | A 'Patrol.Level' that overrides both the event's own level and any
+    -- ambient scope's 'Sentry.Scope.setLevel'.
+    levelOverride :: Maybe Patrol.Level
+  }
+  deriving stock (Eq, Show)
+
+instance Default CaptureOverrides where
+  def = CaptureOverrides{mechanismOverride = Nothing, levelOverride = Nothing}
+
 -- | Capture an arbitrary 'Exception', building a 'Patrol.Event' from it and
 -- dispatching it through the 'Client'.
 --
@@ -83,7 +113,48 @@ captureEvent_ = void . captureEvent
 -- If the scope's @eventProcessor@ drops the event, this function returns
 -- 'Nothing' without invoking the transport.
 captureException :: (HasCallStack, MonadIO m, Exception e) => e -> m (Maybe Patrol.EventId)
-captureException (toException -> orig) = do
+captureException e =
+  withFrozenCallStack $
+    captureExceptionImpl callStack def{mechanismOverride = Just Mechanism.generic} e
+
+-- | Convenience alias for a 'captureException' call that discards its result.
+captureException_ :: (HasCallStack, MonadIO m, Exception e) => e -> m ()
+captureException_ = withFrozenCallStack $ void . captureException
+
+-- | Like 'captureException', but with full control over the
+-- 'CaptureOverrides' applied to the resulting event.
+--
+-- Most application code should prefer 'captureException'.
+--
+-- This is the general escape hatch for framework\/integration authors who need a
+-- specific mechanism or a level override.
+captureExceptionWith :: (HasCallStack, MonadIO m, Exception e) => CaptureOverrides -> e -> m (Maybe Patrol.EventId)
+captureExceptionWith overrides e =
+  withFrozenCallStack $ captureExceptionImpl callStack overrides e
+
+-- | Convenience alias for a 'captureExceptionWith' call that discards its
+-- result.
+captureExceptionWith_ :: (HasCallStack, MonadIO m, Exception e) => CaptureOverrides -> e -> m ()
+captureExceptionWith_ overrides = withFrozenCallStack $ void . captureExceptionWith overrides
+
+-- | Capture an exception that is considered to be "unhandled"; that is to say
+-- it has escaped to a boundary-of-last-resort rather than being caught by
+-- application code.
+captureUnhandledException :: (HasCallStack, MonadIO m, Exception e) => Text -> e -> m (Maybe Patrol.EventId)
+captureUnhandledException ty e =
+  withFrozenCallStack $
+    captureExceptionImpl callStack def{mechanismOverride = Just (Mechanism.unhandled ty)} e
+
+-- | Convenience alias for a 'captureUnhandledException' call that discards
+-- its result.
+captureUnhandledException_ :: (HasCallStack, MonadIO m, Exception e) => Text -> e -> m ()
+captureUnhandledException_ ty = withFrozenCallStack $ void . captureUnhandledException ty
+
+-- | Shared implementation behind 'captureException', 'captureExceptionWith',
+-- and 'captureUnhandledException'.
+captureExceptionImpl ::
+  (MonadIO m, Exception e) => CallStack -> CaptureOverrides -> e -> m (Maybe Patrol.EventId)
+captureExceptionImpl cs overrides (toException -> orig) = do
   -- Read the call-site ambient scope once: it supplies the client, and (absent
   -- an annotation) the scope to apply.
   --
@@ -97,17 +168,18 @@ captureException (toException -> orig) = do
       scopeFromAnnotation = listToMaybe [s | Annotation a <- anns, Just s <- [cast @_ @ScopeData a]]
       scope = fromMaybe ambient scopeFromAnnotation
       captured =
-        (Event.fromException inner `Event.withException` inner $ orig)
-          { captureCallStack = Just callStack
+        (Event.fromExceptionWith overrides.mechanismOverride inner `Event.withException` inner $ orig)
+          { captureCallStack = Just cs
           }
   case scope `Scope.apply` captured of
-    Just event -> captureWith client captured{event}
+    Just event -> captureWith client captured{event = applyLevelOverride overrides event}
     Nothing ->
       Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
 
--- | Convenience alias for a 'captureException' call that discards its result.
-captureException_ :: (HasCallStack, MonadIO m, Exception e) => e -> m ()
-captureException_ = void . captureException
+-- | Apply 'CaptureOverrides.levelOverride' to the /result/ of 'Sentry.Scope.apply'.
+applyLevelOverride :: CaptureOverrides -> Patrol.Event -> Patrol.Event
+applyLevelOverride overrides event =
+  maybe event (\lvl -> event{Patrol.Event.level = Just lvl}) overrides.levelOverride
 
 -- | Capture a plain message at the given severity level, applying the ambient
 -- scope before dispatch.
@@ -135,7 +207,7 @@ captureMessage lvl msg = do
 
 -- | Convenience alias for a 'captureMessage' call that discards its result.
 captureMessage_ :: (HasCallStack, MonadIO m) => Patrol.Level -> Text -> m ()
-captureMessage_ lvl = void . captureMessage lvl
+captureMessage_ lvl = withFrozenCallStack $ void . captureMessage lvl
 
 -- | Internal event processing utility; performs the following steps:
 --
@@ -211,10 +283,6 @@ noteDrop client reason category = liftIO do
 -- Fills only fields that are still at their patrol sentinel value (empty
 -- 'Text', @nil@ 'Patrol.EventId', 'Nothing', etc.), so explicit values set
 -- by the event builder, scope, or integrations are always preserved.
---
--- Called by 'captureWith' after integrations have run and before
--- 'ClientOptions.beforeSend', so all three entry points ('captureEvent',
--- 'captureException', 'captureMessage') receive consistent defaults.
 applyClientDefaults :: ClientOptions -> Vector SomeIntegration -> Patrol.Event -> IO Patrol.Event
 applyClientDefaults opts integrations event = do
   eventId <-
@@ -239,9 +307,9 @@ applyClientDefaults opts integrations event = do
     orOpt :: Text -> Maybe Text -> Text
     t `orOpt` opt = t `orElse` fromMaybe Text.empty opt
 
-    -- \| Use @t@ if non-empty; otherwise use @def@.
+    -- \| Use @t@ if non-empty; otherwise use @fallback@.
     orElse :: Text -> Text -> Text
-    t `orElse` def = if Text.null t then def else t
+    t `orElse` fallback = if Text.null t then fallback else t
 
 -- | Run each integration's 'Sentry.Integration.processEvent' in sequence.
 --

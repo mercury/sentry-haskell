@@ -44,8 +44,15 @@ module Sentry.Core
     captureEvent_,
     captureException,
     captureException_,
+    captureExceptionWith,
+    captureExceptionWith_,
     captureMessage,
     captureMessage_,
+    captureUnhandledException,
+    captureUnhandledException_,
+
+    -- * Capture Overrides
+    CaptureOverrides (..),
 
     -- * Captured Event
     CapturedEvent (..),
@@ -66,7 +73,19 @@ module Sentry.Core
   )
 where
 
-import Sentry.Capture (captureEvent, captureEvent_, captureException, captureException_, captureMessage, captureMessage_)
+import Sentry.Capture
+  ( CaptureOverrides (..),
+    captureEvent,
+    captureEvent_,
+    captureException,
+    captureExceptionWith,
+    captureExceptionWith_,
+    captureException_,
+    captureMessage,
+    captureMessage_,
+    captureUnhandledException,
+    captureUnhandledException_,
+  )
 import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Event (CapturedEvent (..))
