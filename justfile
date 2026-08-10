@@ -1,14 +1,11 @@
 package := "sentry"
 
-cabal_files := "sentry-core/sentry-core.cabal sentry/sentry.cabal patrol-optics/patrol-optics.cabal sentry-core-optics/sentry-core-optics.cabal sentry-optics/sentry-optics.cabal"
-
 # Format cabal, Haskell, and Nix sources in one shot.
 format:
   nix fmt
 
-# Verify formatting without modifying files (for CI / pre-commit).
+# Validate formatting of cabal, Haskell, and Nix sources.
 check-format:
-  cabal-gild --mode=check {{cabal_files}}
   nix fmt -- --fail-on-change
 
 # Number of jobs for 'cabal-install' to run in parallel when building.
@@ -16,16 +13,9 @@ check-format:
 # Defaults to the number of logical cores on the host machine.
 jobs := ""
 
-# local caching directories
-cabal_dir := "cabal"
-bench_dir := cabal_dir + "/bench"
-build_dir := cabal_dir + "/build"
-repl_dir := cabal_dir + "/repl"
-test_dir := cabal_dir + "/test"
-
 # profiling
 profiling := "false"
-project_file := if "{{profiling}}" != "false" {
+project_file := if profiling != "false" {
   "cabal.project.profiling"
 } else {
   "cabal.project"
@@ -42,10 +32,38 @@ build target=package:
 
 build-core: (build "sentry-core")
 
+# Fetch the Hackage index, if it's absent.
+_ensure-index:
+  test -f "$(cabal path --remote-repo-cache)/hackage.haskell.org/01-index.tar" || cabal update
+
+# Build all Haskell targets.
+build-all: _ensure-index
+  cabal build all --enable-benchmarks \
+    -j{{jobs}} \
+    --project-file {{project_file}} \
+    --ghc-options '{{ghc_opts}}'
+
+# Build all Haskell dependencies.
+deps-all: _ensure-index
+  cabal build all --enable-benchmarks --only-dependencies \
+    -j{{jobs}} \
+    --project-file {{project_file}}
+
+# Test a given Haskell target.
 test target=package:
   cabal test {{target}} \
     -j{{jobs}} \
     --ghc-options '{{ghc_opts}}'
+
+# Run all Haskell test suites.
+test-all: _ensure-index
+  cabal test all \
+    -j{{jobs}} \
+    --project-file {{project_file}} \
+    --ghc-options '{{ghc_opts}}'
+
+# Run all CI steps, in the order that CI runs them.
+ci: check-format build-all test-all
 
 bench target=package:
   cabal bench {{target}} \

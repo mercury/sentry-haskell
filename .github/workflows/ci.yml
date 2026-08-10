@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: git checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Lix
+        uses: ./.github/actions/install-lix
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-format-${{ hashFiles('**/flake.lock') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-format-
+      - name: Check formatting
+        run: nix fmt -- --fail-on-change
+      - name: Show formatting diff
+        if: failure()
+        run: git diff --color=always
+
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: [ghc910, ghc912]
+    steps:
+      - name: git checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Lix
+        uses: ./.github/actions/install-lix
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('**/flake.lock', 'flake.nix', 'nix/dev/haskell-deps.nix') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ matrix.ghc }}-
+      - name: Cache cabal dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/cabal/packages
+            ~/.local/state/cabal/store
+          key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-${{ matrix.ghc }}-
+      - name: Build dependencies
+        run: nix develop .#ci-${{ matrix.ghc }} --command just deps-all
+      - name: Cache cabal build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dist-newstyle
+          key: dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}-${{ github.sha }}
+          restore-keys: |
+            dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}-
+            dist-${{ runner.os }}-${{ matrix.ghc }}-
+      - name: Build
+        run: nix develop .#ci-${{ matrix.ghc }} --command just project_file=cabal.project.ci build-all
+      - name: Test
+        run: nix develop .#ci-${{ matrix.ghc }} --command just project_file=cabal.project.ci test-all

@@ -1,0 +1,23 @@
+name: pinact
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  pinact-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: git checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Lix
+        uses: ./.github/actions/install-lix
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-pinact-${{ hashFiles('**/flake.lock') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-pinact-
+      - name: Run pinact check
+        run: nix run .#pinact -- run --check --verify
