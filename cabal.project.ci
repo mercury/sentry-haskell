@@ -1,0 +1,16 @@
+import: cabal.project
+
+package sentry
+  ghc-options: -Werror
+
+package sentry-core
+  ghc-options: -Werror
+
+package patrol-optics
+  ghc-options: -Werror
+
+package sentry-core-optics
+  ghc-options: -Werror
+
+package sentry-optics
+  ghc-options: -Werror

@@ -1,0 +1,32 @@
+name: Install Lix
+description: Install Lix on the runner, caching the installer binary by version.
+
+inputs:
+  lix-version:
+    description: Lix version to install (e.g. "2.95.2")
+    required: false
+    default: "2.95.2"
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Lix installer
+      id: cache-lix-installer
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /tmp/lix-installer
+        key: lix-installer-x86_64-linux-${{ inputs.lix-version }}
+
+    - name: Download Lix installer
+      if: steps.cache-lix-installer.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl -sSf -L "https://install.lix.systems/lix/${{ inputs.lix-version }}/lix-installer-x86_64-linux" \
+          -o /tmp/lix-installer
+        chmod +x /tmp/lix-installer
+
+    - name: Install Lix
+      shell: bash
+      # auto-optimise-store uses /nix/store/.links, which breaks with
+      # 'cache-nix-action'; Lix enables it by default, so we turn that off.
+      run: /tmp/lix-installer install --no-confirm --extra-conf 'auto-optimise-store = false'

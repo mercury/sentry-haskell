@@ -6,6 +6,9 @@ packages:
   , sentry-optics
 
 tests: True
+-- Pin the Hackage snapshot so the resolved dependency set is a function of this
+-- file, which CI's cache keys depend on.
+index-state: 2026-08-10T21:25:38Z
 
 package sentry
   flags: +kent
@@ -13,4 +16,4 @@ package sentry
 source-repository-package
   type: git
   location: https://github.com/tfausak/patrol
-  branch: main
+  tag: 60abe1e27014058956ad7d3e710675a06f90e51b

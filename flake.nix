@@ -7,17 +7,55 @@
         forEachSystem
         loadPrivateFlake
         ;
+
       privateInputs = (loadPrivateFlake ./nix/dev/private).inputs;
+
       systems = [
         "x86_64-linux"
         "aarch64-darwin"
         "aarch64-linux"
       ];
+
+      ghcVersions = [
+        "ghc910"
+        "ghc912"
+      ];
+
       overlays = [
         self.overlays.native
         self.overlays.development
       ];
+
       eachSystem = forEachSystem { inherit systems overlays; };
+
+      ciPkgsFor =
+        pkgs: ghc:
+        [ (pkgs.haskell.packages.${ghc}.ghcWithPackages (import ./nix/dev/haskell-deps.nix)) ]
+        ++ (with pkgs; [
+          cabal-gild
+          cabal-install
+          just
+          kent-server
+          pkg-config
+          zlib.dev
+          zstd.dev
+        ]);
+
+      devPkgsFor =
+        pkgs:
+        (with pkgs; [
+          ghciwatch
+          # end-to-end wall-clock benchmarking for the profile harness
+          hyperfine
+        ])
+        ++ (with pkgs.haskellPackages; [
+          # cost-centre (.prof) analysis
+          profiterole
+          profiteur
+          ghc-prof-flamegraph
+          # eventlog + heap-profile rendering (browser-based, cross-platform)
+          eventlog2html
+        ]);
     in
     {
       # public outputs, should not reference private flake inputs.
@@ -31,45 +69,44 @@
       devShells = eachSystem (
         { pkgs, ... }:
         {
-          default = pkgs.mkShell {
-            buildInputs =
-              (with pkgs; [
-                # tooling
-                cabal-gild
-                cabal-install
-                ghciwatch
-                haskell.compiler.ghc910
-                just
-                # integration test server
-                kent-server
-                # end-to-end wall-clock benchmarking for the profile harness
-                hyperfine
-                # C library dependencies
-                zlib.dev
-              ])
-              ++ (with pkgs.haskell.packages.ghc910; [
-                # cost-centre (.prof) analysis
-                profiterole
-                profiteur
-                ghc-prof-flamegraph
-                # eventlog + heap-profile rendering (browser-based, cross-platform)
-                eventlog2html
-              ]);
-          };
+          default = pkgs.mkShell { buildInputs = ciPkgsFor pkgs "ghc910" ++ devPkgsFor pkgs; };
+        }
+        // builtins.listToAttrs (
+          map (ghc: {
+            name = "ci-${ghc}";
+            value = pkgs.mkShell { buildInputs = ciPkgsFor pkgs ghc; };
+          }) ghcVersions
+        )
+      );
+
+      # (private) dev outputs: CI toolchain as a single Nix package
+      packages = eachSystem (
+        { pkgs, ... }:
+        (builtins.listToAttrs (
+          map (ghc: {
+            name = "ci-deps-${ghc}";
+            value = pkgs.linkFarmFromDrvs "sentry-haskell-ci-deps-${ghc}" (ciPkgsFor pkgs ghc);
+          }) ghcVersions
+        ))
+        // {
+          pinact = pkgs.pinact;
         }
       );
+
       apps = eachSystem (
         { pkgs, ... }:
         {
+          # Run from the repo root: paths below are relative to the CWD.
           update-dev-private-narHash = {
             type = "app";
             program = "${pkgs.writeShellScript "update-dev-private-narHash" ''
-              nix --extra-experimental-features "nix-command flakes" flake lock ./dev/private
-              nix --extra-experimental-features "nix-command flakes" hash path ./dev/private | tr -d '\n' > ./dev/private.narHash
+              nix --extra-experimental-features "nix-command flakes" flake lock ./nix/dev/private
+              nix --extra-experimental-features "nix-command flakes" hash path ./nix/dev/private | tr -d '\n' > ./nix/dev/private.narHash
             ''}";
           };
         }
       );
+
       formatter = eachSystem (
         { pkgs, ... }:
         let
@@ -95,5 +132,6 @@
         }
       );
     };
+
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 }
