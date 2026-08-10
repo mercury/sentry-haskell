@@ -1,81 +1,83 @@
 cabal-version: 3.0
+name: patrol-optics
+version: 0.0.0
+synopsis: Optics (field labels & prisms) for the patrol Sentry types.
+author: jkachmar
+copyright: 2025 jkachmar
+maintainer: stability@mercury.com
+license: MPL-2.0
+license-file: LICENSE
+build-type: Simple
+-- cabal-gild: fragment ../cabal/tested-with.fragment
+tested-with: ghc =={9.10.3, 9.12.2}
 
--- This file has been generated from package.yaml by hpack version 0.38.2.
---
--- see: https://github.com/sol/hpack
+-- cabal-gild: fragment ../cabal/defaults.fragment
+common defaults
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DerivingStrategies
+    ImportQualifiedPost
+    MultiWayIf
+    OverloadedRecordDot
+    OverloadedStrings
+    PatternSynonyms
+    ScopedTypeVariables
+    StrictData
 
-name:           patrol-optics
-version:        0.0.0
-synopsis:       Optics (field labels & prisms) for the patrol Sentry types.
-author:         jkachmar
-maintainer:     stability@mercury.com
-copyright:      2025 jkachmar
-license:        MPL-2.0
-license-file:   LICENSE
-build-type:     Simple
-tested-with:
-    GHC == { 9.10.3, 9.12.2 }
+  ghc-options:
+    -g
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-implicit-prelude
+    -Wno-missing-export-lists
+    -Wno-missing-import-lists
+    -Wno-missing-local-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-prepositive-qualified-module
+    -Wno-unsafe
+
+-- Orphan 'LabelOptic' instances are the entire purpose of this package:
+-- patrol's types live in 'patrol' and the 'LabelOptic' class lives in
+-- 'optics-core', so any instance we write here is necessarily an orphan.
+-- (Were these upstreamed into 'patrol', they would cease to be orphans.)
+common orphans
+  import: defaults
+  ghc-options: -Wno-orphans
+
+common test
+  import: orphans
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+
+  build-tool-depends: tasty-discover:tasty-discover
+  build-depends:
+    tasty,
+    tasty-hspec >=1.2,
 
 library
-  exposed-modules:
-      Patrol.Optics
-  other-modules:
-      Paths_patrol_optics
-  autogen-modules:
-      Paths_patrol_optics
-  hs-source-dirs:
-      library
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -Wno-orphans
+  import: orphans
+  hs-source-dirs: library
+  -- cabal-gild: discover library
+  exposed-modules: Patrol.Optics
   build-depends:
-      base
-    , optics-core ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-  default-language: GHC2024
+    base,
+    optics-th ^>=0.4,
+    patrol ^>=1.2,
 
 test-suite unit
+  import: test
   type: exitcode-stdio-1.0
+  hs-source-dirs: tests/unit
   main-is: Driver.hs
-  other-modules:
-      LabelsTest
-      Paths_patrol_optics
-  autogen-modules:
-      Paths_patrol_optics
-  hs-source-dirs:
-      tests/unit
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
+  -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
+  other-modules: LabelsTest
   build-depends:
-      base
-    , hspec
-    , optics-core
-    , optics-th ==0.4.*
-    , patrol
-    , patrol-optics
-    , tasty
-    , tasty-discover
-    , tasty-hspec >=1.2
-  default-language: GHC2024
+    base,
+    hspec,
+    optics-core,
+    patrol,
+    patrol-optics,

@@ -1,5 +1,5 @@
 packages:
-    sentry
+  sentry
   , sentry-core
   , patrol-optics
   , sentry-core-optics
@@ -11,6 +11,6 @@ package sentry
   flags: +kent
 
 source-repository-package
-    type: git
-    location: https://github.com/tfausak/patrol
-    branch: main
+  type: git
+  location: https://github.com/tfausak/patrol
+  branch: main

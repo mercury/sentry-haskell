@@ -1,437 +1,263 @@
 cabal-version: 3.0
-
--- This file has been generated from package.yaml by hpack version 0.38.2.
---
--- see: https://github.com/sol/hpack
-
-name:           sentry
-version:        0.0.0
-author:         jkachmar
-maintainer:     stability@mercury.com
-copyright:      2025 jkachmar
-license:        MPL-2.0
-license-file:   LICENSE
-build-type:     Simple
-tested-with:
-    GHC == { 9.10.3, 9.12.2 }
+name: sentry
+version: 0.0.0
+author: jkachmar
+copyright: 2025 jkachmar
+maintainer: stability@mercury.com
+license: MPL-2.0
+license-file: LICENSE
+build-type: Simple
+-- cabal-gild: fragment ../cabal/tested-with.fragment
+tested-with: ghc =={9.10.3, 9.12.2}
+-- cabal-gild: discover testkit/certs
 extra-source-files:
-    testkit/certs/localhost.crt
-    testkit/certs/localhost.key
+  testkit/certs/localhost.crt
+  testkit/certs/localhost.key
 
 flag kent
   description: Test against the 'kent' mock Sentry backend server.
-  manual: True
   default: False
+  manual: True
+
+-- cabal-gild: fragment ../cabal/defaults.fragment
+common defaults
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DerivingStrategies
+    ImportQualifiedPost
+    MultiWayIf
+    OverloadedRecordDot
+    OverloadedStrings
+    PatternSynonyms
+    ScopedTypeVariables
+    StrictData
+
+  ghc-options:
+    -g
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-implicit-prelude
+    -Wno-missing-export-lists
+    -Wno-missing-import-lists
+    -Wno-missing-local-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-prepositive-qualified-module
+    -Wno-unsafe
+
+common rts-threaded
+  import: defaults
+  ghc-options:
+    -threaded
+    -rtsopts
+
+common rts-threaded-n
+  import: rts-threaded
+  ghc-options: -with-rtsopts=-N
+
+common rts-threaded-a32m
+  import: rts-threaded
+  ghc-options: "-with-rtsopts=-A32M -N"
+
+common test
+  import: rts-threaded-n
+  ghc-options: -Wno-missed-specialisations
+  build-tool-depends: tasty-discover:tasty-discover
+  build-depends:
+    tasty,
+    tasty-hspec >=1.2,
 
 library
+  import: defaults
+  hs-source-dirs: library
+  -- cabal-gild: discover library
   exposed-modules:
-      Sentry
-      Sentry.Transport.Delivery
-      Sentry.Transport.Executor.Async
-      Sentry.Transport.Executor.RateLimiter
-      Sentry.Transport.HTTP.Async
-      Sentry.Transport.HTTP.Request
-      Sentry.Transport.HTTP.Sync
-      Sentry.Transport.HTTP2.Async
-      Sentry.Transport.HTTP2.Connection
-  other-modules:
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      library
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
-  build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , exceptions
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , http-client-tls
-    , http-semantics
-    , http-types
-    , http2
-    , http2-tls
-    , network
-    , network-run
-    , patrol ==1.2.*
-    , sentry-core
-    , stm
-    , text
-    , time
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-    , zlib
-  default-language: GHC2024
+    Sentry
+    Sentry.Transport.Delivery
+    Sentry.Transport.Executor.Async
+    Sentry.Transport.Executor.RateLimiter
+    Sentry.Transport.HTTP.Async
+    Sentry.Transport.HTTP.Request
+    Sentry.Transport.HTTP.Sync
+    Sentry.Transport.HTTP2.Async
+    Sentry.Transport.HTTP2.Connection
 
+  build-depends:
+    async,
+    atomic-primops,
+    attoparsec,
+    base,
+    bytestring,
+    containers,
+    data-default,
+    exceptions,
+    hs-opentelemetry-instrumentation-http-client ^>=1.0,
+    http-client-tls,
+    http-semantics,
+    http-types,
+    http2,
+    http2-tls,
+    network,
+    network-run,
+    patrol ^>=1.2,
+    sentry-core,
+    stm,
+    text,
+    time,
+    unagi-chan,
+    unliftio,
+    witch,
+    zlib,
+
+-- Shared test/bench support: the kent driver and event generators, used by
+-- both the integration suite and the sentry-profile harness.
 library testkit
+  import: defaults
+  hs-source-dirs: testkit
+  -- cabal-gild: discover testkit
   exposed-modules:
-      Sentry.TestKit.Gen
-      Sentry.TestKit.Kent
-      Sentry.TestKit.Sink
-  other-modules:
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      testkit
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
-  build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , directory
-    , file-embed
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , http-client
-    , http-types
-    , network
-    , patrol ==1.2.*
-    , sentry-core
-    , stm
-    , text
-    , time
-    , transformers
-    , typed-process
-    , unagi-chan
-    , unliftio
-    , wai
-    , warp
-    , warp-tls
-    , witch
-    , zlib
-  default-language: GHC2024
+    Sentry.TestKit.Gen
+    Sentry.TestKit.Kent
+    Sentry.TestKit.Sink
 
+  build-depends:
+    aeson,
+    async,
+    base,
+    bytestring,
+    directory,
+    file-embed,
+    http-client,
+    http-types,
+    network,
+    patrol ^>=1.2,
+    sentry-core,
+    text,
+    typed-process,
+    unliftio,
+    wai,
+    warp,
+    warp-tls,
+    zlib,
+
+-- End-to-end profiling harness: pushes envelopes through the HTTP/1.1 or
+-- HTTP/2 transport against a TLS sink. Build under cabal.project.profiling and
+-- run with +RTS flags, or measure wall-clock with hyperfine. See `just
+-- profile-*`.
 executable sentry-profile
+  import: rts-threaded-a32m
+  hs-source-dirs: profile
   main-is: Main.hs
-  other-modules:
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      profile
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
   build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , crypton-connection
-    , data-default
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , http-client
-    , http-client-tls
-    , http-types
-    , patrol ==1.2.*
-    , sentry
-    , sentry-core
-    , stm
-    , testkit
-    , text
-    , time
-    , tls
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-  default-language: GHC2024
+    base,
+    crypton-connection,
+    data-default,
+    http-client,
+    http-client-tls,
+    patrol ^>=1.2,
+    sentry,
+    sentry-core,
+    testkit,
+    text,
+    time,
+    tls,
 
+-- Standalone TLS sink for out-of-process profiling: run `sentry-sink <port>`
+-- and point sentry-profile at it via SENTRY_PROFILE_SINK_PORT so the sink's
+-- CPU/allocation stays out of the client's profile.
 executable sentry-sink
+  import: rts-threaded-a32m
+  hs-source-dirs: sink
   main-is: Main.hs
-  other-modules:
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      sink
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
   build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , http-types
-    , patrol ==1.2.*
-    , sentry-core
-    , stm
-    , testkit
-    , text
-    , time
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-  default-language: GHC2024
-
-test-suite integration
-  type: exitcode-stdio-1.0
-  main-is: Driver.hs
-  other-modules:
-      Http2CaptureTest
-      Http2ConcurrencyTest
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      tests/integration
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
-  build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , hspec
-    , http-types
-    , http2-tls
-    , patrol ==1.2.*
-    , sentry
-    , sentry-core
-    , stm
-    , tasty
-    , tasty-discover
-    , tasty-hspec >=1.2
-    , testkit
-    , text
-    , time
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-  default-language: GHC2024
-
-test-suite kent
-  type: exitcode-stdio-1.0
-  main-is: Driver.hs
-  other-modules:
-      CaptureEventTest
-      ClientReportTest
-      DropPathTest
-      ShutdownTest
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      tests/kent
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
-  build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , hspec
-    , http-types
-    , patrol ==1.2.*
-    , sentry
-    , sentry-core
-    , stm
-    , tasty
-    , tasty-discover
-    , tasty-hspec >=1.2
-    , testkit
-    , text
-    , time
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-  default-language: GHC2024
-  if !flag(kent)
-    buildable: False
+    base,
+    testkit,
 
 test-suite unit
+  import: test
   type: exitcode-stdio-1.0
+  hs-source-dirs: tests/unit
   main-is: Driver.hs
+  -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
   other-modules:
-      AsyncExecutorTest
-      RateLimiterTest
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      tests/unit
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -Wno-missed-specialisations -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
+    AsyncExecutorTest
+    RateLimiterTest
+
   build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , hspec
-    , http-types
-    , patrol ==1.2.*
-    , sentry
-    , sentry-core
-    , stm
-    , tasty
-    , tasty-discover
-    , tasty-hspec >=1.2
-    , text
-    , time
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-  default-language: GHC2024
+    async,
+    base,
+    bytestring,
+    hspec,
+    patrol,
+    sentry,
+    sentry-core,
+    stm,
+    time,
+    unliftio,
+
+test-suite integration
+  import: test
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests/integration
+  main-is: Driver.hs
+  -- cabal-gild: discover tests/integration --exclude=tests/integration/Driver.hs
+  other-modules:
+    Http2CaptureTest
+    Http2ConcurrencyTest
+
+  build-depends:
+    async,
+    base,
+    data-default,
+    hspec,
+    http-types,
+    http2-tls,
+    sentry,
+    sentry-core,
+    testkit,
+    unliftio,
+
+-- Gated behind the `kent` flag: needs a running kent-server mock backend.
+test-suite kent
+  import: test
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests/kent
+  main-is: Driver.hs
+
+  if !flag(kent)
+    buildable: False
+  -- cabal-gild: discover tests/kent --exclude=tests/kent/Driver.hs
+  other-modules:
+    CaptureEventTest
+    ClientReportTest
+    DropPathTest
+    ShutdownTest
+
+  build-depends:
+    aeson,
+    base,
+    data-default,
+    hspec,
+    patrol ^>=1.2,
+    sentry,
+    sentry-core,
+    testkit,
+    text,
+    unliftio,
+    witch,
 
 benchmark time
+  import: rts-threaded-a32m
   type: exitcode-stdio-1.0
+  hs-source-dirs: benchmarks
   main-is: Main.hs
-  other-modules:
-      Paths_sentry
-  autogen-modules:
-      Paths_sentry
-  hs-source-dirs:
-      benchmarks
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts "-with-rtsopts=-A32M -N"
   build-depends:
-      aeson
-    , async
-    , atomic-primops
-    , attoparsec
-    , base
-    , bytestring
-    , containers
-    , data-default
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , http-types
-    , patrol ==1.2.*
-    , sentry
-    , sentry-core
-    , stm
-    , tasty
-    , tasty-bench
-    , text
-    , time
-    , transformers
-    , unagi-chan
-    , unliftio
-    , witch
-  default-language: GHC2024
+    base,
+    patrol ^>=1.2,
+    sentry,
+    sentry-core,
+    tasty,
+    tasty-bench,
+    time,
+    unliftio,

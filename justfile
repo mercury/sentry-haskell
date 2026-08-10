@@ -1,5 +1,16 @@
 package := "sentry"
 
+cabal_files := "sentry-core/sentry-core.cabal sentry/sentry.cabal patrol-optics/patrol-optics.cabal sentry-core-optics/sentry-core-optics.cabal sentry-optics/sentry-optics.cabal"
+
+# Format cabal, Haskell, and Nix sources in one shot.
+format:
+  nix fmt
+
+# Verify formatting without modifying files (for CI / pre-commit).
+check-format:
+  cabal-gild --mode=check {{cabal_files}}
+  nix fmt -- --fail-on-change
+
 # Number of jobs for 'cabal-install' to run in parallel when building.
 #
 # Defaults to the number of logical cores on the host machine.
@@ -27,7 +38,6 @@ repl_opts := "-O0 -fobject-code"
 build target=package:
   cabal build {{target}} \
     -j{{jobs}} \
-    --builddir '{{build_dir}}' \
     --ghc-options '{{ghc_opts}}'
 
 build-core: (build "sentry-core")
@@ -35,14 +45,12 @@ build-core: (build "sentry-core")
 test target=package:
   cabal test {{target}} \
     -j{{jobs}} \
-    --builddir '{{build_dir}}' \
     --ghc-options '{{ghc_opts}}'
 
 bench target=package:
   cabal bench {{target}} \
     -j{{jobs}} \
     --project-file {{project_file}} \
-    --builddir '{{bench_dir}}' \
     --ghc-options '{{ghc_opts}}' \
     --benchmark-options '+RTS -T -p'
 
@@ -51,7 +59,6 @@ bench target=package:
 profile-run backend="h2" mode="async" count="5000" queue="1000" payload="0":
   SENTRY_PROFILE_BACKEND={{backend}} cabal run sentry:exe:sentry-profile \
     -j{{jobs}} \
-    --builddir '{{build_dir}}' \
     --ghc-options '{{ghc_opts}}' \
     -- {{mode}} {{count}} {{queue}} {{payload}}
 
@@ -64,19 +71,20 @@ profile-run backend="h2" mode="async" count="5000" queue="1000" payload="0":
 # Note: profiling perturbs timing, use `profile-time` for wall-clock numbers.
 profile-space backend="h2" count="50000" queue="1000" payload="0":
   cabal build sentry:exe:sentry-profile sentry:exe:sentry-sink \
-    -j{{jobs}} --project-file cabal.project.profiling --builddir '{{bench_dir}}'
+    -j{{jobs}} \
+    --project-file cabal.project.profiling
   scripts/profile-space.sh \
-    "$(cabal list-bin sentry:exe:sentry-profile --project-file cabal.project.profiling --builddir '{{bench_dir}}')" \
-    "$(cabal list-bin sentry:exe:sentry-sink --project-file cabal.project.profiling --builddir '{{bench_dir}}')" \
+    "$(cabal list-bin sentry:exe:sentry-profile --project-file cabal.project.profiling)" \
+    "$(cabal list-bin sentry:exe:sentry-sink --project-file cabal.project.profiling)" \
     {{backend}} {{count}} {{queue}} {{payload}}
 
 # Compare HTTP/1.1 vs HTTP/2 wall-clock with hyperfine against a single
 # separately-spawned TLS backend.
 profile-time count="50000" queue="1000" payload="0":
-  cabal build sentry:exe:sentry-profile sentry:exe:sentry-sink -j{{jobs}} --builddir '{{build_dir}}' --ghc-options '{{ghc_opts}} -O2'
+  cabal build sentry:exe:sentry-profile sentry:exe:sentry-sink -j{{jobs}} --ghc-options '{{ghc_opts}} -O2'
   scripts/profile-time.sh \
-    "$(cabal list-bin sentry:exe:sentry-profile --builddir '{{build_dir}}')" \
-    "$(cabal list-bin sentry:exe:sentry-sink --builddir '{{build_dir}}')" \
+    "$(cabal list-bin sentry:exe:sentry-profile)" \
+    "$(cabal list-bin sentry:exe:sentry-sink)" \
     {{count}} {{queue}} {{payload}}
 
 ghciwatch target=package:
@@ -85,7 +93,6 @@ ghciwatch target=package:
     --command \
       "cabal repl {{target}} \
         -j{{jobs}} \
-        --builddir {{repl_dir}} \
         --ghc-options '{{ghc_opts}}' \
         --repl-options {{repl_opts}}"
  

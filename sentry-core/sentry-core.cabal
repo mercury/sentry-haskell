@@ -1,254 +1,177 @@
 cabal-version: 3.0
+name: sentry-core
+version: 0.0.0
+author: jkachmar
+copyright: 2025 jkachmar
+maintainer: stability@mercury.com
+license: MPL-2.0
+license-file: LICENSE
+build-type: Simple
+-- cabal-gild: fragment ../cabal/tested-with.fragment
+tested-with: ghc =={9.10.3, 9.12.2}
 
--- This file has been generated from package.yaml by hpack version 0.38.2.
---
--- see: https://github.com/sol/hpack
+-- cabal-gild: fragment ../cabal/defaults.fragment
+common defaults
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DerivingStrategies
+    ImportQualifiedPost
+    MultiWayIf
+    OverloadedRecordDot
+    OverloadedStrings
+    PatternSynonyms
+    ScopedTypeVariables
+    StrictData
 
-name:           sentry-core
-version:        0.0.0
-author:         jkachmar
-maintainer:     stability@mercury.com
-copyright:      2025 jkachmar
-license:        MPL-2.0
-license-file:   LICENSE
-build-type:     Simple
-tested-with:
-    GHC == { 9.10.3, 9.12.2 }
+  ghc-options:
+    -g
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-implicit-prelude
+    -Wno-missing-export-lists
+    -Wno-missing-import-lists
+    -Wno-missing-local-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-prepositive-qualified-module
+    -Wno-unsafe
+
+common rts-threaded
+  import: defaults
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+
+common test
+  import: rts-threaded
+  build-tool-depends: tasty-discover:tasty-discover
+  build-depends:
+    tasty,
+    tasty-hspec >=1.2,
 
 library
+  import: defaults
+  hs-source-dirs: library
+  -- cabal-gild: discover library
   exposed-modules:
-      Sentry.BreadcrumbType
-      Sentry.Capture
-      Sentry.Client
-      Sentry.Client.Options
-      Sentry.Client.Options.Env
-      Sentry.ClientReport
-      Sentry.Core
-      Sentry.Event
-      Sentry.Init
-      Sentry.Integration
-      Sentry.Integration.Context
-      Sentry.Integration.Stacktrace
-      Sentry.Internal
-      Sentry.Level
-      Sentry.Mechanism
-      Sentry.Scope
-      Sentry.Scope.Internal
-      Sentry.Scope.IO
-      Sentry.Scope.Monad
-      Sentry.Scope.Update
-      Sentry.Sdk
-      Sentry.Stacktrace
-      Sentry.Test
-      Sentry.Transport
-  other-modules:
-      Paths_sentry_core
-  autogen-modules:
-      Paths_sentry_core
-  hs-source-dirs:
-      library
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations
+    Sentry.BreadcrumbType
+    Sentry.Capture
+    Sentry.Client
+    Sentry.Client.Options
+    Sentry.Client.Options.Env
+    Sentry.ClientReport
+    Sentry.Core
+    Sentry.Event
+    Sentry.Init
+    Sentry.Integration
+    Sentry.Integration.Context
+    Sentry.Integration.Stacktrace
+    Sentry.Internal
+    Sentry.Level
+    Sentry.Mechanism
+    Sentry.Scope
+    Sentry.Scope.Internal
+    Sentry.Scope.IO
+    Sentry.Scope.Monad
+    Sentry.Scope.Update
+    Sentry.Sdk
+    Sentry.Stacktrace
+    Sentry.Test
+    Sentry.Transport
+
+  other-modules: Paths_sentry_core
+  autogen-modules: Paths_sentry_core
   build-depends:
-      aeson
-    , annotated-exception
-    , atomic-primops
-    , base
-    , containers
-    , data-default
-    , deepseq
-    , exceptions
-    , hs-opentelemetry-api ==1.0.*
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , mtl
-    , network-bsd
-    , network-uri
-    , patrol ==1.2.*
-    , random
-    , safe-exceptions
-    , text
-    , time
-    , transformers
-    , unliftio-core
-    , unordered-containers
-    , vector
-    , witch
-  default-language: GHC2024
+    aeson,
+    annotated-exception,
+    atomic-primops,
+    base,
+    containers,
+    data-default,
+    exceptions,
+    hs-opentelemetry-api ^>=1.0,
+    mtl,
+    network-bsd,
+    network-uri,
+    patrol ^>=1.2,
+    random,
+    safe-exceptions,
+    text,
+    time,
+    transformers,
+    unliftio-core,
+    unordered-containers,
+    vector,
+    witch,
 
 test-suite unit
+  import: test
   type: exitcode-stdio-1.0
+  hs-source-dirs: tests/unit
   main-is: Driver.hs
+  -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
   other-modules:
-      BreadcrumbTest
-      CaptureDefaultsTest
-      CaptureDropTest
-      CaptureExceptionTest
-      CaptureMechanismTest
-      ClientReportTest
-      ClientResolutionTest
-      IntegrationSetupTest
-      LifecycleTest
-      OptionsEnvTest
-      ScopeContextTest
-      ScopeDataTest
-      ScopeMutationTest
-      ScopeTest
-      StacktraceTest
-      Paths_sentry_core
-  autogen-modules:
-      Paths_sentry_core
-  hs-source-dirs:
-      tests/unit
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -g -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
-  build-depends:
-      aeson
-    , annotated-exception
-    , atomic-primops
-    , base
-    , containers
-    , data-default
-    , deepseq
-    , exceptions
-    , hs-opentelemetry-api ==1.0.*
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , hspec
-    , mtl
-    , network-bsd
-    , network-uri
-    , patrol ==1.2.*
-    , random
-    , safe-exceptions
-    , sentry-core
-    , tasty
-    , tasty-discover
-    , tasty-hspec >=1.2
-    , text
-    , time
-    , transformers
-    , unliftio-core
-    , unordered-containers
-    , vector
-    , witch
-  default-language: GHC2024
+    BreadcrumbTest
+    CaptureDefaultsTest
+    CaptureDropTest
+    CaptureExceptionTest
+    CaptureMechanismTest
+    ClientReportTest
+    ClientResolutionTest
+    IntegrationSetupTest
+    LifecycleTest
+    OptionsEnvTest
+    ScopeContextTest
+    ScopeDataTest
+    ScopeMutationTest
+    ScopeTest
+    StacktraceTest
 
-benchmark space
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
-  other-modules:
-      Paths_sentry_core
-  autogen-modules:
-      Paths_sentry_core
-  hs-source-dirs:
-      benchmarks/space
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -rtsopts -with-rtsopts=-A32m
   build-depends:
-      aeson
-    , annotated-exception
-    , atomic-primops
-    , base
-    , containers
-    , data-default
-    , deepseq
-    , exceptions
-    , hs-opentelemetry-api ==1.0.*
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , mtl
-    , network-bsd
-    , network-uri
-    , patrol
-    , random
-    , safe-exceptions
-    , sentry-core
-    , text
-    , time
-    , transformers
-    , unliftio-core
-    , unordered-containers
-    , vector
-    , weigh
-    , witch
-  default-language: GHC2024
+    aeson,
+    annotated-exception,
+    base,
+    containers,
+    data-default,
+    hs-opentelemetry-api,
+    hspec,
+    mtl,
+    patrol,
+    safe-exceptions,
+    sentry-core,
+    text,
+    time,
+    unordered-containers,
+    vector,
+    witch,
 
 benchmark time
+  import: defaults
   type: exitcode-stdio-1.0
+  hs-source-dirs: benchmarks/time
   main-is: Main.hs
-  other-modules:
-      Paths_sentry_core
-  autogen-modules:
-      Paths_sentry_core
-  hs-source-dirs:
-      benchmarks/time
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -g -Weverything -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-export-lists -Wno-missing-import-lists -Wno-implicit-prelude -Wno-missing-local-signatures -Wno-prepositive-qualified-module -Wno-unused-packages -Wno-all-missed-specialisations -with-rtsopts=-A32m
+  ghc-options: -with-rtsopts=-A32m
   build-depends:
-      aeson
-    , annotated-exception
-    , atomic-primops
-    , base
-    , containers
-    , data-default
-    , deepseq
-    , exceptions
-    , hs-opentelemetry-api ==1.0.*
-    , hs-opentelemetry-instrumentation-http-client ==1.0.*
-    , mtl
-    , network-bsd
-    , network-uri
-    , patrol ==1.2.*
-    , random
-    , safe-exceptions
-    , sentry-core
-    , tasty
-    , tasty-bench
-    , text
-    , time
-    , transformers
-    , unliftio-core
-    , unordered-containers
-    , vector
-    , witch
-  default-language: GHC2024
+    base,
+    tasty-bench,
+
+benchmark space
+  import: defaults
+  type: exitcode-stdio-1.0
+  hs-source-dirs: benchmarks/space
+  main-is: Main.hs
+  ghc-options:
+    -rtsopts
+    -with-rtsopts=-A32m
+
+  build-depends:
+    aeson,
+    base,
+    data-default,
+    patrol ^>=1.2,
+    sentry-core,
+    text,
+    vector,
+    weigh,

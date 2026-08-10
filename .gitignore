@@ -9,7 +9,6 @@ result
 
 # cabal-install build artifacts
 dist-newstyle/*
-cabal/*
 
 # GHC profiling artifacts
 profiles/*

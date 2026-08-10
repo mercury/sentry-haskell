@@ -13,12 +13,16 @@
         "aarch64-darwin"
         "aarch64-linux"
       ];
-      overlays = [ self.overlays.native ];
+      overlays = [
+        self.overlays.native
+        self.overlays.development
+      ];
       eachSystem = forEachSystem { inherit systems overlays; };
     in
     {
-      # public outputs, should not reference
+      # public outputs, should not reference private flake inputs.
       overlays = {
+        development = import ./nix/overlays/development.nix;
         native = import ./nix/overlays/native.nix;
       };
 
@@ -31,12 +35,11 @@
             buildInputs =
               (with pkgs; [
                 # tooling
+                cabal-gild
                 cabal-install
                 ghciwatch
                 haskell.compiler.ghc910
-                hpack
                 just
-                specify-cli
                 # integration test server
                 kent-server
                 # end-to-end wall-clock benchmarking for the profile harness
@@ -75,6 +78,10 @@
         eval {
           projectRootFile = "flake.nix";
           programs = {
+            cabal-gild = {
+              enable = true;
+              package = pkgs.cabal-gild;
+            };
             fourmolu.enable = true;
             nixfmt.enable = true;
           };

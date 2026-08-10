@@ -537,8 +537,8 @@ Transport operations return explicit sum types rather than throwing:
 Clone the repository and enter the development shell with `nix develop` (or
 `direnv allow` if you use direnv).
 
-The shell provides GHC 9.10, `cabal-install`, `hpack`, `fourmolu`, `ghciwatch`,
-the `kent-server` mock backend, and the profiling toolchain.
+The shell provides GHC 9.10, `cabal-install`, `cabal-gild`, `fourmolu`,
+`ghciwatch`, the `kent-server` mock backend, and the profiling toolchain.
 
 Common tasks are wrapped in the `just` command runner:
 
@@ -558,10 +558,14 @@ recipes drive the transport harness against a local TLS sink; the latter two use
 profile reflects optimized code.
 
 > [!IMPORTANT]
-> Package configuration lives in `package.yaml` files; this project uses hpack.
-> Regenerate `.cabal` files with `hpack` after editing, before building.
+> `.cabal` files are hand-written and are the source of truth. `cabal-gild`
+> keeps module lists (`exposed-modules`, `other-modules`, `extra-source-files`)
+> current via `-- cabal-gild: discover` pragmas, and keeps shared settings
+> (warnings, extensions, `tested-with`) in sync via `-- cabal-gild: fragment`
+> pragmas pointing at `cabal/`. Run `just format` after adding a source
+> file or editing a fragment, before building.
 
-Formatting is handled by `nix fmt`.
+Formatting is handled by `nix fmt` (`just format` / `just check-format`).
 
 ## Frequently Asked Questions
 

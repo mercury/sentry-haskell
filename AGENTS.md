@@ -16,14 +16,14 @@ This is an **unofficial Sentry SDK for Haskell**, currently in early development
 
 ```
 sentry-haskell/
-├── sentry-core/          # Core SDK abstractions (for integration authors)
-├── sentry/               # High-level SDK (WIP: async executor & rate limiter done)
-├── nix/                  # Nix build infrastructure
-│   ├── packages/         # Custom packages (kent mock server)
-│   └── overlays/         # Nix overlays
-├── cabal.project         # Multi-package workspace config
-├── flake.nix            # Nix development environment
-└── hpack-defaults.yaml  # Shared hpack settings
+├── sentry-core/      # Core SDK abstractions (for integration authors)
+├── sentry/           # High-level SDK (WIP: async executor & rate limiter done)
+├── nix/              # Nix build infrastructure
+│   ├── packages/     # Custom packages (kent mock server)
+│   └── overlays/     # Nix overlays
+├── cabal.project     # Multi-package workspace config
+├── flake.nix         # Nix development environment
+└── cabal/            # Shared cabal-install components (cabal-gild fragments, project files, etc.)
 ```
 
 ## Package Architecture
@@ -87,30 +87,47 @@ The Nix flake provides:
 - **GHC 9.10** and **cabal-install**
 - **just**: Command runner for common tasks (see `justfile`)
 - **ghciwatch**: Live-reloading REPL watcher for fast feedback
-- **hpack**: Generate .cabal files from package.yaml
+- **cabal-gild**: Formats `.cabal` files and auto-discovers module lists
 - **fourmolu**: Haskell code formatter (config in fourmolu.yaml)
 - **kent-server**: Mock Sentry backend for integration testing (v2.1.0)
 - **zlib**: C dependencies
 
 ## Build System
 
-### Cabal + hpack
+### Cabal + cabal-gild
 
-This project uses **hpack** for package configuration (source of truth is `package.yaml` files):
+`.cabal` files are hand-written and are the source of truth (no hpack, no
+`package.yaml`). `cabal-gild` keeps them normalized and their module lists
+current via two mechanisms:
+
+- **`-- cabal-gild: discover <dir>`** pragmas above `exposed-modules:` /
+  `other-modules:` / `extra-source-files:` re-derive that field from the
+  files on disk every time the file is formatted.
+- **`-- cabal-gild: fragment <path>`** pragmas above `common defaults` /
+  `tested-with:` splice in the shared settings from `cabal/` (see below),
+  so those settings are edited in exactly one place.
 
 ```bash
-# After modifying package.yaml, regenerate .cabal files
-hpack
+# Reformat + re-discover modules in every .cabal file, plus Haskell/Nix sources
+just format
+
+# Check formatting without modifying files (CI / pre-commit)
+just check-format
 
 # Then build as normal
 just build
 ```
 
-**Common shared settings** (`hpack-defaults.yaml`):
+**Common shared settings** (`cabal/defaults.fragment`):
 - Language: GHC2024
 - Strict warnings (`-Weverything` with pragmatic exclusions)
 - Default extensions: `BlockArguments`, `ImportQualifiedPost`, `OverloadedRecordDot`, etc.
 - Debug info included (`-g`)
+
+Package-specific additions (e.g. `-Wno-orphans` in `patrol-optics` and
+`sentry-core-optics`) layer on top via a derived `common` stanza that
+`import:`s `defaults` — nothing package-specific goes in the fragment itself,
+since a fragment pragma replaces the whole section it's attached to.
 
 ### Testing Infrastructure
 
@@ -141,8 +158,9 @@ just build
 # 1. Make changes to source code
 vim sentry-core/library/Sentry/Client.hs
 
-# 2. If you modified package.yaml, regenerate .cabal
-hpack
+# 2. If you changed a module list, added a source file, or edited a
+#    cabal/*.fragment, re-run cabal-gild to pick it up
+just format
 
 # 3. Auto-reload development (recommended)
 just ghciwatch              # Standard watch mode
@@ -313,10 +331,10 @@ This project adapts sentry-rust's proven architecture to Haskell:
 
 ## Tips for AI Assistants
 
-1. **Always run `hpack`** after modifying `package.yaml` files before building
+1. **Run `just format`** after changing a module list or a `cabal/*.fragment` file, before building
 2. **Use `just` commands**: Prefer `just build`, `just build-core`, and `just ghciwatch` over direct cabal commands
 3. **Use `just ghciwatch`** for fast feedback during development
-4. **Check `hpack-defaults.yaml`** for shared GHC options/extensions
+4. **Check `cabal/defaults.fragment`** for shared GHC options/extensions
 5. **Kent server** is available for integration testing (Flask-based mock)
 6. **Type-driven development**: Leverage strict types and GHC warnings
 7. **Plugin pattern**: New transports/integrations should implement respective typeclasses

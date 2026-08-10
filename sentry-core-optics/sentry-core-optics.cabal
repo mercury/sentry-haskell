@@ -1,130 +1,107 @@
 cabal-version: 3.0
+name: sentry-core-optics
+version: 0.0.0
+synopsis: Optics-based authoring for Sentry scope updates (transport-agnostic).
+author: jkachmar
+copyright: 2025 jkachmar
+maintainer: stability@mercury.com
+license: MPL-2.0
+license-file: LICENSE
+build-type: Simple
+-- cabal-gild: fragment ../cabal/tested-with.fragment
+tested-with: ghc =={9.10.3, 9.12.2}
 
--- This file has been generated from package.yaml by hpack version 0.38.2.
---
--- see: https://github.com/sol/hpack
+-- cabal-gild: fragment ../cabal/defaults.fragment
+common defaults
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DerivingStrategies
+    ImportQualifiedPost
+    MultiWayIf
+    OverloadedRecordDot
+    OverloadedStrings
+    PatternSynonyms
+    ScopedTypeVariables
+    StrictData
 
-name:           sentry-core-optics
-version:        0.0.0
-synopsis:       Optics-based authoring for Sentry scope updates (transport-agnostic).
-author:         jkachmar
-maintainer:     stability@mercury.com
-copyright:      2025 jkachmar
-license:        MPL-2.0
-license-file:   LICENSE
-build-type:     Simple
-tested-with:
-    GHC == { 9.10.3, 9.12.2 }
+  ghc-options:
+    -g
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-implicit-prelude
+    -Wno-missing-export-lists
+    -Wno-missing-import-lists
+    -Wno-missing-local-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-prepositive-qualified-module
+    -Wno-unsafe
+
+-- The 'ScopeData' 'LabelOptic' instances defined here are orphans (the type
+-- lives in sentry-core, the class in optics-core). This is the deliberate
+-- cost of keeping sentry-core optics-free; sentry-core-optics is their sole
+-- definer, so there is no coherence risk.
+common orphans
+  import: defaults
+  ghc-options: -Wno-orphans
+
+common rts-threaded
+  import: orphans
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+
+common test
+  import: rts-threaded
+  build-tool-depends: tasty-discover:tasty-discover
+  build-depends:
+    tasty,
+    tasty-hspec >=1.2,
 
 library
+  import: orphans
+  hs-source-dirs: library
+  -- cabal-gild: discover library
   exposed-modules:
-      Sentry.Core.Optics
-      Sentry.Core.Optics.Internal
-      Sentry.Core.Optics.Prelude
-      Sentry.Core.Optics.Values
-  other-modules:
-      Paths_sentry_core_optics
-  autogen-modules:
-      Paths_sentry_core_optics
-  hs-source-dirs:
-      library
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -Wno-orphans
+    Sentry.Core.Optics
+    Sentry.Core.Optics.Internal
+    Sentry.Core.Optics.Prelude
+    Sentry.Core.Optics.Values
+
   build-depends:
-      base
-    , mtl
-    , optics ==0.4.*
-    , optics-core ==0.4.*
-    , optics-extra ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-    , patrol-optics
-    , sentry-core
-  default-language: GHC2024
+    base,
+    mtl,
+    optics ^>=0.4,
+    optics-extra ^>=0.4,
+    optics-th ^>=0.4,
+    patrol ^>=1.2,
+    patrol-optics,
+    sentry-core,
 
 executable checkout
+  import: rts-threaded
+  hs-source-dirs: examples/checkout
   main-is: Main.hs
-  other-modules:
-      Paths_sentry_core_optics
-  autogen-modules:
-      Paths_sentry_core_optics
-  hs-source-dirs:
-      examples/checkout
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base
-    , data-default
-    , mtl
-    , optics ==0.4.*
-    , optics-core ==0.4.*
-    , optics-extra ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-    , patrol-optics
-    , pretty-simple
-    , sentry-core
-    , sentry-core-optics
-    , text
-  default-language: GHC2024
+    base,
+    data-default,
+    pretty-simple,
+    sentry-core,
+    sentry-core-optics,
+    text,
 
 test-suite unit
+  import: test
   type: exitcode-stdio-1.0
+  hs-source-dirs: tests/unit
   main-is: Driver.hs
-  other-modules:
-      OpticsTest
-      Paths_sentry_core_optics
-  autogen-modules:
-      Paths_sentry_core_optics
-  hs-source-dirs:
-      tests/unit
-  default-extensions:
-      BlockArguments
-      DeriveAnyClass
-      DerivingStrategies
-      ImportQualifiedPost
-      MultiWayIf
-      OverloadedRecordDot
-      OverloadedStrings
-      PatternSynonyms
-      ScopedTypeVariables
-      StrictData
-  ghc-options: -Wno-orphans -g -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      tasty-discover:tasty-discover
+  -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
+  other-modules: OpticsTest
   build-depends:
-      base
-    , hspec
-    , mtl
-    , optics ==0.4.*
-    , optics-core ==0.4.*
-    , optics-extra ==0.4.*
-    , optics-th ==0.4.*
-    , patrol ==1.2.*
-    , patrol-optics
-    , sentry-core
-    , sentry-core-optics
-    , tasty
-    , tasty-discover
-    , tasty-hspec >=1.2
-  default-language: GHC2024
+    base,
+    hspec,
+    patrol ^>=1.2,
+    sentry-core,
+    sentry-core-optics,
