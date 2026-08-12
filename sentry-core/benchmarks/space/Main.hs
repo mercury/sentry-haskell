@@ -1,32 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Space benchmarks for the capture path.
---
--- Each case drives a fixed number of capture calls through a recording client
--- backed by an in-memory collecting transport ('Sentry.Test.TestTransport'), so
--- the full pipeline runs (scope resolution + merge, integrations, @beforeSend@,
--- sampling, envelope construction) without any real I/O. weigh runs each case
--- in its own subprocess, so the process-global scope mutations below do not
--- leak between cases.
---
--- The client is installed on the global scope via the 'Sentry.init' path. The
--- metadata models a realistic server request by placing data at three
--- layers:
---
--- * the global scope holds data set once at init
--- * the isolation scope holds per-request data such as tags, extras, and a
---   breadcrumb trail
--- *  current scope holds per-operation data
---
--- Keys are disjoint across layers, matching real apps where @release@ lives on
--- the global scope, @request_id@ on the isolation scope, and @span@ data on the
--- current scope, so every capture genuinely merges all three.
---
--- This matches what the three-scope model does per capture, similar to
--- @sentry-python@'s @_merge_scopes@.
---
--- The "no scope data" cases are the floor (pipeline only); "typical" is an
--- ordinary instrumented error; "heavy" is a heavily-instrumented upper bound.
 module Main where
 
 import Control.Monad (replicateM_)
@@ -39,19 +13,22 @@ import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Level qualified as Patrol.Level
+import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Core qualified as Sentry
 import Sentry.Scope (Scope)
 import Sentry.Scope qualified as Scope
 import Sentry.Test qualified as Test
+import Sentry.Transport (SomeTransport (..), Transport (..))
+import Sentry.Transport qualified as Transport
 import Weigh qualified
+import Witch qualified
 
 -- | Number of capture calls per case.
 iterations :: Int
 iterations = 10000
 
--- | How much metadata each scope layer carries. Keys are disjoint across
--- layers, so a capture merges all three.
+-- | How much metadata each scope layer carries.
 type Profile :: Type
 data Profile = Profile
   { globalTags :: Int,
@@ -85,14 +62,31 @@ heavy =
       requestBreadcrumbs = 100
     }
 
--- | Install a fresh recording client on the process-global scope. The
--- breadcrumb cap is raised so the trails below are not trimmed (we want a
--- deterministic count to merge).
+-- | Install a fresh recording client on the process-global scope.
 installGlobalClient :: IO ()
 installGlobalClient = do
   transport <- Test.new
   g <- Scope.getGlobal
   Scope.bindClient (Just (Test.mkCustomClient transport def{maxBreadcrumbs = 1000})) g
+
+-- | A transport that discards every envelope immediately, retaining nothing.
+type DiscardTransport :: Type
+data DiscardTransport = DiscardTransport
+
+instance Transport DiscardTransport where
+  send _ _ = pure Transport.SendProcessed
+
+installDiscardingClient :: IO ()
+installDiscardingClient = do
+  globalScope <- Scope.getGlobal
+  flip Scope.bindClient globalScope $
+    Just $
+      Witch.from @ClientOptions @Client
+        def
+          { dsn = Just Test.TEST_DSN,
+            transport = Just $ Witch.from $ SomeTransport DiscardTransport,
+            maxBreadcrumbs = 1000
+          }
 
 -- | Capture @iterations@ message events.
 captureN :: IO ()
@@ -109,8 +103,6 @@ setExtras scope count =
   for_ [1 .. count] \i ->
     Scope.setExtra scope ("extra-" <> tshow i) (Aeson.String ("payload-" <> tshow i))
 
--- | Add @count@ breadcrumbs to the active isolation scope (where
--- 'Sentry.addBreadcrumb' writes), as a request handler would accumulate them.
 addBreadcrumbs :: Int -> IO ()
 addBreadcrumbs count =
   for_ [1 .. count] \i ->
@@ -124,14 +116,20 @@ tshow = Text.pack . show
 baselineMessage :: () -> IO ()
 baselineMessage () = installGlobalClient *> captureN
 
+baselineMessageDiscarding :: () -> IO ()
+baselineMessageDiscarding () = installDiscardingClient *> captureN
+
 baselineException :: () -> IO ()
 baselineException () = do
   installGlobalClient
   replicateM_ iterations (Sentry.captureException_ (userError "benchmark boom"))
 
--- | A realistic request lifecycle: global metadata at init, per-request data on
--- the isolation scope (tags, extras, level, breadcrumb trail), per-operation
--- data on the current scope, then capture under the merged scope.
+-- | A realistic request lifecycle:
+--
+-- * global metadata at init
+-- * per-request data on the isolation scope
+-- * per-operation data on the current scope
+-- * capture under the merged scope
 runProfile :: Profile -> () -> IO ()
 runProfile p () = do
   installGlobalClient
@@ -149,7 +147,9 @@ runProfile p () = do
 
 main :: IO ()
 main = Weigh.mainWith do
+  Weigh.setColumns [Weigh.Case, Weigh.Allocated, Weigh.GCs, Weigh.Live, Weigh.Max, Weigh.MaxOS]
   Weigh.io "message, no scope data" baselineMessage ()
+  Weigh.io "message, no scope data (discarding transport)" baselineMessageDiscarding ()
   Weigh.io "exception, no scope data" baselineException ()
   Weigh.io "message, typical request scope" (runProfile typical) ()
   Weigh.io "message, heavy request scope" (runProfile heavy) ()
