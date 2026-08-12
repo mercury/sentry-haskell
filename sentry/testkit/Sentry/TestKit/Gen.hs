@@ -11,7 +11,7 @@ module Sentry.TestKit.Gen
   )
 where
 
-import Control.Exception (SomeException (..))
+import Control.Exception (toException)
 import Data.Text qualified as Text
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
@@ -21,7 +21,7 @@ import Sentry.Event qualified as Event
 -- | A representative exception event, built the same way
 -- 'Sentry.Capture.captureException' would build one.
 sampleEvent :: Patrol.Event
-sampleEvent = Event.fromException (SomeException (userError "boom"))
+sampleEvent = Event.fromException . toException $ userError "boom"
 
 -- | A message event whose formatted body is @n@ bytes of filler, for stressing
 -- serialization and allocation with larger payloads.

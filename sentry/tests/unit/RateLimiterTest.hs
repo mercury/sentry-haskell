@@ -1,6 +1,6 @@
 module RateLimiterTest where
 
-import Control.Exception (SomeException (..))
+import Control.Exception (toException)
 import Data.ByteString (ByteString)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..), addUTCTime, secondsToDiffTime)
@@ -192,5 +192,5 @@ reportItem =
 
 -- | A valid 'Patrol.Type.Event.Event' mock.
 errorEvent :: Patrol.Event
-errorEvent = unsafePerformIO $ Patrol.Event.fromSomeException $ SomeException $ userError "boom"
+errorEvent = unsafePerformIO . Patrol.Event.fromSomeException . toException $ userError "boom"
 {-# NOINLINE errorEvent #-}

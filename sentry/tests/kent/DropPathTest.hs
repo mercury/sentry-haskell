@@ -12,7 +12,7 @@ import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
 import Test.Hspec
-import UnliftIO.Exception (SomeException (..))
+import UnliftIO.Exception (toException)
 import Witch qualified
 
 -- | Capture exceptions through a client built from the given options, flush,
@@ -33,8 +33,8 @@ deliveredUnder tweak =
         client = Witch.from @ClientOptions @Client opts
     events <-
       replicateM 10 $
-        Patrol.Event.fromSomeException $
-          SomeException (userError "boom")
+        Patrol.Event.fromSomeException . toException $
+          userError "boom"
     void $ traverse (\e -> withClient client $ captureEvent e) events
     flushResult <- Transport.flush transport 5
     flushResult `shouldBe` FlushSucceeded

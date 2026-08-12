@@ -17,7 +17,7 @@ import Sentry.Transport (FlushResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
 import Test.Hspec
-import UnliftIO.Exception (SomeException (..))
+import UnliftIO.Exception (toException)
 import Witch qualified
 
 spec_clientReport :: Spec
@@ -41,8 +41,8 @@ spec_clientReport = describe "client report delivery" do
           n = 3 :: Int
       events <-
         replicateM n $
-          Patrol.Event.fromSomeException $
-            SomeException (userError "boom")
+          Patrol.Event.fromSomeException . toException $
+            userError "boom"
       sentIds <- traverse (\e -> withClient client $ captureEvent e) events
       -- Nothing was delivered as an event.
       catMaybes sentIds `shouldBe` []

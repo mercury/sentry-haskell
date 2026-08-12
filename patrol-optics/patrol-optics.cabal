@@ -30,6 +30,7 @@ common defaults
     -g
     -Weverything
     -Wno-all-missed-specialisations
+    -Wno-missed-specialisations
     -Wno-implicit-prelude
     -Wno-missing-export-lists
     -Wno-missing-import-lists

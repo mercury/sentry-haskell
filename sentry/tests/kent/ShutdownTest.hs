@@ -12,7 +12,7 @@ import Sentry.Transport (ShutdownResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
 import Test.Hspec
-import UnliftIO.Exception (SomeException (..))
+import UnliftIO.Exception (toException)
 import Witch qualified
 
 spec_shutdownDrains :: Spec
@@ -32,8 +32,8 @@ spec_shutdownDrains = describe "graceful shutdown" do
           n = 25 :: Int
       events <-
         replicateM n $
-          Patrol.Event.fromSomeException $
-            SomeException (userError "boom")
+          Patrol.Event.fromSomeException . toException $
+            userError "boom"
       -- Enqueue everything, then shut down *without* a prior flush: the worker
       -- must process the backlog before honouring the shutdown signal.
       void $ traverse (\e -> withClient client $ captureEvent e) events
