@@ -15,7 +15,7 @@ import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
 import Sentry.Transport.HTTP.Sync qualified as SyncHttpTransport
 import Test.Hspec
-import UnliftIO.Exception (SomeException (..))
+import UnliftIO.Exception (toException)
 import Witch qualified
 
 spec_captureEvent :: Spec
@@ -35,8 +35,8 @@ spec_captureEvent = describe "captureEvent against kent (async transport)" do
           n = 50 :: Int
       events <-
         replicateM n $
-          Patrol.Event.fromSomeException $
-            SomeException (userError "boom")
+          Patrol.Event.fromSomeException . toException $
+            userError "boom"
       sentIds <- traverse (\e -> withClient client $ captureEvent e) events
       flushResult <- Transport.flush transport 5
       flushResult `shouldBe` FlushSucceeded
@@ -61,8 +61,8 @@ spec_captureEventSync = describe "captureEvent against kent (sync transport)" do
           n = 10 :: Int
       events <-
         replicateM n $
-          Patrol.Event.fromSomeException $
-            SomeException (userError "boom")
+          Patrol.Event.fromSomeException . toException $
+            userError "boom"
       -- The sync transport blocks until each send completes, so by the time
       -- 'captureEvent' returns the event is already on the server.
       sentIds <- traverse (\e -> withClient client $ captureEvent e) events
@@ -84,7 +84,7 @@ spec_eventPayload = describe "event payload delivered to kent" do
                 sendClientReports = False
               }
           client = Witch.from @ClientOptions @Client opts
-      event <- Patrol.Event.fromSomeException $ SomeException (userError "boom")
+      event <- Patrol.Event.fromSomeException . toException $ userError "boom"
       mEventId <- withClient client $ captureEvent event
       ids <- Kent.eventIds kent
       case (mEventId, ids) of

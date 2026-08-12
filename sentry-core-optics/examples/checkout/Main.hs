@@ -18,6 +18,7 @@ module Main (main) where
 
 import Control.Exception (Exception, throwIO, try)
 import Data.Default (def)
+import Data.Kind (Type)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Sentry.Core (CapturedEvent (..), ClientOptions (..))
@@ -27,6 +28,7 @@ import Sentry.Test qualified as Test
 import Text.Pretty.Simple (pPrint)
 
 -- | A trivial domain error for us to capture.
+type CheckoutError :: Type
 newtype CheckoutError = CardDeclined Text
   deriving stock (Show)
   deriving anyclass (Exception)

@@ -85,7 +85,7 @@ spec_clientReport = describe "ClientReport" do
               Internal
             ]
           -- Assign a distinct, nonzero quantity to each of the 9×15 cells.
-          cells = zip [1 ..] [(r, c) | r <- reasons, c <- categories]
+          cells = zip ([1 ..] :: [Int]) [(r, c) | r <- reasons, c <- categories]
       traverse_ (\(q, (r, c)) -> ClientReport.record cr r c q) cells
       result <- ClientReport.takePending cr now True
       case result of

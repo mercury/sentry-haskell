@@ -15,7 +15,7 @@ import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Test.Tasty (TestTree, withResource)
 import Test.Tasty.Bench qualified as Bench
-import UnliftIO.Exception (SomeException (..))
+import UnliftIO.Exception (toException)
 
 -- | These benchmarks measure the in-process overhead of the executor and rate
 -- limiter only, using a no-op send function so no HTTP backend is involved.
@@ -71,7 +71,7 @@ mkTestEnvelope = Patrol.Envelope.fromEvent testDsn <$> mkTestEvent
 
 -- | A valid 'Patrol.Type.Event.Event' mock.
 mkTestEvent :: IO Patrol.Event
-mkTestEvent = Patrol.Event.fromSomeException $ SomeException $ userError "boom"
+mkTestEvent = Patrol.Event.fromSomeException . toException $ userError "boom"
 
 -- | A fixed timestamp so the rate-limiter benchmark stays deterministic.
 fixedTime :: UTCTime

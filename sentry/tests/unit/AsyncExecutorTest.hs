@@ -21,7 +21,7 @@ import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import System.IO.Unsafe (unsafePerformIO)
 import Test.Hspec
-import UnliftIO.Exception (SomeException (..), displayException, fromException, throwIO)
+import UnliftIO.Exception (displayException, fromException, throwIO, toException)
 
 spec_send :: Spec
 spec_send = parallel $ describe "sending envelopes" do
@@ -56,7 +56,9 @@ spec_send = parallel $ describe "sending envelopes" do
     --   guaranteed to hit a full queue and return SendFailed_QueueFull
     results <- replicateM attempts (Transport.send executor testEnvelope)
     -- The first write always succeeds (queue is empty when it runs).
-    head results `shouldBe` Transport.SendProcessed
+    case results of
+      [] -> expectationFailure "expected at least one send result"
+      (r : _) -> r `shouldBe` Transport.SendProcessed
     -- At least one attempt was rejected with QueueFull.
     results `shouldSatisfy` elem Transport.SendFailed_QueueFull
     -- Unblock the worker so the executor can be torn down cleanly.
@@ -284,7 +286,7 @@ testEnvelope = Patrol.Envelope.fromEvent testDsn testEvent
 
 -- | A valid 'Patrol.Type.Event.Event' mock.
 testEvent :: Patrol.Event
-testEvent = unsafePerformIO $ Patrol.Event.fromSomeException $ SomeException $ userError "boom"
+testEvent = unsafePerformIO . Patrol.Event.fromSomeException . toException $ userError "boom"
 {-# NOINLINE testEvent #-}
 
 -- | A valid 'Patrol.Type.Dsn.Dsn' mock.
