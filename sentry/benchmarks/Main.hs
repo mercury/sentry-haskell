@@ -19,6 +19,7 @@ import UnliftIO.Exception (toException)
 
 -- | These benchmarks measure the in-process overhead of the executor and rate
 -- limiter only, using a no-op send function so no HTTP backend is involved.
+--
 -- For end-to-end timing against a real backend, use the @sentry-profile@
 -- executable with @hyperfine@.
 main :: IO ()

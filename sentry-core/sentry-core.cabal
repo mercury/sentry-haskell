@@ -52,6 +52,26 @@ common test
     tasty,
     tasty-hspec >=1.2,
 
+common rts-bench-space
+  ghc-options:
+    -rtsopts
+    -with-rtsopts=-A32m
+
+library workloads
+  import: defaults
+  hs-source-dirs: workloads
+  -- cabal-gild: discover workloads
+  exposed-modules: Sentry.Workload.Capture
+  build-depends:
+    aeson,
+    base,
+    data-default,
+    patrol ^>=1.2,
+    sentry-core,
+    text,
+    vector,
+    witch,
+
 library
   import: defaults
   hs-source-dirs: library
@@ -148,6 +168,19 @@ test-suite unit
     vector,
     witch,
 
+-- Allocation regression gate over the same workloads as `benchmark space`.
+-- Hand-written main rather than tasty-discover: weigh re-execs this binary
+-- once per case, so a tasty wrapper would re-run the whole suite 5 times.
+test-suite allocations
+  import: defaults, rts-bench-space
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests/allocations
+  main-is: Main.hs
+  build-depends:
+    base,
+    weigh,
+    workloads,
+
 benchmark time
   import: defaults
   type: exitcode-stdio-1.0
@@ -159,21 +192,11 @@ benchmark time
     tasty-bench,
 
 benchmark space
-  import: defaults
+  import: defaults, rts-bench-space
   type: exitcode-stdio-1.0
   hs-source-dirs: benchmarks/space
   main-is: Main.hs
-  ghc-options:
-    -rtsopts
-    -with-rtsopts=-A32m
-
   build-depends:
-    aeson,
     base,
-    data-default,
-    patrol ^>=1.2,
-    sentry-core,
-    text,
-    vector,
     weigh,
-    witch,
+    workloads,

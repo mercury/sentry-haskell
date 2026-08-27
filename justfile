@@ -70,7 +70,7 @@ bench target=package:
     -j{{jobs}} \
     --project-file {{project_file}} \
     --ghc-options '{{ghc_opts}}' \
-    --benchmark-options '+RTS -T -p'
+    --benchmark-options '+RTS -T'
 
 # Quick smoke run of the harness against an in-process TLS sink (normal,
 # non-profiled build). backend: h1 | h2; mode (h1 only): sync | async.

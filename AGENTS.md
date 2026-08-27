@@ -147,7 +147,19 @@ since a fragment pragma replaces the whole section it's attached to.
 
 **Benchmarks** (sentry-core/benchmarks/):
 - **Time**: `tasty-bench` → `cabal bench sentry-core:time`
-- **Space**: `weigh` library → `cabal bench sentry-core:space`
+- **Space**: `weigh` library → `cabal bench sentry-core:space` (report only,
+  no assertions)
+
+**Allocation regression gate** (sentry-core/tests/allocations/):
+- Shares workloads with the `space` benchmark: `sentry-core/workloads/`,
+  module `Sentry.Workload.Capture`
+- Asserts budgets via `weigh`'s `validateAction`/`maxAllocs`; fails
+  `cabal test` (and CI) on regression
+- Run: `cabal test sentry-core:allocations`
+- Incompatible with profiling: `weigh` over-reports allocations there, so
+  don't run this under `cabal.project.profiling`
+- Re-baseline from the printed table (CI covers GHC 9.10 and 9.12), then
+  adjust ceilings in `Main.hs`
 
 **Integration testing**:
 - Use `kent-server` (available in dev shell) as mock Sentry backend
