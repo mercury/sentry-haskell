@@ -154,6 +154,9 @@ edition.
 The API is meant to be used through qualified imports. The examples below — and
 recommended usage generally — alias the modules like so:
 
+This library is meant to be imported with qualification; the examples below
+supply the following, recommended, alises for common modules:
+
 ```haskell
 import Sentry                qualified as Sentry          -- lifecycle, capture, the core surface
 import Sentry.Scope          qualified as Scope           -- scope mutators (setTag, setLevel, …)
@@ -163,16 +166,15 @@ import Sentry.BreadcrumbType qualified as BreadcrumbType  -- breadcrumb kinds (B
 
 `Sentry.Level` and `Sentry.BreadcrumbType` re-export the corresponding `patrol`
 sum types under the `Sentry` namespace, so their constructors can be named without
-depending on `patrol` directly. The optional optics API swaps this set of
-imports for its own — see [Optics](#optics-optional).
+depending on `patrol` directly.
+
+The optional optics API swaps this set of imports for its own — see [Optics](#optics-optional).
 
 ### Environment Variables
 
-`Sentry.Client.new` (which both `Sentry.Core.init`/`withSentry` and the
-`sentry` package's `Sentry.init`/`withSentry` build on) resolves a standard
-set of environment variables to fill in whatever `ClientOptions` fields the
-caller left unset. **Code configuration always wins**: if you set a field
-explicitly, its environment variable is ignored entirely.
+`Sentry.Client.new` resolves the standard Sentry environment variables to
+field values that are set on `ClientOptions`; any options set directly in
+code override values sourced from the environment.
 
 | Variable                       | `ClientOptions` field  | Terminal default if unset by both code and env     |
 | ------------------------------ | ---------------------- | -------------------------------------------------- |
@@ -189,7 +191,7 @@ case-insensitively; anything else is treated as unset.
 
 Sample rates parse as floats and are clamped to `[0, 1]`.
 
-A variable that's set but fails to parse is **ignored** and will only log a
+A variable that's set but fails to parse is ignored and will only log a
 message if the SDK initialized in debug mode.
 
 ### Initializing the SDK
