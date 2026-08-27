@@ -154,6 +154,9 @@ edition.
 The API is meant to be used through qualified imports. The examples below — and
 recommended usage generally — alias the modules like so:
 
+This library is meant to be imported with qualification; the examples below
+supply the following, recommended, alises for common modules:
+
 ```haskell
 import Sentry                qualified as Sentry          -- lifecycle, capture, the core surface
 import Sentry.Scope          qualified as Scope           -- scope mutators (setTag, setLevel, …)
@@ -163,16 +166,15 @@ import Sentry.BreadcrumbType qualified as BreadcrumbType  -- breadcrumb kinds (B
 
 `Sentry.Level` and `Sentry.BreadcrumbType` re-export the corresponding `patrol`
 sum types under the `Sentry` namespace, so their constructors can be named without
-depending on `patrol` directly. The optional optics API swaps this set of
-imports for its own — see [Optics](#optics-optional).
+depending on `patrol` directly.
+
+The optional optics API swaps this set of imports for its own — see [Optics](#optics-optional).
 
 ### Environment Variables
 
-`Sentry.Client.new` (which both `Sentry.Core.init`/`withSentry` and the
-`sentry` package's `Sentry.init`/`withSentry` build on) resolves a standard
-set of environment variables to fill in whatever `ClientOptions` fields the
-caller left unset. **Code configuration always wins**: if you set a field
-explicitly, its environment variable is ignored entirely.
+`Sentry.Client.new` resolves the standard Sentry environment variables to
+field values that are set on `ClientOptions`; any options set directly in
+code override values sourced from the environment.
 
 | Variable                       | `ClientOptions` field  | Terminal default if unset by both code and env     |
 | ------------------------------ | ---------------------- | -------------------------------------------------- |
@@ -189,17 +191,14 @@ case-insensitively; anything else is treated as unset.
 
 Sample rates parse as floats and are clamped to `[0, 1]`.
 
-A variable that's set but fails to parse is **ignored** and will only log a
+A variable that's set but fails to parse is ignored and will only log a
 message if the SDK initialized in debug mode.
 
 ### Initializing the SDK
 
-`withSentry` brackets the SDK's lifecycle:
-
-* it builds a client from your options
-* binds it to the global scope
-* runs your application
-* then flushes and shuts the transport down on exit
+The easiest way to initialize the SDK is via `withSentry`, which brackets the
+spawned client's lifecycle and ensures transports are appropriately flushed on
+application shutdown:
 
 ```haskell
 import Data.Default (def)
@@ -214,23 +213,23 @@ main =
 This reads `SENTRY_DSN` (and other `SENTRY_*` environment variables), and uses
 the HTTP/1.1 transport by default.
 
-To configure from code instead, or to override the transport:
+The `ClientOptions` record can be modified, which will override any values
+pulled from the environment, as follows:
 
 ```haskell
 import Data.Default (def)
 import Patrol.Type.Dsn qualified as Dsn
-import Sentry (ClientOptions (..))
 import Sentry qualified as Sentry
-import Sentry.Transport.HTTP2.Async qualified as Http2
+import Sentry.Transport.HTTP2.Async qualified as Http2Transport
 
 main :: IO ()
 main = do
   dsn <- Dsn.fromText "https://public@o0.ingest.sentry.io/0"
   let clientOptions =
         def
-          { dsn = Just dsn,
-            environment = Just "production",
-            transport = Just (Http2.new def 1000) -- overrides the default HTTP/1.1 transport
+          { Sentry.dsn = Just dsn,
+            Sentry.environment = Just "production",
+            Sentry.transport = Just (Http2Transport.new def 1000)
           }
   Sentry.withSentry clientOptions \_client ->
     runApplication
@@ -256,10 +255,18 @@ reportTrouble = do
 
 ### Scopes
 
-Use `withScope` (or `withIsolationScope` for per-request/per-task boundaries) to
-attach metadata that should apply to everything captured inside the block. The
-scope is forked on entry and restored on exit, and any synchronous exception
-that escapes carries the merged scope with it.
+`sentry-haskell` adopts the [`Scope`]-based model that Sentry recommends for
+metadata enrichment, and tries to hew towards the behaviors establisehd by
+other language SDKs.
+
+[`Scope`]: https://docs.sentry.io/platforms/javascript/enriching-events/scopes/
+
+The `withScope` function "forks" a new scope from the context provided by its
+parent, and passes a handle to the enclosing function body; this handle can be
+used to attach metadata to the scope with functions in `Sentry.Scope`.
+
+Any `captureException` or `captureMessage` call made from within this function
+body's lexical scope will derive its error report from this metadata.
 
 ```haskell
 import Sentry.Level qualified as Level
@@ -273,39 +280,38 @@ handleRequest user =
     Scope.setUser scope user
     Scope.setTag scope "feature" "checkout"
     Scope.setLevel scope Level.Warning
-    -- anything captured in here inherits the user, tag, and level
+    -- anything captured in `runHandler` inherits the user, tag, and level
     runHandler
 ```
-
-The scope mutators (`setTag`, `setUser`, `setLevel`, `setExtra`, `setContext`,
-`setFingerprint`, `setTransaction`, and their `unset`/`remove`/`clear`
-counterparts) live in `Sentry.Scope` and operate on the `Scope` handle the
-bracket hands you.
-
-> [!NOTE]
-> `captureException` follows an "innermost wins" rule for scope selection: if an
-> exception escaped a `withScope`/`withIsolationScope` block, the scope captured
-> at the throw site is attached to it and treated as authoritative; otherwise
-> the scope ambient at the call site is used.
 
 > [!TIP]
 > Asynchronous exceptions are **not** annotated with scope data when they pass
 > through `withScope`, since wrapping them would change their identity and could
 > break cancellation semantics.
 >
-> Capture them explicitly if you want them > reported.
+> Capture them explicitly if you want them reported.
+
+#### Annotated Exceptions
+
+In addition to supplying metadata for _explicit_ calls to `captureException`
+within its function body, `withScope` will also capture exceptions that escape
+its scope, produce a frozen copy of the `Scope` metadata at that point in time,
+and then attach this to the exception before re-throwing it.
+
+This allows users to catch exceptions in their own top-level handler (e.g. web
+server middleware) and report them with `Sentry.captureUnhandledException`.
 
 ### Breadcrumbs
 
-Breadcrumbs are a trail of events leading up to a problem. `addBreadcrumb`
+Breadcrumbs are a trail of events leading up to a problem; `addBreadcrumb`
 appends to the ambient scope, so it does not need a `Scope` handle:
 
 ```haskell
 import Patrol.Type.Breadcrumb qualified as Breadcrumb
 import Sentry qualified
 
-trackClick :: IO ()
-trackClick =
+trackPayment :: IO ()
+trackPayment =
   Sentry.addBreadcrumb
     Breadcrumb.empty
       { Breadcrumb.category = "ui",
@@ -339,12 +345,11 @@ import Sentry.Optics.Prelude              -- import unqualified, *in place of* `
 
 `Sentry.Optics` is a drop-in for `Sentry` that additionally exports `editScope`,
 `apply` / `runScopeUpdate` / `ScopeUpdate`, and `empty`-prefixed record values
-(e.g. `emptyUser`, `emptyBreadcrumb`, `emptyRequest`, `emptyEvent`) that can
-be used as builders for record construction.
+that can be used as builders for record construction.
 
 `Sentry.Optics.Prelude` re-exports the `optics` vocabulary, the state operators
 (`?=` / `.=` / `%=`), `&~` for applying those operators to a plain value, as
-well as the field and value labels, so it replaces `import Optics` entirely.
+well as the field and value labels; it replaces `import Optics` entirely.
 
 
 #### Scope Updates
@@ -378,8 +383,7 @@ values, they let you build a record field by field:
 user = Sentry.emptyUser & #email .~ "alice@example.com" & #username .~ "alice"
 ```
 
-For longer records, `&~` applies a block of optic assignments to a plain value
-— the value-level counterpart to `editScope`, which applies one to a live scope:
+For longer records, `&~` applies a block of optic assignments to a plain value:
 
 ```haskell
 crumb =
@@ -404,10 +408,9 @@ rather than blocking the caller.
 >
 > This behavior is not configurable.
 
-`Sentry.withSentry`/`Sentry.init` (from the `sentry` package) already default
-`ClientOptions.transport` to the HTTP/1.1 async transport with a queue size of
-`Sentry.Transport.Executor.Async.defaultQueueSize` when left unset (see
-[Initializing the SDK](#initializing-the-sdk)).
+`Sentry.withSentry`/`Sentry.init` already default to the HTTP/1.1 async
+transport with a queue size of `Sentry.Transport.Executor.Async.defaultQueueSize`
+when left unset (see [Initializing the SDK](#initializing-the-sdk)).
 
 Set `transport` explicitly to override it, e.g. to switch to HTTP/2 or tune the
 queue size:
@@ -587,6 +590,10 @@ to build this project during the course of my work (if that sounds fun,
 
 [`patrol`](https://github.com/tfausak/patrol), for the Sentry protocol types
 that this SDK serializes to the wire.
+
+[`kent`](https://github.com/mozilla-services/kent), which made development and
+integration testing significantly more pleasant than having to constantly make
+calls to the Sentry API itself.
 
 [`sentry-rust`](https://github.com/getsentry/sentry-rust), which initially
 inspired much of this project's architecture.
