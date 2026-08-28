@@ -12,21 +12,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Jobs run on Namespace runners with a cache volume mounted over /nix (and,
-# for build-test, the cabal caches). Each job gets its own volume via the
-# cache-tag override: concurrent jobs sharing a volume fork it and commit
-# last-write-wins, so a shared volume would keep all but one job cold.
-# Machine shape, cache size, and the only-main-may-commit protection stay
-# governed by the profile in the Namespace dashboard.
 jobs:
   format:
     runs-on: namespace-profile-mercury-oss-linux;overrides.cache-tag=sentry-haskell-format
-    timeout-minutes: 30
     steps:
       - name: git checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Mounts /nix from the cache volume; must run before Lix is installed
-      # so the store lands on the volume.
       - name: Mount Nix store cache
         uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         with:
@@ -41,7 +32,6 @@ jobs:
 
   build-test:
     runs-on: namespace-profile-mercury-oss-linux;overrides.cache-tag=sentry-haskell-${{ matrix.ghc }}
-    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -49,9 +39,6 @@ jobs:
     steps:
       - name: git checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Mounts /nix, the cabal index/store, and dist-newstyle from the cache
-      # volume; must run before Lix is installed so the store lands on the
-      # volume.
       - name: Mount Nix store and cabal caches
         uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         with:

@@ -1,7 +1,5 @@
 name: Install Lix
-description: >
-  Install Lix from the binary tarball as a single-user, daemonless store,
-  caching the tarball by version.
+description: Install Lix on the runner, caching the installer binary by version.
 
 inputs:
   lix-version:
@@ -9,70 +7,38 @@ inputs:
     required: false
     default: "2.95.2"
 
-# A classic single-user install (runner-owned /nix, no nix-daemon) rather
-# than lix-installer's daemon install: the Namespace cache volume mounts
-# /nix owned by the runner user, and the job environment cannot reach a
-# systemd-managed daemon anyway (units land on the host, outside the job's
-# mount namespace), so client and store must both belong to the runner.
 runs:
   using: composite
   steps:
-    - name: Cache Lix tarball
-      id: cache-lix-tarball
+    - name: Cache Lix installer
+      id: cache-lix-installer
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: /tmp/lix.tar.xz
-        key: lix-tarball-x86_64-linux-${{ inputs.lix-version }}
+        path: /tmp/lix-installer
+        key: lix-installer-x86_64-linux-${{ inputs.lix-version }}
 
-    - name: Download Lix tarball
-      if: steps.cache-lix-tarball.outputs.cache-hit != 'true'
+    - name: Download Lix installer
+      if: steps.cache-lix-installer.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        curl -sSf -L \
-          "https://releases.lix.systems/lix/lix-${{ inputs.lix-version }}/lix-${{ inputs.lix-version }}-x86_64-linux.tar.xz" \
-          -o /tmp/lix.tar.xz
+        curl -sSf -L "https://install.lix.systems/lix/${{ inputs.lix-version }}/lix-installer-x86_64-linux" \
+          -o /tmp/lix-installer
+        chmod +x /tmp/lix-installer
 
     - name: Install Lix
       shell: bash
-      # max-silent-time kills any derivation that is silent for 30 minutes
-      # and names it, instead of letting a wedged build eat the whole job.
-      # auto-optimise-store hardlink dedup is heavy small-file I/O, which is
-      # slow on cache-volume-backed /nix, so it stays off.
+      # auto-optimise-store uses /nix/store/.links, which breaks with
+      # 'cache-nix-action'; Lix enables it by default, so we turn that off.
       run: |
-        # On GitHub-hosted runners /nix does not exist yet; on Namespace
-        # runners the cache volume pre-mounts it owned by the runner user.
-        if ! [ -d /nix ]; then
-          sudo install -d -o "$(id -un)" -g "$(id -gn)" /nix
-        fi
+        sudo rm -f /nix/receipt.json
+        /tmp/lix-installer install linux --no-confirm --init none --extra-conf 'auto-optimise-store = false'
 
-        tar xJf /tmp/lix.tar.xz -C /tmp
-        src="/tmp/lix-${{ inputs.lix-version }}-x86_64-linux"
-
-        # Copy store paths not already present (all of them are, on a warm
-        # cache volume) and register them in the store db (idempotent).
-        # /nix/var/nix must exist before any nix command runs: a non-root
-        # nix that finds no state dir silently sets up a chroot store under
-        # ~/.local/share/nix instead of using /nix.
-        mkdir -p /nix/store /nix/var/nix
-        for p in "$src"/store/*; do
-          dst="/nix/store/$(basename "$p")"
-          [ -e "$dst" ] || cp -RPp "$p" "$dst"
+    - name: Start nix-daemon
+      shell: bash
+      run: |
+        sudo sh -c 'setsid /nix/var/nix/profiles/default/bin/nix-daemon >/tmp/nix-daemon.log 2>&1 </dev/null &'
+        for _ in $(seq 1 100); do
+          [ -S /nix/var/nix/daemon-socket/socket ] && break
+          sleep 0.2
         done
-        lix=$(cd "$src/store" && echo *-lix-*)
-        cacert=$(cd "$src/store" && echo *-nss-cacert-*)
-        "/nix/store/$lix/bin/nix-store" --load-db < "$src/.reginfo"
-
-        # No installer writes /etc/nix/nix.conf in this setup, so nix
-        # settings live in the runner user's config.
-        mkdir -p "$HOME/.config/nix"
-        # sandbox = false: sandboxed builds need kernel user namespaces,
-        # which the CI runners do not provide to unprivileged users.
-        printf '%s\n' \
-          'experimental-features = nix-command flakes' \
-          'auto-optimise-store = false' \
-          'max-silent-time = 1800' \
-          'sandbox = false' \
-          >> "$HOME/.config/nix/nix.conf"
-
-        echo "/nix/store/$lix/bin" >> "$GITHUB_PATH"
-        echo "NIX_SSL_CERT_FILE=/nix/store/$cacert/etc/ssl/certs/ca-bundle.crt" >> "$GITHUB_ENV"
+        NIX_REMOTE=daemon /nix/var/nix/profiles/default/bin/nix store ping
