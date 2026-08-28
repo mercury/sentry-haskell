@@ -8,16 +8,19 @@ on:
 
 jobs:
   pinact-check:
-    runs-on: ubuntu-latest
+    # See ci.yml for the Namespace runner / cache volume conventions.
+    runs-on: namespace-profile-mercury-oss-linux;overrides.cache-tag=sentry-haskell-pinact
+    timeout-minutes: 30
     steps:
       - name: git checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Mounts /nix from the cache volume; must run before Lix is installed
+      # so the store lands on the volume.
+      - name: Mount Nix store cache
+        uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
+        with:
+          cache: nix
       - name: Install Lix
         uses: ./.github/actions/install-lix
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-store-${{ runner.os }}-pinact-${{ hashFiles('**/flake.lock') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-pinact-
       - name: Run pinact check
         run: nix run .#pinact -- run --check --verify

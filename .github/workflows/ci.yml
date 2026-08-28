@@ -12,19 +12,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Jobs run on Namespace runners with a cache volume mounted over /nix (and,
+# for build-test, the cabal caches). Each job gets its own volume via the
+# cache-tag override: concurrent jobs sharing a volume fork it and commit
+# last-write-wins, so a shared volume would keep all but one job cold.
+# Machine shape, cache size, and the only-main-may-commit protection stay
+# governed by the profile in the Namespace dashboard.
 jobs:
   format:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-mercury-oss-linux;overrides.cache-tag=sentry-haskell-format
+    timeout-minutes: 30
     steps:
       - name: git checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Mounts /nix from the cache volume; must run before Lix is installed
+      # so the store lands on the volume.
+      - name: Mount Nix store cache
+        uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
+        with:
+          cache: nix
       - name: Install Lix
         uses: ./.github/actions/install-lix
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-store-${{ runner.os }}-format-${{ hashFiles('**/flake.lock') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-format-
       - name: Check formatting
         run: nix fmt -- --fail-on-change
       - name: Show formatting diff
@@ -32,7 +40,8 @@ jobs:
         run: git diff --color=always
 
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-mercury-oss-linux;overrides.cache-tag=sentry-haskell-${{ matrix.ghc }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -40,32 +49,21 @@ jobs:
     steps:
       - name: git checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Lix
-        uses: ./.github/actions/install-lix
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      # Mounts /nix, the cabal index/store, and dist-newstyle from the cache
+      # volume; must run before Lix is installed so the store lands on the
+      # volume.
+      - name: Mount Nix store and cabal caches
+        uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         with:
-          primary-key: nix-store-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('**/flake.lock', 'flake.nix', 'nix/dev/haskell-deps.nix') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ matrix.ghc }}-
-      - name: Cache cabal dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
+          cache: nix
           path: |
             ~/.cache/cabal/packages
             ~/.local/state/cabal/store
-          key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}
-          restore-keys: |
-            cabal-${{ runner.os }}-${{ matrix.ghc }}-
+            dist-newstyle
+      - name: Install Lix
+        uses: ./.github/actions/install-lix
       - name: Build dependencies
         run: nix develop .#ci-${{ matrix.ghc }} --command just deps-all
-      - name: Cache cabal build artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: dist-newstyle
-          key: dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}-${{ github.sha }}
-          restore-keys: |
-            dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}-
-            dist-${{ runner.os }}-${{ matrix.ghc }}-
       - name: Build
         run: nix develop .#ci-${{ matrix.ghc }} --command just project_file=cabal.project.ci build-all
       - name: Test
