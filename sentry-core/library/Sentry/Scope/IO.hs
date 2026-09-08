@@ -4,12 +4,10 @@ import Control.Exception (SomeAsyncException, SomeException, bracket, fromExcept
 import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
 import Control.Exception.Safe qualified as Safe
 import Control.Monad.IO.Unlift (MonadUnliftIO (..))
-import Data.Maybe (isJust)
-import Data.Typeable (cast)
-import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Sentry.Client (Client)
 import Sentry.Scope (Scope, ScopeData)
 import Sentry.Scope qualified as Scope
+import Sentry.Scope.Internal.Bracket qualified as Bracket
 
 -- | Fork the current scope and pass it to the given action to be performed.
 --
@@ -25,23 +23,8 @@ import Sentry.Scope qualified as Scope
 -- This is the @MonadUnliftIO@ variant; see "Sentry.Scope.Monad" for the
 -- @MonadMask@\/@MonadIO@ version.
 withScope :: forall m a. (MonadUnliftIO m) => (Scope -> m a) -> m a
-withScope action = withRunInIO \run -> bracket acquire release \(_, scope) ->
+withScope action = withRunInIO \run -> bracket Bracket.acquireCurrent Bracket.releaseCurrent \(_, scope) ->
   catchAndAnnotate (run (action scope)) Scope.readAmbientScope
-  where
-    acquire :: IO (Maybe Scope, Scope)
-    acquire = do
-      context <- ThreadLocal.getContext
-      scope <- case Scope.lookupCurrent context of
-        Nothing -> Scope.create Scope.Current
-        Just s -> Scope.clone s
-      let parentScope = Scope.lookupCurrent context
-      ThreadLocal.adjustContext (Scope.insertCurrent scope)
-      pure (parentScope, scope)
-
-    release :: (Maybe Scope, Scope) -> IO ()
-    release (parentScope, _) =
-      ThreadLocal.adjustContext \ctx ->
-        maybe (Scope.removeCurrent ctx) (`Scope.insertCurrent` ctx) parentScope
 
 -- | Like 'withScope', but operates on the isolation scope layer.
 --
@@ -51,66 +34,23 @@ withScope action = withRunInIO \run -> bracket acquire release \(_, scope) ->
 -- This is the @MonadUnliftIO@ variant; see "Sentry.Scope.Monad" for the
 -- @MonadMask@\/@MonadIO@ version.
 withIsolationScope :: forall m a. (MonadUnliftIO m) => (Scope -> m a) -> m a
-withIsolationScope action = withRunInIO \run -> bracket acquire release \(_, _, scope) ->
+withIsolationScope action = withRunInIO \run -> bracket (Bracket.acquireIsolation Nothing) Bracket.releaseIsolation \(_, _, scope) ->
   catchAndAnnotate (run (action scope)) Scope.readAmbientScope
-  where
-    -- Per the scopes spec, forking the isolation scope MUST also fork the
-    -- current scope at the same time, so that current-scope mutations within
-    -- the block are likewise isolated and users need not call both 'withScope'
-    -- and 'withIsolationScope'. The action receives the isolation scope handle.
-    acquire :: IO (Maybe Scope, Maybe Scope, Scope)
-    acquire = do
-      context <- ThreadLocal.getContext
-      isolationScope <- case Scope.lookupIsolation context of
-        Nothing -> Scope.create Scope.Isolation
-        Just s -> Scope.clone s
-      currentScope <- case Scope.lookupCurrent context of
-        Nothing -> Scope.create Scope.Current
-        Just s -> Scope.clone s
-      let parentIsolation = Scope.lookupIsolation context
-          parentCurrent = Scope.lookupCurrent context
-      ThreadLocal.adjustContext (Scope.insertCurrent currentScope . Scope.insertIsolation isolationScope)
-      pure (parentIsolation, parentCurrent, isolationScope)
-
-    release :: (Maybe Scope, Maybe Scope, Scope) -> IO ()
-    release (parentIsolation, parentCurrent, _) =
-      ThreadLocal.adjustContext \ctx ->
-        let withIso = maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentIsolation
-         in maybe (Scope.removeCurrent withIso) (`Scope.insertCurrent` withIso) parentCurrent
 
 -- | Run an action with the given 'Client' bound to its isolation scope.
 --
 -- Forks fresh isolation and current scopes and binds the given 'Client' onto
 -- the newly forked isolation scope, so capture and breadcrumb calls within the
 -- enclosed action resolve to this client and the original client is restored
--- once the enclosing scope is exited.
+-- once the enclosing scope is exited. Any inherited current-scope client
+-- binding is cleared on the clone; other metadata is retained. Deliberate
+-- bindings made inside the action still follow normal scope precedence.
 --
 -- This is the @MonadUnliftIO@ variant; see "Sentry.Scope.Monad" for the
 -- @MonadMask@\/@MonadIO@ version.
 withClient :: forall m a. (MonadUnliftIO m) => Client -> m a -> m a
-withClient client action = withRunInIO \run -> bracket acquire release \_ ->
+withClient client action = withRunInIO \run -> bracket (Bracket.acquireClient client) Bracket.releaseIsolation \_ ->
   run action
-  where
-    acquire :: IO (Maybe Scope, Maybe Scope)
-    acquire = do
-      context <- ThreadLocal.getContext
-      isolationScope <- case Scope.lookupIsolation context of
-        Nothing -> Scope.create Scope.Isolation
-        Just s -> Scope.clone s
-      currentScope <- case Scope.lookupCurrent context of
-        Nothing -> Scope.create Scope.Current
-        Just s -> Scope.clone s
-      Scope.bindClient (Just client) isolationScope
-      let parentIsolation = Scope.lookupIsolation context
-          parentCurrent = Scope.lookupCurrent context
-      ThreadLocal.adjustContext (Scope.insertCurrent currentScope . Scope.insertIsolation isolationScope)
-      pure (parentIsolation, parentCurrent)
-
-    release :: (Maybe Scope, Maybe Scope) -> IO ()
-    release (parentIsolation, parentCurrent) =
-      ThreadLocal.adjustContext \ctx ->
-        let withIso = maybe (Scope.removeIsolation ctx) (`Scope.insertIsolation` ctx) parentIsolation
-         in maybe (Scope.removeCurrent withIso) (`Scope.insertCurrent` withIso) parentCurrent
 
 -- | Catch synchronous exceptions and annotate them with merged scope metadata.
 --
@@ -125,12 +65,9 @@ catchAndAnnotate action mergeScopes =
     case fromException @SomeAsyncException exn of
       Just _ -> throwIO exn
       Nothing -> do
-        let AnnotatedException anns inner =
-              case fromException @(AnnotatedException SomeException) exn of
-                Just ae -> ae
-                Nothing -> AnnotatedException [] exn
+        let (anns, inner, alreadyAnnotated) = Bracket.annotationFor exn
         if
-          | any (\(Annotation a) -> isJust (cast @_ @ScopeData a)) anns ->
+          | alreadyAnnotated ->
               Safe.throwIO $ AnnotatedException anns inner
           | otherwise -> do
               merged <- mergeScopes

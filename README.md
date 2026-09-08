@@ -306,7 +306,7 @@ server middleware) and report them with `Sentry.captureUnhandledException`.
 ### Breadcrumbs
 
 Breadcrumbs are a trail of events leading up to a problem; `addBreadcrumb`
-appends to the ambient scope, so it does not need a `Scope` handle:
+appends to the ambient isolation scope, so it does not need a `Scope` handle:
 
 ```haskell
 import Patrol.Type.Breadcrumb qualified as Breadcrumb

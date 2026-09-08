@@ -94,6 +94,7 @@ library
     Sentry.Mechanism
     Sentry.Scope
     Sentry.Scope.Internal
+    Sentry.Scope.Internal.Bracket
     Sentry.Scope.IO
     Sentry.Scope.Monad
     Sentry.Scope.Update
@@ -134,6 +135,7 @@ test-suite unit
   main-is: Driver.hs
   -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
   other-modules:
+    AmbientBreadcrumbTest
     BreadcrumbTest
     CaptureDefaultsTest
     CaptureDropTest

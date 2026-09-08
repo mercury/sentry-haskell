@@ -132,6 +132,7 @@ module Sentry.Scope
 where
 
 import Control.Applicative ((<|>))
+import Control.Exception (mask_)
 import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
@@ -414,22 +415,46 @@ apply scope ce = scope.eventProcessor ce{event = merged}
 -- trims the oldest entries to stay within
 -- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'.
 --
--- No-ops when no isolation scope is active.
+-- Lazily establishes a thread-local isolation scope when a recording client
+-- is available. This scope persists on the context, including across
+-- 'Sentry.Scope.IO.withScope' exits. Use an isolation bracket at request/task
+-- boundaries. No state is created for a non-recording client.
 --
--- Like 'addBreadcrumbAt', but reads the thread-local 'Context' instead of
--- taking one explicitly.
+-- Unlike 'addBreadcrumbAt', this convenience operation can establish missing
+-- isolation state on the thread-local 'Context'.
 addBreadcrumb :: (MonadIO m) => Patrol.Breadcrumb -> m ()
-addBreadcrumb crumb = liftIO ThreadLocal.getContext >>= \ctx -> addBreadcrumbAt ctx crumb
+addBreadcrumb crumb = do
+  target <- ambientBreadcrumbTarget
+  for_ target \(client, scope) -> addBreadcrumbToScope client.options scope crumb
 
 -- | Add multiple 'Patrol.Breadcrumb's to the active isolation scope in order.
 --
 -- Equivalent to calling 'addBreadcrumb' on each element; each crumb is
 -- independently filtered and trimmed.
 --
--- Like 'addBreadcrumbsAt', but reads the thread-local 'Context' instead of
--- taking one explicitly.
+-- Uses the same lazy isolation acquisition as 'addBreadcrumb'. An empty batch
+-- does not establish state. Explicit 'addBreadcrumbsAt' never establishes it.
 addBreadcrumbs :: (MonadIO m) => [Patrol.Breadcrumb] -> m ()
-addBreadcrumbs crumbs = liftIO ThreadLocal.getContext >>= \ctx -> addBreadcrumbsAt ctx crumbs
+addBreadcrumbs [] = pure ()
+addBreadcrumbs crumbs = do
+  target <- ambientBreadcrumbTarget
+  for_ target \(client, scope) ->
+    for_ crumbs (addBreadcrumbToScope client.options scope)
+
+-- | Establish only the missing isolation key; leave client resolution live.
+-- Existing explicit scopes retain their behavior even without a transport.
+ambientBreadcrumbTarget :: (MonadIO m) => m (Maybe (Client, Scope))
+ambientBreadcrumbTarget = liftIO $ mask_ do
+  context <- ThreadLocal.getContext
+  client <- resolveClientAt context
+  case lookupIsolation context of
+    Just scope -> pure $ Just (client, scope)
+    Nothing -> case client of
+      NON_RECORDING_CLIENT -> pure Nothing
+      _ -> do
+        scope <- create Isolation
+        ThreadLocal.adjustContext (insertIsolation scope)
+        pure $ Just (client, scope)
 
 -- | Clear all breadcrumbs from the given 'Scope'.
 clearBreadcrumbs :: (MonadIO m) => Scope -> m ()
