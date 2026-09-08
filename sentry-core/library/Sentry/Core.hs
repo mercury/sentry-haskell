@@ -4,7 +4,8 @@
 -- enriching events and binding a client, and the 'init' \/ 'close' lifecycle
 -- functions for initializing the SDK.
 --
--- This is the transport-agnostic surface: 'init' \/ 'withSentry' leave
+-- This is the transport-agnostic surface: 'init', 'acquireClient', and
+-- 'withSentry', and 'withScopedClient' leave
 -- 'Sentry.Client.Options.ClientOptions.transport' as 'Nothing' unless the
 -- caller sets it explicitly, so a 'Sentry.Client.Client' built here is
 -- non-recording by default. It's intended for integration authors,
@@ -22,6 +23,11 @@ module Sentry.Core
     init,
     close,
     withSentry,
+    withScopedClient,
+    ClientHandle,
+    acquireClient,
+    clientOf,
+    ShutdownResponse (..),
 
     -- * Client
     Client,
@@ -93,7 +99,7 @@ import Sentry.Capture
 import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..), pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Event (CapturedEvent (..))
-import Sentry.Init (close, init, withSentry)
+import Sentry.Init (ClientHandle, acquireClient, clientOf, close, init, withScopedClient, withSentry)
 import Sentry.Integration.Stacktrace
   ( AttachAnnotatedExceptionIntegration (..),
     AttachCallStackIntegration (..),
@@ -114,4 +120,5 @@ import Sentry.Scope
     resolveClientAt,
   )
 import Sentry.Scope.IO (withClient, withIsolationScope, withScope)
+import Sentry.Transport (ShutdownResponse (..))
 import Prelude hiding (init)

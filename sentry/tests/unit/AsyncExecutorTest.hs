@@ -2,6 +2,7 @@ module AsyncExecutorTest where
 
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, tryPutMVar)
+import Control.Concurrent.STM (check, readTVar)
 import Control.Concurrent.STM.TQueue (TQueue, flushTQueue, newTQueueIO, readTQueue, tryReadTQueue, writeTQueue)
 import Control.Monad (replicateM, void)
 import Control.Monad.STM (atomically)
@@ -14,12 +15,16 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Headers qualified as Patrol.Headers
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
+import Sentry.Client.Options qualified as Options
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Init qualified as Init
+import Sentry.Test qualified as Test
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 import Test.Hspec
 import UnliftIO.Exception (displayException, fromException, throwIO, toException)
 
@@ -181,6 +186,31 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
     void $ Transport.shutdown executor 1
     res <- Transport.shutdown executor 1
     res `shouldBe` Transport.ShutdownFailed_AlreadyShutdown
+
+  it "cancelling client close also terminates the executor worker" do
+    completed <- timeout 5_000_000 do
+      entered <- newEmptyMVar
+      never <- newEmptyMVar @()
+      let sendFn _ rl = putMVar entered () >> readMVar never >> pure rl
+      executor <- AsyncExecutor.new 1 Nothing sendFn
+      let opts =
+            (Options.DEFAULT_CLIENT_OPTIONS)
+              { Options.dsn = Just Test.TEST_DSN,
+                Options.defaultIntegrations = False,
+                Options.transport = Just (Options.PrebuiltTransport (Transport.SomeTransport executor)),
+                Options.shutdownTimeout = 30
+              }
+      h <- Init.acquireClient opts
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+      readMVar entered
+      Async.withAsync (Init.close h) \closing -> do
+        atomically $ readTVar executor.shutdownRef >>= check
+        Async.cancel closing
+        Async.poll executor.handle >>= \case
+          Just (Left exn) -> fromException exn `shouldBe` Just Async.AsyncCancelled
+          _ -> expectationFailure "close cancellation left the executor worker running"
+        Init.close h `shouldReturn` Transport.ShutdownFailed_Other "Client close interrupted"
+    completed `shouldBe` Just ()
 
 spec_resilience :: Spec
 spec_resilience = parallel $ describe "worker resilience" do

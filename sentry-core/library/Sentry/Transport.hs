@@ -28,9 +28,21 @@ class Transport t where
   flush :: t -> NominalDiffTime -> IO FlushResponse
   flush _ _ = pure FlushSucceeded
 
-  -- | Signal the transport to shut itself down within the provided time limit.
+  -- | Drain queued work and shut down within the supplied budget. This is the
+  -- authoritative drain operation: client close does not call 'flush' first.
+  -- Client close enters this operation with asynchronous exceptions masked
+  -- (interruptible). Install resource cleanup before blocking or explicitly
+  -- unmasking; blocking drains remain interruptible. Custom implementations
+  -- must honor this contract. Success does not imply
+  -- server persistence, and a transport ignoring the budget can block longer.
   shutdown :: t -> NominalDiffTime -> IO ShutdownResponse
-  shutdown transport timeout = ShutdownSucceeded <$ flush transport timeout
+  shutdown transport timeout =
+    flush transport timeout >>= \case
+      FlushSucceeded -> pure ShutdownSucceeded
+      FlushFailed_TimedOut duration -> pure (ShutdownFailed_TimedOut duration)
+      FlushFailed_Shutdown -> pure ShutdownFailed_AlreadyShutdown
+      FlushFailed_Other reason -> pure (ShutdownFailed_Other reason)
+      FlushFailed_QueueFull -> pure (ShutdownFailed_Other "Flush queue full")
 
   -- | Record that @n@ items of the given 'DataCategory' were discarded for
   -- the given 'DiscardReason'.

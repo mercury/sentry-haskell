@@ -8,9 +8,14 @@ module Sentry.Scope.Internal
     ScopeType (..),
     ScopeData (..),
     defaultScopeData,
+    newScope,
+    readScopeData,
 
     -- * Privileged mutation
     modifyScopeData,
+    bindUnmanaged,
+    bindManaged,
+    unbindManaged,
 
     -- * Process-global scope and thread-local override
 
@@ -29,11 +34,12 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
 import Data.Atomics (atomicModifyIORefCAS_)
 import Data.Default (Default (def))
-import Data.IORef (IORef, newIORef)
+import Data.IORef (IORef, newIORef, readIORef)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Sequence (Seq)
 import Data.Text (Text)
+import Data.Unique (Unique)
 import Data.Vector (Vector)
 import OpenTelemetry.Context (Context, Key)
 import OpenTelemetry.Context qualified as Context
@@ -50,7 +56,15 @@ import System.IO.Unsafe (unsafePerformIO)
 -- When an exception is captured, the current value is read, merged with other
 -- scope layers, and attached as an annotation.
 type Scope :: Type
-data Scope = Scope (IORef ScopeData)
+data Scope = Scope (IORef ScopeState)
+
+-- Keep the effective client and its ownership in one atomic snapshot.
+type ScopeState :: Type
+data ScopeState = ScopeState
+  { scopeData :: ScopeData,
+    baseClient :: Maybe Client,
+    bindings :: [(Unique, Client)]
+  }
 
 instance Show Scope where
   showsPrec d (Scope _) = showParen (d > 10) $ showString "Scope <<ioref>>"
@@ -169,9 +183,38 @@ defaultScopeData =
 --
 -- /Internal:/ Callers should use the field-specific setters from "Sentry.Scope"
 -- or compose updates via "Sentry.Scope.Update"; writing ad-hoc
--- 'ScopeData -> ScopeData' modifiers should be avoided.
+-- 'ScopeData -> ScopeData' modifiers should be avoided. The client field is
+-- owned by the binding operations and cannot be changed by metadata updates.
 modifyScopeData :: (MonadIO m) => Scope -> (ScopeData -> ScopeData) -> m ()
-modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS_ ref f
+modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS_ ref \s ->
+  s{scopeData = (f s.scopeData){client = s.scopeData.client}}
+
+-- | Create an independent, unmanaged scope from a metadata snapshot.
+newScope :: ScopeData -> IO Scope
+newScope scopeData = Scope <$> newIORef ScopeState{scopeData, baseClient = scopeData.client, bindings = []}
+
+-- | Read the effective metadata, without exposing lifecycle ownership.
+readScopeData :: Scope -> IO ScopeData
+readScopeData (Scope ref) = (.scopeData) <$> readIORef ref
+
+-- | Deliberately replace all managed bindings with an unmanaged binding.
+bindUnmanaged :: Scope -> Maybe Client -> IO ()
+bindUnmanaged (Scope ref) client = atomicModifyIORefCAS_ ref \s ->
+  ScopeState{scopeData = s.scopeData{client}, baseClient = client, bindings = []}
+
+-- | Install a binding with a token allocated by its owner before acquisition.
+bindManaged :: Scope -> Unique -> Client -> IO ()
+bindManaged (Scope ref) token client = atomicModifyIORefCAS_ ref \s ->
+  s{scopeData = s.scopeData{client = Just client}, bindings = (token, client) : s.bindings}
+
+-- | Remove an owned binding.  Stale releases are harmless.
+unbindManaged :: Scope -> Unique -> IO ()
+unbindManaged (Scope ref) token = atomicModifyIORefCAS_ ref \s ->
+  let bindings = filter ((/= token) . fst) s.bindings
+      client = case bindings of
+        (_, newest) : _ -> Just newest
+        [] -> s.baseClient
+   in s{scopeData = s.scopeData{client}, bindings}
 
 -- $global-override
 --
@@ -190,7 +233,7 @@ modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS_ ref f
 -- All reads and writes should go through 'Sentry.Scope.getGlobalScope' rather
 -- than using this reference directly.
 processGlobal :: Scope
-processGlobal = Scope $ unsafePerformIO $ newIORef (def{type_ = Just Global})
+processGlobal = unsafePerformIO $ newScope (def{type_ = Just Global})
 {-# NOINLINE processGlobal #-}
 
 -- | Thread-local context key for a per-thread global scope override.

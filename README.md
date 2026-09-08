@@ -53,14 +53,9 @@ When an artifact is captured using `captureEvent`, `captureException`, or `captu
 
 If an event is discarded at any point in this pipeline, the SDK increments an internal counter for the discard stage. A client report with counters for each stage is sent to Sentry at regular intervals.
 
-> [!IMPORTANT]
-> `init` (and therefore `withSentry`) binds the client onto the _global_ scope,
-> so `captureEvent`, `captureException`, and `captureMessage` work anywhere in
-> the process.
-> 
-> For situations where true process-wide global state is unnacceptable (e.g.
-> tests, multi-tenant servers), `withClient` can be used to bind a `Client` to
-> a special-purpose thread-local variable that intercepts global scope resolution.
+`withSentry` sets the default client for the process. Use `withScopedClient` to
+override it within an action, for example in a test or a request handler. See
+[Initializing the SDK](#initializing-the-sdk) for examples.
 
 ## Installation
 
@@ -197,9 +192,8 @@ message if the SDK initialized in debug mode.
 
 ### Initializing the SDK
 
-The easiest way to initialize the SDK is via `withSentry`, which brackets the
-spawned client's lifecycle and ensures transports are appropriately flushed on
-application shutdown:
+Wrap your application in `withSentry` to set the process-wide client and drain
+its transport when the application exits:
 
 ```haskell
 import Data.Default (def)
@@ -235,6 +229,26 @@ main = do
   Sentry.withSentry clientOptions \_client ->
     runApplication
 ```
+
+To use a different client for one request or test, wrap the action in
+`withScopedClient`:
+
+```haskell
+import Sentry.Level qualified as Level
+
+Sentry.withScopedClient opts do
+  Sentry.captureMessage_ Level.Info "Processing request"
+  handleRequest request
+```
+
+The action keeps the surrounding scope metadata and uses the new client for
+captures. On exit, the previous scopes are restored and the new client is
+closed. Other threads keep their existing clients.
+
+`close` returns a `ShutdownResponse`, and is safe to call repeatedly.
+
+See [Sentry.Init](sentry-core/library/Sentry/Init.hs) for detailed shutdown and
+exception behavior.
 
 ### Capturing Messages and Exceptions
 
@@ -490,7 +504,7 @@ Commonly set `ClientOptions` fields:
 | `beforeSend`        | `Maybe (CapturedEvent -> Maybe Patrol.Event)` | Final hook to rewrite or drop each event                                |
 | `beforeBreadcrumb`  | `Maybe (Breadcrumb -> Maybe Breadcrumb)`      | Hook to rewrite or drop each breadcrumb                                 |
 | `integrations`      | `Vector SomeIntegration`                      | Extra integrations to run                                               |
-| `shutdownTimeout`   | `NominalDiffTime`                             | How long `close` waits for the transport to drain                       |
+| `shutdownTimeout`   | `NominalDiffTime`                             | Time budget for draining the transport on close                       |
 | `debug`             | `Bool`                                        | Log dropped events to `stderr`                                          |
 
 ### Capturing

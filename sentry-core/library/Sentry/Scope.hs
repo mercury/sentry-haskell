@@ -138,7 +138,6 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Foldable (for_, toList)
-import Data.IORef (newIORef, readIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -156,7 +155,7 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event (CapturedEvent (..))
-import Sentry.Scope.Internal (Scope (..), ScopeData (..), ScopeType (..), modifyScopeData)
+import Sentry.Scope.Internal (Scope, ScopeData (..), ScopeType (..))
 import Sentry.Scope.Internal qualified as Internal
 import Sentry.Scope.Update qualified as Update
 import System.IO.Unsafe (unsafePerformIO)
@@ -164,7 +163,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | Read the current state of the 'ScopeData' contained within the given
 -- 'Scope' reference.
 readScopeRef :: (MonadIO m) => Scope -> m ScopeData
-readScopeRef (Scope ref) = liftIO $ readIORef ref
+readScopeRef = liftIO . Internal.readScopeData
 
 -- * Scalar setters
 
@@ -304,14 +303,13 @@ removeIsolation = Context.delete isolationScopeKey
 
 -- | Create a fresh 'Scope' of the given 'ScopeType'.
 create :: (MonadIO m) => ScopeType -> m Scope
-create (Just -> type_) = Scope <$> (liftIO $ newIORef (def{type_}))
+create (Just -> type_) = liftIO $ Internal.newScope (def{type_})
 
 -- | Return an independent copy of the given 'Scope'. Mutations to the clone
--- do not affect the original, and vice versa.
+-- do not affect the original, and vice versa. The effective client is copied
+-- as an unmanaged binding; lifecycle ownership is not copied.
 clone :: (MonadIO m) => Scope -> m Scope
-clone (Scope ref) = liftIO do
-  scope <- readIORef ref
-  Scope <$> newIORef scope
+clone scope = liftIO $ Internal.readScopeData scope >>= Internal.newScope
 
 -- | Read the merged ambient 'ScopeData' visible at the call site:
 -- global (process singleton or thread-local override) \<> isolation (from
@@ -340,11 +338,11 @@ lookupClient = liftIO ThreadLocal.getContext >>= lookupClientAt
 
 -- | Bind (or clear, with 'Nothing') the 'Client' on a specific scope layer.
 --
--- Used by 'Sentry.Init.init' to set the process-wide client on the 'global'
--- scope, and by 'Sentry.Scope.IO.withClient' to bind a client onto the
--- isolation scope for a dynamic extent.
+-- This deliberately replaces any managed initialization bindings on the scope;
+-- stale handle releases cannot restore over it. It neither acquires nor closes
+-- resources. 'Sentry.Scope.IO.withClient' uses it on a fresh isolation scope.
 bindClient :: (MonadIO m) => Maybe Client -> Scope -> m ()
-bindClient mc scope = modifyScopeData scope \s -> s{client = mc}
+bindClient mc scope = liftIO $ Internal.bindUnmanaged scope mc
 
 -- * Event processor setters
 

@@ -38,12 +38,13 @@ import Control.Concurrent.Async (Async, async)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar)
+import Control.Exception (mask, onException)
 import Control.Monad (void)
 import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime)
-import GHC.Conc.Sync (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
+import GHC.Conc.Sync (TVar, atomically, newTVarIO, readTVar, readTVarIO, writeTVar)
 import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory)
@@ -214,17 +215,27 @@ instance Sentry.Transport.Transport AsyncExecutor where
       else pure Sentry.Transport.FlushFailed_QueueFull
 
   shutdown :: AsyncExecutor -> NominalDiffTime -> IO Sentry.Transport.ShutdownResponse
-  shutdown executor timeout = unlessShutdown executor.shutdownRef Sentry.Transport.ShutdownFailed_AlreadyShutdown do
-    -- Refuse new work, then signal the worker to drain and exit.
-    atomically $ writeTVar executor.shutdownRef True
-    result <- UnliftIO.timeout (toMicroseconds timeout) do
-      Unagi.writeChan executor.taskQueue Shutdown
-      Sentry.Transport.ShutdownSucceeded <$ Async.wait executor.handle
-    case result of
-      Just success -> pure success
-      Nothing -> do
-        Async.cancel executor.handle
-        pure $ Sentry.Transport.ShutdownFailed_TimedOut timeout
+  shutdown executor timeout = mask \restore -> do
+    -- Claim shutdown once and install cancellation cleanup before unmasking.
+    alreadyShutdown <- atomically do
+      closed <- readTVar executor.shutdownRef
+      writeTVar executor.shutdownRef True
+      pure closed
+    if alreadyShutdown
+      then pure Sentry.Transport.ShutdownFailed_AlreadyShutdown
+      else do
+        result <-
+          restore
+            ( UnliftIO.timeout (toMicroseconds timeout) do
+                Unagi.writeChan executor.taskQueue Shutdown
+                Sentry.Transport.ShutdownSucceeded <$ Async.wait executor.handle
+            )
+            `onException` Async.cancel executor.handle
+        case result of
+          Just success -> pure success
+          Nothing -> do
+            Async.cancel executor.handle
+            pure $ Sentry.Transport.ShutdownFailed_TimedOut timeout
 
   recordDiscards :: AsyncExecutor -> DiscardReason -> DataCategory -> Int -> IO ()
   recordDiscards executor reason category n =

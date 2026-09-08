@@ -1,7 +1,7 @@
 -- | The primary, "batteries-included" entry point for the SDK.
 --
--- Re-exports the entire "Sentry.Core" surface, and overrides 'init' \/
--- 'withSentry' so they fill in
+-- Re-exports the entire "Sentry.Core" surface, and overrides 'init',
+-- 'acquireClient', 'withSentry', and 'withScopedClient' so they fill in
 -- 'Sentry.Client.Options.ClientOptions.transport' with a default HTTP\/1.1
 -- asynchronous transport ("Sentry.Transport.HTTP.Async") when the caller has
 -- left it 'Nothing'. Code configuration always wins: set 'transport'
@@ -19,7 +19,9 @@
 module Sentry
   ( -- * Lifecycle (default-transport wrappers)
     init,
+    acquireClient,
     withSentry,
+    withScopedClient,
 
     -- * Everything else, unchanged, from "Sentry.Core"
     module Sentry.Core,
@@ -30,7 +32,7 @@ import Control.Applicative ((<|>))
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Default (def)
-import Sentry.Core hiding (init, withSentry)
+import Sentry.Core hiding (acquireClient, init, withScopedClient, withSentry)
 import Sentry.Core qualified as Core
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.HTTP.Async qualified as Http1
@@ -45,10 +47,20 @@ defaultTransport opts =
 
 -- | Like 'Sentry.Core.init', but defaults 'ClientOptions.transport' to the
 -- HTTP\/1.1 async transport when unset.
-init :: ClientOptions -> IO Client
+init :: ClientOptions -> IO ClientHandle
 init opts = Core.init (defaultTransport opts)
+
+-- | Like 'Sentry.Core.acquireClient', but defaults the transport to HTTP\/1.1
+-- async. Acquiring the handle does not read or change any ambient scope.
+acquireClient :: ClientOptions -> IO ClientHandle
+acquireClient opts = Core.acquireClient (defaultTransport opts)
 
 -- | Like 'Sentry.Core.withSentry', but defaults 'ClientOptions.transport' to
 -- the HTTP\/1.1 async transport when unset.
 withSentry :: (MonadMask m, MonadIO m) => ClientOptions -> (Client -> m a) -> m a
 withSentry opts = Core.withSentry (defaultTransport opts)
+
+-- | Like 'Sentry.Core.withScopedClient', but defaults the transport to
+-- HTTP\/1.1 async when unset.
+withScopedClient :: (MonadMask m, MonadIO m) => ClientOptions -> m a -> m a
+withScopedClient opts = Core.withScopedClient (defaultTransport opts)

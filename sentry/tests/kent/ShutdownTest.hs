@@ -1,11 +1,13 @@
 module ShutdownTest where
 
+import Control.Exception (bracket)
 import Control.Monad (replicateM, void)
 import Data.Default (def)
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Init qualified as Init
 import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (ShutdownResponse (..), SomeTransport (..))
@@ -41,3 +43,23 @@ spec_shutdownDrains = describe "graceful shutdown" do
       shutdownResult `shouldBe` ShutdownSucceeded
       received <- Kent.listEvents kent
       length received `shouldBe` n
+
+  it "client handle close drains queued events without a preliminary flush" $
+    Kent.withKent \kent -> do
+      Kent.flushKent kent
+      let dsn = Kent.dsnFor kent "1"
+      transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
+      let opts =
+            def
+              { dsn = Just dsn,
+                transport = Just (Witch.from (SomeTransport transport)),
+                sendClientReports = False,
+                shutdownTimeout = 5
+              }
+          n = 25 :: Int
+      bracket (Init.acquireClient opts) Init.close \handle -> do
+        events <- replicateM n $ Patrol.Event.fromSomeException (toException (userError "handle shutdown"))
+        void $ traverse (\e -> withClient (Init.clientOf handle) $ captureEvent e) events
+        Init.close handle `shouldReturn` ShutdownSucceeded
+        received <- Kent.listEvents kent
+        length received `shouldBe` n

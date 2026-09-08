@@ -1,5 +1,6 @@
 module ClientReportTest where
 
+import Control.Exception (bracket)
 import Control.Monad (replicateM)
 import Data.Aeson ((.=))
 import Data.Aeson qualified as Aeson
@@ -11,9 +12,10 @@ import Sentry.Capture (captureEvent)
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Init qualified as Init
 import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
-import Sentry.Transport (FlushResponse (..), SomeTransport (..))
+import Sentry.Transport (FlushResponse (..), ShutdownResponse (..), SomeTransport (..))
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.HTTP.Async qualified as AsyncHttpTransport
 import Test.Hspec
@@ -71,3 +73,26 @@ spec_clientReport = describe "client report delivery" do
         _ ->
           expectationFailure $
             "expected exactly one client report, got " <> show (length receivedReports)
+
+  it "client handle close drains pending reports without a preliminary flush" $
+    Kent.withKent \kent -> do
+      Kent.flushKent kent
+      let dsn = Kent.dsnFor kent "1"
+      reports <- ClientReport.new
+      transport <- AsyncHttpTransport.build def (Just reports) 100 kent.manager dsn
+      let opts =
+            def
+              { dsn = Just dsn,
+                transport = Just (Witch.from (SomeTransport transport)),
+                sendClientReports = True,
+                shutdownTimeout = 5,
+                beforeSend = Just (const Nothing)
+              }
+      bracket (Init.acquireClient opts) Init.close \handle -> do
+        event <- Patrol.Event.fromSomeException (toException (userError "dropped on close"))
+        withClient (Init.clientOf handle) (captureEvent event) `shouldReturn` Nothing
+        Init.close handle `shouldReturn` ShutdownSucceeded
+        stored <- Kent.eventIds kent >>= traverse (Kent.getEvent kent)
+        let received = [report | report <- stored, Kent.dig ["payload", "header", "type"] report == Just (Aeson.String "client_report")]
+        fmap (Kent.dig ["payload", "body", "discarded_events"]) received
+          `shouldBe` [Just (Aeson.toJSON [Aeson.object ["reason" .= ("before_send" :: Text), "category" .= ("error" :: Text), "quantity" .= (1 :: Int)]])]

@@ -35,6 +35,7 @@ module Sentry.Transport.HTTP2.Async
   )
 where
 
+import Control.Exception (finally)
 import Data.Default (Default (def))
 import Data.Foldable (for_)
 import Data.Kind (Type)
@@ -161,9 +162,7 @@ instance Transport AsyncHttp2Transport where
   -- Delegate to the executor's shutdown, then close the HTTP/2 connection.
   -- The connection is closed unconditionally (even on timeout) to free
   -- network resources.
-  shutdown t timeout = do
-    result <- AsyncExecutor.shutdown t.executor timeout
-    Connection.closeManager t.manager
-    pure result
+  shutdown t timeout =
+    AsyncExecutor.shutdown t.executor timeout `finally` Connection.closeManager t.manager
 
   recordDiscards t = AsyncExecutor.recordDiscards t.executor

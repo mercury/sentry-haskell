@@ -1,5 +1,5 @@
 -- | The "batteries-included" optics-based entry point: re-exports "Sentry"
--- (the @sentry@ package's default-transport 'init' \/ 'withSentry', plus
+-- (the @sentry@ package's default-transport lifecycle helpers, plus
 -- everything from "Sentry.Core") and adds the optics conveniences from
 -- "Sentry.Core.Optics" — 'editScope', the 'apply' \/ 'runScopeUpdate' \/
 -- 'ScopeUpdate' trio, and the @empty@-prefixed record values.
