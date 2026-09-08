@@ -74,13 +74,17 @@ library workloads
 
 library
   import: defaults
-  hs-source-dirs: library
+  hs-source-dirs:
+    library
+    internal
+
   -- cabal-gild: discover library
   exposed-modules:
     Sentry.BreadcrumbType
     Sentry.Capture
     Sentry.Client
     Sentry.Client.Options
+    Sentry.Client.Options.Dsn
     Sentry.Client.Options.Env
     Sentry.ClientReport
     Sentry.Core
@@ -103,7 +107,11 @@ library
     Sentry.Test
     Sentry.Transport
 
-  other-modules: Paths_sentry_core
+  other-modules:
+    Paths_sentry_core
+    Sentry.Client.Internal
+    Sentry.Client.Options.Defaults
+
   autogen-modules: Paths_sentry_core
   build-depends:
     aeson,
@@ -142,6 +150,7 @@ test-suite unit
     CaptureExceptionTest
     CaptureMechanismTest
     CaptureOutcomeTest
+    ClientConstructionTest
     ClientReportTest
     ClientResolutionTest
     IntegrationSetupTest

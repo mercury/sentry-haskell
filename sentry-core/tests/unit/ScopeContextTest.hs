@@ -10,8 +10,9 @@ import OpenTelemetry.Context (Context)
 import OpenTelemetry.Context qualified as Context
 import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
-import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
+import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Scope (Scope, ScopeData (..))
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
@@ -150,7 +151,7 @@ spec_addBreadcrumbAt = describe "addBreadcrumbAt" do
     layers <- isolationOnly
     isolation <- maybe (fail "expected an isolation scope") pure layers.isolation
     transport <- Test.new
-    let client = Test.mkCustomClient transport def{maxBreadcrumbs = 3}
+    client <- Test.mkCustomClient transport def{maxBreadcrumbs = 3}
     Scope.bindClient (Just client) isolation
     traverse_
       (Scope.addBreadcrumbAt layers.context . crumb)
@@ -162,7 +163,7 @@ spec_addBreadcrumbAt = describe "addBreadcrumbAt" do
     layers <- isolationOnly
     isolation <- maybe (fail "expected an isolation scope") pure layers.isolation
     transport <- Test.new
-    let client = Test.mkCustomClient transport def{beforeBreadcrumb = Just (const Nothing)}
+    client <- Test.mkCustomClient transport def{beforeBreadcrumb = Just (const Nothing)}
     Scope.bindClient (Just client) isolation
     Scope.addBreadcrumbAt layers.context (crumb "dropped")
     isolationData <- Scope.readScopeRef isolation
@@ -196,10 +197,10 @@ spec_resolveClientAt = describe "resolveClientAt" do
     layers <- isolationOnly
     isolation <- maybe (fail "expected an isolation scope") pure layers.isolation
     transport <- Test.new
-    let client = Test.mkClient transport
+    client <- Test.mkClient transport
     Scope.bindClient (Just client) isolation
     resolved <- resolveClientAtIO layers.context
-    resolved.options.dsn `shouldBe` Just Test.TEST_DSN
+    resolved.options.dsn `shouldBe` Dsn.Explicit Test.TEST_DSN
 
   it "falls back to NON_RECORDING_CLIENT when no layer has a client bound" do
     layers <- allLayers

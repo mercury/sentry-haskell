@@ -2,7 +2,10 @@
 
 module Sentry.Client
   ( -- * Client
-    Client (..),
+    Client,
+    options,
+    transport,
+    integrations,
     pattern NON_RECORDING_CLIENT,
     getIntegration,
 
@@ -12,7 +15,6 @@ module Sentry.Client
 
     -- * Helpers
     disableIntegration,
-    realizePrebuilt,
   )
 where
 
@@ -20,8 +22,7 @@ import Control.Exception.Backtrace (BacktraceMechanism (..), setBacktraceMechani
 import Control.Monad (when)
 import Data.Foldable (for_)
 import Data.Function ((&))
-import Data.Kind (Type)
-import Data.Maybe (fromMaybe)
+import Data.List (nub)
 import Data.Proxy (Proxy (Proxy))
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -29,7 +30,10 @@ import Data.Text qualified as Text
 import Data.Typeable (cast)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
-import Sentry.Client.Options (ClientOptions (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Internal (Client (..), integrations, options, transport)
+import Sentry.Client.Internal qualified as ClientInternal
+import Sentry.Client.Options (ClientOptions, pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Client.Options.Env qualified as Env
 import Sentry.Integration (Integration (..), SomeIntegration (..), fromIntegration)
 import Sentry.Integration.Context (ContextIntegration (..))
@@ -41,48 +45,9 @@ import Sentry.Integration.Stacktrace
   )
 import Sentry.Internal (TransportProvider (..))
 import Sentry.Internal qualified as Internal
-import Sentry.Transport (SomeTransport)
+import System.Environment (lookupEnv)
 import System.IO (hPutStrLn, stderr)
 import Type.Reflection (SomeTypeRep, someTypeRep)
-import Witch qualified
-
--- | The 'Client' is responsible for processing events and sending them to the
--- Sentry server via the 'Sentry.Transport.SomeTransport' it contains; it can
--- be created from 'Sentry.Client.Options.ClientOptions', which it retains a
--- copy of after construction.
-type Client :: Type
-data Client = Client
-  { options :: ClientOptions,
-    transport :: Maybe SomeTransport,
-    integrations :: Vector SomeIntegration
-  }
-
--- | Realize a prebuilt transport from options, DSN-gated.
---
--- A 'DeferredTransport' cannot run without 'IO', so it yields 'Nothing'
--- (a non-recording client). Use 'new' to realize deferred providers.
-realizePrebuilt :: ClientOptions -> Maybe SomeTransport
-realizePrebuilt opts = case (opts.dsn, opts.transport) of
-  (Just _, Just (PrebuiltTransport t)) -> Just t
-  _ -> Nothing
-
--- | Low-level conversion that copies fields directly, running neither default
--- integration prepending nor 'Sentry.Integration.Integration.setup'. Useful
--- in tests or when constructing a 'Client' without the full initialization
--- lifecycle.
---
--- 'PrebuiltTransport' providers are realized (DSN-gated).
--- 'DeferredTransport' providers cannot run without 'IO' and yield a
--- non-recording client; use 'new' for those.
---
--- For normal application use, prefer 'new' (or 'Sentry.Init.init').
-instance Witch.From ClientOptions Client where
-  from options@ClientOptions{integrations} =
-    Client
-      { options,
-        transport = realizePrebuilt options,
-        integrations
-      }
 
 -- | Attempt to find a 'Sentry.Integration.Integration' in the list of
 -- 'Sentry.Integration.SomeIntegration' installed in the 'Client'.
@@ -136,6 +101,9 @@ builtinIntegrations =
 -- | Construct a 'Client' from 'Sentry.Client.Options.ClientOptions', running
 -- the full initialization lifecycle:
 --
+-- Reads environment configuration once and fills initial defaults before setup.
+-- Caller-supplied @Dsn.Disabled@ remains authoritative after every hook.
+--
 -- 1. If 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@,
 --    prepend 'builtinIntegrations' (minus any whose type is already present in
 --    the user-provided list, so the user-provided integration wins).
@@ -143,8 +111,12 @@ builtinIntegrations =
 -- 3. Run 'Sentry.Integration.Integration.setup' for each integration in order,
 --    threading the returned 'Sentry.Client.Options.ClientOptions' through to the
 --    next (so later integrations see earlier integrations' changes).
--- 4. Build the 'Client' from the final options, setting the integrations to
---    the deduplicated list from step 2.
+-- 4. Normalize setup output and fill terminal defaults, retaining the installed
+--    roster. Only DSN inheritance consults the original environment again.
+-- 5. Emit configuration diagnostics using the final debug setting, then realize
+--    the transport once if a concrete DSN exists.
+--
+-- Application code should prefer the owned lifecycle helpers in "Sentry.Init".
 new :: ClientOptions -> IO Client
 new initialOpts = do
   -- Ensure the HasCallStack backtrace mechanism is on so every thrown
@@ -152,10 +124,11 @@ new initialOpts = do
   -- CostCentre, Execution (DWARF), and IPE untouched — those require
   -- specific build flags and are opt-in by the user.
   setBacktraceMechanismState HasCallStackBacktrace True
-  (resolvedOpts, envWarnings) <- Env.resolve initialOpts
-  when (fromMaybe False resolvedOpts.debug) $
-    for_ envWarnings \w ->
-      hPutStrLn stderr $ "[sentry] " <> Text.unpack (Env.renderWarning w)
+  snapshot <- Env.snapshotWith lookupEnv
+  let (resolvedOpts, envWarnings) = Env.resolveSnapshot snapshot initialOpts
+  let enforceDisabled opts
+        | initialOpts.dsn == Dsn.Disabled = opts{Internal.dsn = Dsn.Disabled}
+        | otherwise = opts
   let typeReps = Set.fromList [r | SomeIntegration r _ <- Vector.toList resolvedOpts.integrations]
       kept
         | resolvedOpts.defaultIntegrations =
@@ -165,17 +138,18 @@ new initialOpts = do
         | otherwise = Vector.empty
       installed = dedupByTypeRep (kept <> resolvedOpts.integrations)
       opts' = resolvedOpts{Internal.integrations = installed}
-  finalOpts <- Vector.foldM (\o i -> setup i o) opts' installed
+  setupOpts <- Vector.foldM (\o i -> enforceDisabled <$> setup i o) opts' installed
+  let (normalized, finalWarnings) = Env.finalize snapshot (enforceDisabled setupOpts)
+      finalOpts = normalized{Internal.integrations = installed}
+      runtime = ClientInternal.runtimeOptionsFromOptions finalOpts
+  when runtime.debug $
+    for_ (map Env.renderWarning (nub (envWarnings <> finalWarnings))) \w ->
+      hPutStrLn stderr $ "[sentry] " <> Text.unpack w
   realized <- case (finalOpts.dsn, finalOpts.transport) of
-    (Just _, Just (PrebuiltTransport t)) -> pure (Just t)
-    (Just dsn, Just (DeferredTransport mk)) -> Just <$> mk dsn finalOpts
+    (Dsn.Explicit _, Just (PrebuiltTransport t)) -> pure (Just t)
+    (Dsn.Explicit dsn, Just (DeferredTransport mk)) -> Just <$> mk dsn finalOpts
     _ -> pure Nothing
-  pure
-    Client
-      { options = finalOpts{Internal.integrations = installed},
-        transport = realized,
-        integrations = installed
-      }
+  pure (Client finalOpts realized installed runtime)
   where
     -- Keep only the first occurrence of each 'SomeTypeRep' in the vector.
     dedupByTypeRep :: Vector SomeIntegration -> Vector SomeIntegration
@@ -188,11 +162,14 @@ new initialOpts = do
 
 -- | Any client which does not have a valid 'Transport' is non-recording.
 pattern NON_RECORDING_CLIENT :: Client
-pattern NON_RECORDING_CLIENT <- Client{transport = Nothing}
+pattern NON_RECORDING_CLIENT <- Client _ Nothing _ _
   where
-    NON_RECORDING_CLIENT =
-      Client
-        { options = DEFAULT_CLIENT_OPTIONS,
-          transport = Nothing,
-          integrations = Vector.empty
-        }
+    NON_RECORDING_CLIENT = Client opts Nothing Vector.empty (ClientInternal.runtimeOptionsFromOptions opts)
+      where
+        opts =
+          fst $
+            Env.finalize (Env.EnvSnapshot []) $
+              (DEFAULT_CLIENT_OPTIONS)
+                { Internal.dsn = Dsn.Disabled,
+                  Internal.defaultIntegrations = False
+                }

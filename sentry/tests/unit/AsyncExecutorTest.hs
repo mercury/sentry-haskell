@@ -21,6 +21,7 @@ import Patrol.Type.Headers qualified as Patrol.Headers
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Client.Options qualified as Options
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Init qualified as Init
 import Sentry.Test qualified as Test
@@ -193,7 +194,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
       executor <- AsyncExecutor.new 1 Nothing sendFn
       let opts =
             (Options.DEFAULT_CLIENT_OPTIONS)
-              { Options.dsn = Just Test.TEST_DSN,
+              { Options.dsn = Dsn.Explicit Test.TEST_DSN,
                 Options.defaultIntegrations = False,
                 Options.transport = Just (Options.PrebuiltTransport (Transport.SomeTransport executor)),
                 Options.shutdownTimeout = 30
@@ -378,7 +379,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
           pure $ Transport.SomeTransport executor
         opts =
           (Options.DEFAULT_CLIENT_OPTIONS)
-            { Options.dsn = Just Test.TEST_DSN,
+            { Options.dsn = Dsn.Explicit Test.TEST_DSN,
               Options.defaultIntegrations = False,
               Options.transport = Just (Options.DeferredTransport factory),
               Options.shutdownTimeout = 0.001

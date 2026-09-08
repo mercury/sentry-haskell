@@ -29,6 +29,7 @@ import Data.Vector qualified as Vector
 import Network.URI (URI)
 import Patrol qualified
 import Patrol.Type.Dsn qualified as Patrol.Dsn
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
@@ -50,10 +51,12 @@ data ClientOptions = ClientOptions
   { -- | A Sentry Data Source Name (DSN) from which the client will derive a
     -- URL and send telemetry to.
     --
-    -- Defaults to @Nothing@, which disables the client.
+    -- Defaults to @Dsn.Inherit@, which consults @SENTRY_DSN@.
+    -- @Dsn.Disabled@ prevents recording even if setup tries to enable it;
+    -- @Dsn.Explicit value@ overrides the environment.
     --
     -- <https://docs.sentry.io/concepts/key-terms/dsn-explainer/>
-    dsn :: Maybe Patrol.Dsn,
+    dsn :: Dsn.DsnSource,
     -- | Whether the SDK should enable debug logging.
     --
     -- Defaults to @False@ when resolved against the @SENTRY_DEBUG@ environment
@@ -78,7 +81,9 @@ data ClientOptions = ClientOptions
     -- Defaults to @1.0@ when resolved against the @SENTRY_SAMPLE_RATE@
     -- environment variable.
     --
-    -- Values sourced from the environment outside of @[0,1]@ are clamped.
+    -- Finite values from code, environment, or setup are clamped to @[0,1]@.
+    -- NaN and infinities default to 1 (optional trace/profile rates become
+    -- unset), with diagnostics when final debug logging is enabled.
     sampleRate :: Maybe Float,
     -- | Trace/transaction sample rate.
     --
@@ -190,7 +195,7 @@ data ClientOptions = ClientOptions
 pattern DEFAULT_CLIENT_OPTIONS :: ClientOptions
 pattern DEFAULT_CLIENT_OPTIONS <-
   ClientOptions
-    { dsn = Nothing,
+    { dsn = Dsn.Inherit,
       debug = Nothing,
       release = Nothing,
       environment = Nothing,
@@ -215,7 +220,7 @@ pattern DEFAULT_CLIENT_OPTIONS <-
   where
     DEFAULT_CLIENT_OPTIONS =
       ClientOptions
-        { dsn = Nothing,
+        { dsn = Dsn.Inherit,
           debug = Nothing,
           release = Nothing,
           environment = Nothing,
@@ -242,7 +247,7 @@ instance Default ClientOptions where
   def = DEFAULT_CLIENT_OPTIONS
 
 instance Witch.From Patrol.Dsn ClientOptions where
-  from (Just -> dsn) = def{dsn}
+  from value = def{dsn = Dsn.Explicit value}
 
 instance Witch.TryFrom URI ClientOptions where
   tryFrom uri = case Patrol.Dsn.fromUri uri of
@@ -251,13 +256,13 @@ instance Witch.TryFrom URI ClientOptions where
 
 instance Witch.TryFrom ClientOptions Patrol.Dsn where
   tryFrom options = case options.dsn of
-    Nothing -> Left $ Witch.TryFromException options Nothing
-    Just dsn -> Right dsn
+    Dsn.Explicit dsn -> Right dsn
+    _ -> Left $ Witch.TryFromException options Nothing
 
 instance Witch.TryFrom ClientOptions URI where
   tryFrom options = case options.dsn of
-    Nothing -> Left $ Witch.TryFromException options Nothing
-    Just dsn -> Right $ Patrol.Dsn.intoUri dsn
+    Dsn.Explicit dsn -> Right $ Patrol.Dsn.intoUri dsn
+    _ -> Left $ Witch.TryFromException options Nothing
 
 -- \| An 'Integration' has two primary purposes:
 --

@@ -12,6 +12,7 @@ import Patrol.Type.Event (Event (..))
 import Patrol.Type.Level qualified as Level
 import Sentry.Capture qualified as Capture
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Init qualified as Init
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
@@ -38,7 +39,7 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
     transport <- Test.new
     let opts =
           def
-            { dsn = Just Test.TEST_DSN,
+            { dsn = Dsn.Explicit Test.TEST_DSN,
               transport = Just (Witch.from (SomeTransport transport)),
               maxBreadcrumbs = 2,
               beforeBreadcrumb = Just (\c -> if c.message == "drop" then Nothing else Just c)
@@ -66,7 +67,7 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
     Scope.lookupIsolation ctx' `shouldSatisfy` isNothing
     transport <- Test.new
     global <- Scope.getGlobal
-    Scope.bindClient (Just (Test.mkClient transport)) global
+    Test.mkClient transport >>= \client -> Scope.bindClient (Just client) global
     Scope.addBreadcrumbs []
     ctx'' <- ThreadLocal.getContext
     Scope.lookupIsolation ctx'' `shouldSatisfy` isNothing
@@ -74,7 +75,7 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
   it "preserves current and unrelated keys, persists across current brackets, and isolates siblings" $ freshContext do
     transport <- Test.new
     global <- Scope.getGlobal
-    Scope.bindClient (Just (Test.mkClient transport)) global
+    Test.mkClient transport >>= \client -> Scope.bindClient (Just client) global
     key <- Context.newKey "ambient-unrelated"
     ThreadLocal.adjustContext (Context.insert key True)
     Scope.IO.withScope \current -> do
@@ -100,7 +101,7 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
     explicitContext <- ThreadLocal.getContext
     transport <- Test.new
     global <- Scope.getGlobal
-    Scope.bindClient (Just (Test.mkClient transport)) global
+    Test.mkClient transport >>= \client -> Scope.bindClient (Just client) global
     Scope.addBreadcrumbAt explicitContext (crumb "no-scope")
     current <- ThreadLocal.getContext
     Scope.lookupIsolation current `shouldSatisfy` isNothing

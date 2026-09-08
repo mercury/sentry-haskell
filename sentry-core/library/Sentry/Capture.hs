@@ -45,7 +45,8 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventId qualified as Patrol.EventId
 import Patrol.Type.EventType qualified as Patrol.EventType
 import Patrol.Type.Platform qualified as Patrol.Platform
-import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
+import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
+import Sentry.Client.Internal qualified as ClientInternal
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
@@ -231,8 +232,9 @@ prepareCapture client scope captured =
 --     5. Apply sampling ('ClientOptions.sampleRate')
 --     6. Wrap the event in an envelope and send it via the transport
 captureWith :: (MonadIO m) => Client -> CapturedEvent -> m (Maybe Patrol.EventId)
-captureWith client captured =
-  case (client.options.dsn, client.transport) of
+captureWith client captured = do
+  let runtime = ClientInternal.runtimeOptions client
+  case (runtime.dsn, client.transport) of
     -- Non-recording client: SDK is disabled; nothing to report (no transport
     -- to hold the client-report accumulator either).
     (Nothing, _) -> pure Nothing
@@ -241,7 +243,7 @@ captureWith client captured =
       result <- runExceptT do
         maybeEvent <- liftIO $ runIntegrations client.options captured client.integrations
         event <- maybe (throwError ClientReport.EventProcessor) pure maybeEvent
-        enriched <- liftIO $ applyClientDefaults client.options client.integrations event
+        enriched <- liftIO $ applyClientDefaults client.options runtime client.integrations event
         let processed = captured{event = enriched}
         finalEvent <- case client.options.beforeSend of
           Nothing -> pure processed.event
@@ -250,7 +252,7 @@ captureWith client captured =
         -- sample /after/ processing events, so that an event processor has the
         -- opportunity to drop an event even if it wasn't going to be sampled;
         -- this ensures more accurate discard counts in Sentry's dashboards.
-        sampled <- liftIO $ sample (fromMaybe 1.0 client.options.sampleRate)
+        sampled <- liftIO $ sample runtime.sampleRate
         unless sampled $ throwError ClientReport.SampleRate
         let envelope = Patrol.Envelope.fromEvent dsn finalEvent
         response <- liftIO $ Transport.send transport envelope
@@ -287,7 +289,7 @@ noteDrop :: (MonadIO m) => Client -> DiscardReason -> Patrol.DataCategory.DataCa
 noteDrop client reason category = liftIO do
   for_ client.transport \t ->
     Transport.recordDiscards t reason category 1
-  when (fromMaybe False client.options.debug) $
+  when (ClientInternal.runtimeOptions client).debug $
     hPutStrLn stderr $
       "[sentry] event dropped: " <> Text.unpack (ClientReport.reasonText reason)
 
@@ -296,8 +298,8 @@ noteDrop client reason category = liftIO do
 -- Fills only fields that are still at their patrol sentinel value (empty
 -- 'Text', @nil@ 'Patrol.EventId', 'Nothing', etc.), so explicit values set
 -- by the event builder, scope, or integrations are always preserved.
-applyClientDefaults :: ClientOptions -> Vector SomeIntegration -> Patrol.Event -> IO Patrol.Event
-applyClientDefaults opts integrations event = do
+applyClientDefaults :: ClientOptions -> ClientInternal.RuntimeOptions -> Vector SomeIntegration -> Patrol.Event -> IO Patrol.Event
+applyClientDefaults opts runtime integrations event = do
   eventId <-
     if event.eventId == Patrol.EventId.empty
       then Patrol.EventId.random
@@ -308,7 +310,7 @@ applyClientDefaults opts integrations event = do
       { Patrol.Event.eventId = eventId,
         Patrol.Event.timestamp = timestamp,
         Patrol.Event.release = event.release `orOpt` opts.release,
-        Patrol.Event.environment = event.environment `orOpt` opts.environment,
+        Patrol.Event.environment = event.environment `orElse` runtime.environment,
         Patrol.Event.serverName = event.serverName `orOpt` opts.serverName,
         Patrol.Event.dist = event.dist `orOpt` opts.dist,
         Patrol.Event.platform = event.platform <|> Just Patrol.Platform.Haskell,

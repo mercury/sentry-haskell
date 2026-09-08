@@ -5,8 +5,9 @@ import Control.Monad (replicateM, void)
 import Data.Default (def)
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
-import Sentry.Client (Client)
+import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Init qualified as Init
 import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
@@ -26,12 +27,12 @@ spec_shutdownDrains = describe "graceful shutdown" do
       transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
-          client = Witch.from @ClientOptions @Client opts
-          n = 25 :: Int
+      client <- Client.new opts
+      let n = 25 :: Int
       events <-
         replicateM n $
           Patrol.Event.fromSomeException . toException $
@@ -51,12 +52,12 @@ spec_shutdownDrains = describe "graceful shutdown" do
       transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
       let opts =
             def
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False,
                 shutdownTimeout = 5
               }
-          n = 25 :: Int
+      let n = 25 :: Int
       bracket (Init.acquireClient opts) Init.close \handle -> do
         events <- replicateM n $ Patrol.Event.fromSomeException (toException (userError "handle shutdown"))
         void $ traverse (\e -> withClient (Init.clientOf handle) $ captureEvent e) events

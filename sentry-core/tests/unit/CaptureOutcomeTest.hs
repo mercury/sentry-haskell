@@ -15,6 +15,7 @@ import Patrol.Type.EventId qualified as EventId
 import Patrol.Type.Frame qualified as Frame
 import Patrol.Type.Level qualified as Level
 import Sentry.Client qualified as Client
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core
 import Sentry.Scope qualified as Scope
 import Sentry.Test qualified as Test
@@ -37,7 +38,7 @@ spec_captureOutcome = describe "capture outcomes" do
     it ("returns the final ID only for " <> show response <> " without duplicate drops") do
       recorded <- Test.new
       finalId <- EventId.random
-      client <- Client.new def{dsn = Just Test.TEST_DSN, beforeSend = Just (\captured -> Just captured.event{Event.eventId = finalId}), transport = Just (PrebuiltTransport (Transport.SomeTransport (Responding response recorded)))}
+      client <- Client.new def{dsn = Dsn.Explicit Test.TEST_DSN, beforeSend = Just (\captured -> Just captured.event{Event.eventId = finalId}), transport = Just (PrebuiltTransport (Transport.SomeTransport (Responding response recorded)))}
       withClient client do
         result <- captureEvent Event.empty
         events <- Test.fetchAndClearEvents recorded

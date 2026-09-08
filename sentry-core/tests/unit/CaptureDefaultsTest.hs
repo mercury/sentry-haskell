@@ -14,6 +14,7 @@ import Sentry.Capture (captureEvent, captureException, captureMessage)
 import Sentry.Client (Client)
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Test qualified as Test
 import Test.Hspec
 
@@ -125,11 +126,11 @@ spec_captureDefaults = describe "applyClientDefaults" do
 
   describe "server_name" do
     it "serverName is non-empty by default (filled by ContextIntegration)" do
-      client <- liftIO $ Client.new def{dsn = Just Test.TEST_DSN}
+      client <- liftIO $ Client.new def{dsn = Dsn.Explicit Test.TEST_DSN}
       (client :: Client).options.serverName `shouldSatisfy` isJust
 
     it "explicit options.serverName is preserved and not overwritten" do
-      client <- liftIO $ Client.new def{dsn = Just Test.TEST_DSN, serverName = Just "my-box"}
+      client <- liftIO $ Client.new def{dsn = Dsn.Explicit Test.TEST_DSN, serverName = Just "my-box"}
       (client :: Client).options.serverName `shouldBe` Just ("my-box" :: Text)
 
     it "serverName appears on events" do

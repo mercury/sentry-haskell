@@ -5,7 +5,6 @@ module OpticsTest where
 import Data.Maybe (isJust)
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Client (Client (..))
 import Sentry.Client.Options (pattern DEFAULT_CLIENT_OPTIONS)
 import Sentry.Core.Optics qualified as Sentry
 import Sentry.Core.Optics.Prelude

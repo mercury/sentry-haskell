@@ -8,6 +8,7 @@ import Data.Text (Text)
 import Data.Vector qualified as Vector
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Integration (Integration (..), fromIntegration)
 import Sentry.Integration.Context (ContextIntegration (..))
 import Sentry.Integration.Stacktrace
@@ -26,7 +27,7 @@ spec_integration_setup = do
       ref <- newIORef ([] :: [Text])
       let int = RecordingIntegration ref
           opts = def{integrations = Vector.fromList [fromIntegration int]}
-      client <- Client.new opts{dsn = Just Test.TEST_DSN}
+      client <- Client.new opts{dsn = Dsn.Explicit Test.TEST_DSN}
       recorded <- readIORef ref
       -- Env.resolve fills environment = "production" before setup runs
       recorded `shouldBe` ["production"]
@@ -41,7 +42,7 @@ spec_integration_setup = do
               { integrations = Vector.fromList [fromIntegration int1, fromIntegration int2],
                 environment = Nothing
               }
-      client <- Client.new opts{dsn = Just Test.TEST_DSN}
+      client <- Client.new opts{dsn = Dsn.Explicit Test.TEST_DSN}
       recorded <- readIORef ref
       -- \* Env.resolve fills "production".
       -- \* ContextIntegration (builtin) runs first but doesn't write to `ref`.
@@ -53,15 +54,15 @@ spec_integration_setup = do
 
     it "does not call setup when defaultIntegrations is False and no integrations given" do
       let opts = def{defaultIntegrations = False}
-      client <- Client.new opts{dsn = Just Test.TEST_DSN}
+      client <- Client.new opts{dsn = Dsn.Explicit Test.TEST_DSN}
       Vector.length client.integrations `shouldBe` 0
       -- ContextIntegration.setup fills serverName from the hostname; if it ran,
       -- serverName would be Just <hostname>.  Nothing proves setup never ran.
       client.options.serverName `shouldBe` Nothing
 
     it "defaultIntegrations=False yields zero integrations; =True installs all known builtins" do
-      clientTrue <- Client.new def{dsn = Just Test.TEST_DSN, defaultIntegrations = True}
-      clientFalse <- Client.new def{dsn = Just Test.TEST_DSN, defaultIntegrations = False}
+      clientTrue <- Client.new def{dsn = Dsn.Explicit Test.TEST_DSN, defaultIntegrations = True}
+      clientFalse <- Client.new def{dsn = Dsn.Explicit Test.TEST_DSN, defaultIntegrations = False}
       -- defaultIntegrations=False must install nothing
       Vector.length clientFalse.integrations `shouldBe` 0
       -- every expected builtin must be present
@@ -79,7 +80,7 @@ spec_integration_setup = do
     it "default setup (no override) leaves options unchanged" do
       let opts = def{environment = Just "original"}
           int = NoopIntegration
-      client <- Client.new opts{dsn = Just Test.TEST_DSN, integrations = Vector.fromList [fromIntegration int]}
+      client <- Client.new opts{dsn = Dsn.Explicit Test.TEST_DSN, integrations = Vector.fromList [fromIntegration int]}
       client.options.environment `shouldBe` Just "original"
 
     it "dedup collapses two integrations of the same type to one" do
@@ -87,7 +88,7 @@ spec_integration_setup = do
       let int1 = RecordingIntegration ref
           int2 = RecordingIntegration ref
           opts = def{integrations = Vector.fromList [fromIntegration int1, fromIntegration int2]}
-      client <- Client.new opts{dsn = Just Test.TEST_DSN}
+      client <- Client.new opts{dsn = Dsn.Explicit Test.TEST_DSN}
       -- builtins + one RecordingIntegration survive (second is deduped)
       Vector.length client.integrations `shouldBe` Vector.length Client.builtinIntegrations + 1
       -- RecordingIntegration.setup ran exactly once (deduped)

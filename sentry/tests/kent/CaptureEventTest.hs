@@ -6,8 +6,9 @@ import Data.Default (def)
 import Data.Maybe (catMaybes, isJust)
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
-import Sentry.Client (Client)
+import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
@@ -27,12 +28,12 @@ spec_captureEvent = describe "captureEvent against kent (async transport)" do
       transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
-          client = Witch.from @ClientOptions @Client opts
-          n = 50 :: Int
+      client <- Client.new opts
+      let n = 50 :: Int
       events <-
         replicateM n $
           Patrol.Event.fromSomeException . toException $
@@ -53,12 +54,12 @@ spec_captureEventSync = describe "captureEvent against kent (sync transport)" do
       transport <- SyncHttpTransport.build def Nothing kent.manager dsn
       let opts =
             (def @ClientOptions)
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
-          client = Witch.from @ClientOptions @Client opts
-          n = 10 :: Int
+      client <- Client.new opts
+      let n = 10 :: Int
       events <-
         replicateM n $
           Patrol.Event.fromSomeException . toException $
@@ -79,11 +80,11 @@ spec_eventPayload = describe "event payload delivered to kent" do
       transport <- SyncHttpTransport.build def Nothing kent.manager dsn
       let opts =
             (def @ClientOptions)
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
-          client = Witch.from @ClientOptions @Client opts
+      client <- Client.new opts
       event <- Patrol.Event.fromSomeException . toException $ userError "boom"
       mEventId <- withClient client $ captureEvent event
       ids <- Kent.eventIds kent

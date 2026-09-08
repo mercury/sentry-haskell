@@ -9,8 +9,9 @@ import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
-import Sentry.Client (Client)
+import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Init qualified as Init
 import Sentry.Scope.IO (withClient)
@@ -34,13 +35,13 @@ spec_clientReport = describe "client report delivery" do
       transport <- AsyncHttpTransport.build def (Just clientReports) 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = True,
                 beforeSend = Just (const Nothing)
               }
-          client = Witch.from @ClientOptions @Client opts
-          n = 3 :: Int
+      client <- Client.new opts
+      let n = 3 :: Int
       events <-
         replicateM n $
           Patrol.Event.fromSomeException . toException $
@@ -82,7 +83,7 @@ spec_clientReport = describe "client report delivery" do
       transport <- AsyncHttpTransport.build def (Just reports) 100 kent.manager dsn
       let opts =
             def
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = True,
                 shutdownTimeout = 5,

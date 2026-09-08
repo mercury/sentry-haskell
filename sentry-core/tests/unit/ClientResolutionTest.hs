@@ -25,8 +25,8 @@ spec_clientResolution = describe "client resolution (client-on-scope)" do
   it "an inner withClient overrides the outer client for its extent" do
     transportA <- Test.new
     transportB <- Test.new
-    let clientA = Test.mkClient transportA
-        clientB = Test.mkClient transportB
+    clientA <- Test.mkClient transportA
+    clientB <- Test.mkClient transportB
     Sentry.withClient clientA do
       _ <- Sentry.withClient clientB $ Sentry.captureMessage Patrol.Level.Info "goes to B"
       _ <- Sentry.captureMessage Patrol.Level.Info "goes to A"

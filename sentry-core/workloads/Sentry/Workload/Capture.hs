@@ -11,7 +11,9 @@ import Data.Vector qualified as Vector
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Level qualified as Patrol.Level
 import Sentry.Client (Client)
+import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core qualified as Sentry
 import Sentry.Scope (Scope)
 import Sentry.Scope qualified as Scope
@@ -74,7 +76,7 @@ installClientWith mkClient = do
 recordingClient :: IO Client
 recordingClient = do
   transport <- Test.new
-  pure (Test.mkCustomClient transport def{maxBreadcrumbs = 1000})
+  Test.mkCustomClient transport def{maxBreadcrumbs = 1000, defaultIntegrations = False}
 
 -- | A transport that discards every envelope immediately, retaining nothing.
 type DiscardTransport :: Type
@@ -90,17 +92,20 @@ instance Transport DiscardTransport where
 -- indicate flat memory residency, otherwise we've introduced a space leak.
 discardingClient :: IO Client
 discardingClient =
-  pure $
-    Witch.from @ClientOptions @Client
-      def
-        { dsn = Just Test.TEST_DSN,
-          transport = Just $ Witch.from $ SomeTransport DiscardTransport,
-          maxBreadcrumbs = 1000
-        }
+  Client.new
+    def
+      { dsn = Dsn.Explicit Test.TEST_DSN,
+        transport = Just $ Witch.from $ SomeTransport DiscardTransport,
+        defaultIntegrations = False,
+        maxBreadcrumbs = 1000
+      }
 
 -- | Capture @iterations@ message events.
 captureN :: IO ()
 captureN = replicateM_ iterations (Sentry.captureMessage_ Patrol.Level.Info "benchmark message")
+
+-- Each workload includes one full client initialization outside its event loop.
+-- Built-in integrations are disabled to isolate capture costs.
 
 -- Metadata population ---------------------------------------------------------
 

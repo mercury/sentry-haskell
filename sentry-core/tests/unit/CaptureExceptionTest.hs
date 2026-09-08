@@ -48,8 +48,8 @@ spec_captureException = describe "captureException" do
         Scope.IO.withScope \ambientScope -> do
           Scope.setEventProcessor ambientScope (const Nothing)
           transportAtAnnotation <- liftIO Test.new
-          let annotationClient = Test.mkClient transportAtAnnotation
-              scopeData =
+          annotationClient <- Test.mkClient transportAtAnnotation
+          let scopeData =
                 (def @ScopeData)
                   { client = Just annotationClient,
                     eventProcessor = \ce ->

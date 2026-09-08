@@ -152,7 +152,7 @@ import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
-import Sentry.Client (Client (..), pattern NON_RECORDING_CLIENT)
+import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Scope.Internal (Scope, ScopeData (..), ScopeType (..))

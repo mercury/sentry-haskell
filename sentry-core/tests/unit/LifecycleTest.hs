@@ -19,8 +19,8 @@ import Data.Time.Clock (NominalDiffTime)
 import Data.Unique (newUnique)
 import GHC.Conc (BlockReason (BlockedOnMVar), ThreadStatus (ThreadBlocked), threadStatus)
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Client (Client (..))
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core qualified as Sentry
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.Internal qualified as Internal
@@ -36,7 +36,7 @@ spec_lifecycle = do
   describe "Sentry.init / Sentry.close" do
     it "shuts down without a preliminary flush on normal exit" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Dsn.Explicit Test.TEST_DSN}
       withGlobalScope $ bracket (Sentry.init opts) Sentry.close \_ -> pure ()
       flushCount <- readIORef lt.flushes
       shutdownCount <- readIORef lt.shutdowns
@@ -45,7 +45,7 @@ spec_lifecycle = do
 
     it "shuts down without a preliminary flush on exception, and rethrows" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Dsn.Explicit Test.TEST_DSN}
       result <-
         try @SomeException $
           withGlobalScope $
@@ -66,13 +66,13 @@ spec_lifecycle = do
 
     it "returns a client carrying the configured transport" do
       lt <- newLifecycleTransport
-      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport lt)), dsn = Dsn.Explicit Test.TEST_DSN}
       withGlobalScope $ bracket (Sentry.init opts) Sentry.close \handle ->
         isJust (Sentry.clientOf handle).transport `shouldBe` True
 
     it "binds the client to the global scope so capture works without scopes" do
       transport <- Test.new
-      let opts = def{transport = Just (Witch.from (SomeTransport transport)), dsn = Just Test.TEST_DSN}
+      let opts = def{transport = Just (Witch.from (SomeTransport transport)), dsn = Dsn.Explicit Test.TEST_DSN}
       withGlobalScope $
         bracket (Sentry.init opts) Sentry.close \_ ->
           () <$ Sentry.captureMessage Patrol.Level.Info "scope-free capture"
@@ -471,7 +471,7 @@ namedOptions :: Text -> ClientOptions
 namedOptions name = def{release = Just name, defaultIntegrations = False}
 
 transportOptions :: (Transport t) => t -> ClientOptions
-transportOptions t = (namedOptions "transport"){dsn = Just Test.TEST_DSN, transport = Just (Witch.from (SomeTransport t))}
+transportOptions t = (namedOptions "transport"){dsn = Dsn.Explicit Test.TEST_DSN, transport = Just (Witch.from (SomeTransport t))}
 
 assertBound :: Scope.Scope -> Maybe Text -> Expectation
 assertBound scope expected = do

@@ -4,8 +4,9 @@ import Control.Monad (replicateM, void)
 import Data.Default (def)
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
-import Sentry.Client (Client)
+import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Scope.IO (withClient)
 import Sentry.TestKit.Kent qualified as Kent
 import Sentry.Transport (FlushResponse (..), SomeTransport (..))
@@ -26,11 +27,11 @@ deliveredUnder tweak =
     let opts =
           tweak
             (def @ClientOptions)
-              { dsn = Just dsn,
+              { dsn = Dsn.Explicit dsn,
                 transport = Just (Witch.from (SomeTransport transport)),
                 sendClientReports = False
               }
-        client = Witch.from @ClientOptions @Client opts
+    client <- Client.new opts
     events <-
       replicateM 10 $
         Patrol.Event.fromSomeException . toException $

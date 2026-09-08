@@ -174,7 +174,7 @@ code override values sourced from the environment.
 
 | Variable                       | `ClientOptions` field  | Terminal default if unset by both code and env     |
 | ------------------------------ | ---------------------- | -------------------------------------------------- |
-| `SENTRY_DSN`                   | `dsn`                  | `Nothing` (non-recording client)                   |
+| `SENTRY_DSN`                   | `dsn`                  | `Dsn.Disabled` (non-recording client)              |
 | `SENTRY_RELEASE`               | `release`              | `Nothing`                                          |
 | `SENTRY_ENVIRONMENT`           | `environment`          | `"production"`                                     |
 | `SENTRY_DEBUG`                 | `debug`                | `False`                                            |
@@ -188,7 +188,10 @@ case-insensitively; anything else is treated as unset.
 Sample rates parse as floats and are clamped to `[0, 1]`.
 
 A variable that's set but fails to parse is ignored and will only log a
-message if the SDK initialized in debug mode.
+message if the final debug setting is enabled.
+
+Explicit code settings suppress diagnostics for the environment values they
+override.
 
 ### Initializing the SDK
 
@@ -205,24 +208,32 @@ main =
     runApplication
 ```
 
-This reads `SENTRY_DSN` (and other `SENTRY_*` environment variables), and uses
+This reads `SENTRY_DSN` (and other `SENTRY_*` environment variables) and uses
 the HTTP/1.1 transport by default.
+
+Use `dsn = Dsn.Disabled` to prevent recording even when `SENTRY_DSN` is set;
+use `dsn = Dsn.Explicit value` to override the environment.
+
+Disabled clients still run integration setup but do not create a default
+transport worker.
 
 The `ClientOptions` record can be modified, which will override any values
 pulled from the environment, as follows:
 
 ```haskell
 import Data.Default (def)
-import Patrol.Type.Dsn qualified as Dsn
+import Patrol.Type.Dsn qualified as Patrol.Dsn
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry qualified as Sentry
 import Sentry.Transport.HTTP2.Async qualified as Http2Transport
 
 main :: IO ()
 main = do
-  dsn <- Dsn.fromText "https://public@o0.ingest.sentry.io/0"
+  dsn <- maybe (fail "Invalid Sentry DSN") pure $
+    Patrol.Dsn.fromText "https://public@o0.ingest.sentry.io/0"
   let clientOptions =
         def
-          { Sentry.dsn = Just dsn,
+          { Sentry.dsn = Dsn.Explicit dsn,
             Sentry.environment = Just "production",
             Sentry.transport = Just (Http2Transport.new def 1000)
           }
@@ -452,32 +463,29 @@ http2Transport = Just (Http2.new def 1000)
 `Sentry.Test` provides an in-memory transport so you can assert on what *would*
 have been sent to Sentry within your unit testing framework.
 
-It exposes a `TEST_DSN`, a `TestTransport`, scope-isolation helpers, and accessors
-that drain the collected data:
+Use `Test.withClient` to create a test transport and initialize a client bound
+to the isolation scope for the action. It supplies the test DSN automatically
+and returns the transport for inspection:
 
 ```haskell
-import Data.Default (def)
-import Sentry.Level qualified as Level
-import Sentry (ClientOptions (..))
 import Sentry qualified
+import Sentry.Level qualified as Level
 import Sentry.Test qualified as Test
-import Sentry.Transport (SomeTransport (..))
-import Witch qualified
+import Test.Hspec (Spec, it, shouldBe)
 
 spec :: Spec
 spec = it "captures a message" do
-  transport <- Test.new
-  let opts =
-        def
-          { transport = Just (Witch.from (SomeTransport transport)),
-            dsn = Just Test.TEST_DSN
-          }
-  Test.withGlobalScope $
-    Sentry.withSentry opts \_ ->
-      Sentry.captureMessage_ Level.Info "hello"
+  (_, transport) <- Test.withClient \_ ->
+    Sentry.captureMessage_ Level.Info "hello"
   events <- Test.fetchAndClearEvents transport
   length events `shouldBe` 1
 ```
+
+Use `Test.withCustomClient opts` when testing custom configuration, such as
+sampling or event processors.
+
+Use `Test.mkClient transport` and `Test.mkCustomClient transport opts` for tests
+that need to manage client binding themselves,
 
 > [!TIP]
 > Use `fetchAndClearEnvelopes` to inspect the raw envelopes and
@@ -492,20 +500,20 @@ pattern) and updated record-style.
 
 Commonly set `ClientOptions` fields:
 
-| Field               | Type                                          | Purpose                                                                 |
-| ------------------- | --------------------------------------------- | ------------------------------------------------------------------      |
-| `dsn`               | `Maybe Patrol.Dsn`                            | Where events are sent; `Nothing` makes the client non-recording         |
-| `transport`         | `Maybe TransportProvider`                     | How events are sent (see [Choosing a Transport](#choosing-a-transport)) |
-| `environment`       | `Maybe Text`                                  | Environment tag (e.g. `"production"`)                                   |
-| `release`           | `Maybe Text`                                  | Release identifier attached to events                                   |
-| `sampleRate`        | `Float`                                       | Fraction of events to send, in `[0,1]`                                  |
-| `sendDefaultPII`    | `Bool`                                        | Whether to include personally-identifiable info                         |
-| `maxBreadcrumbs`    | `Word`                                        | Per-scope breadcrumb cap                                                |
-| `beforeSend`        | `Maybe (CapturedEvent -> Maybe Patrol.Event)` | Final hook to rewrite or drop each event                                |
-| `beforeBreadcrumb`  | `Maybe (Breadcrumb -> Maybe Breadcrumb)`      | Hook to rewrite or drop each breadcrumb                                 |
-| `integrations`      | `Vector SomeIntegration`                      | Extra integrations to run                                               |
-| `shutdownTimeout`   | `NominalDiffTime`                             | Time budget for draining the transport on close                       |
-| `debug`             | `Bool`                                        | Log dropped events to `stderr`                                          |
+| Field               | Type                                          | Purpose                                                                  |
+| ------------------- | --------------------------------------------- | ------------------------------------------------------------------------ |
+| `dsn`               | `DsnSource`                                   | Inherit from the environment, disable, or use an explicitly provided DSN |
+| `transport`         | `Maybe TransportProvider`                     | How events are sent (see [Choosing a Transport](#choosing-a-transport))  |
+| `environment`       | `Maybe Text`                                  | Environment tag (e.g. `"production"`)                                    |
+| `release`           | `Maybe Text`                                  | Release identifier attached to events                                    |
+| `sampleRate`        | `Maybe Float`                                 | Fraction of events to send, in `[0,1]`                                   |
+| `sendDefaultPII`    | `Bool`                                        | Whether to include personally-identifiable info                          |
+| `maxBreadcrumbs`    | `Word`                                        | Per-scope breadcrumb cap                                                 |
+| `beforeSend`        | `Maybe (CapturedEvent -> Maybe Patrol.Event)` | Final hook to rewrite or drop each event                                 |
+| `beforeBreadcrumb`  | `Maybe (Breadcrumb -> Maybe Breadcrumb)`      | Hook to rewrite or drop each breadcrumb                                  |
+| `integrations`      | `Vector SomeIntegration`                      | Extra integrations to run                                                |
+| `shutdownTimeout`   | `NominalDiffTime`                             | Time budget for draining the transport on close                          |
+| `debug`             | `Maybe Bool`                                  | Log dropped events to `stderr`                                           |
 
 ### Capturing
 
@@ -547,7 +555,7 @@ Transport operations return explicit sum types rather than throwing:
 
 | Type               | Constructors                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `SendResponse`     | `SendProcessed`, `SendFailed_QueueFull`, `SendFailed_Shutdown`, `SendFailed_Other`                                                 |
+| `SendResponse`     | `SendProcessed`, `SendFailed_QueueFull`, `SendFailed_Shutdown`, `SendFailed_Other`                             |
 | `FlushResponse`    | `FlushSucceeded`, `FlushFailed_TimedOut`, `FlushFailed_QueueFull`, `FlushFailed_Shutdown`, `FlushFailed_Other` |
 | `ShutdownResponse` | `ShutdownSucceeded`, `ShutdownFailed_TimedOut`, `ShutdownFailed_AlreadyShutdown`, `ShutdownFailed_Other`       |
 

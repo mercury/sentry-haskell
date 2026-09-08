@@ -17,6 +17,7 @@ import Patrol.Type.Thread qualified as Patrol.Thread
 import Patrol.Type.Threads qualified as Patrol.Threads
 import Sentry.Capture (captureException, captureMessage, captureMessage_)
 import Sentry.Client qualified as Client
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Integration.Stacktrace (ProcessStacktraceIntegration (..))
 import Sentry.Internal (ClientOptions (..))
 import Sentry.Stacktrace (classifyInApp, packageName)
@@ -263,8 +264,8 @@ spec_stacktrace = describe "stacktrace integrations" do
 
     it "disableIntegration removes exactly that integration from the client" do
       let optsWithout = Client.disableIntegration (type ProcessStacktraceIntegration) def
-      clientWithout <- Client.new optsWithout{dsn = Just Test.TEST_DSN}
-      clientWith <- Client.new def{dsn = Just Test.TEST_DSN}
+      clientWithout <- Client.new optsWithout{dsn = Dsn.Explicit Test.TEST_DSN}
+      clientWith <- Client.new def{dsn = Dsn.Explicit Test.TEST_DSN}
       Client.getIntegration (type ProcessStacktraceIntegration) clientWithout
         `shouldSatisfy` isNothing
       Client.getIntegration (type ProcessStacktraceIntegration) clientWith

@@ -23,7 +23,6 @@ module Sentry.Test
   )
 where
 
-import Control.Applicative ((<|>))
 import Control.Exception (bracket)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.IO.Unlift (MonadUnliftIO, withRunInIO)
@@ -44,6 +43,7 @@ import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Client (Client)
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.ClientReport (DiscardReason)
 import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as ScopeIO
@@ -89,17 +89,18 @@ instance Transport TestTransport where
     atomicModifyIORefCAS_ transport.recordedDrops (<> Endo ((reason, category, n) :))
 
 -- | Build a 'Client' backed by the given 'TestTransport' with the 'TEST_DSN'.
-mkClient :: TestTransport -> Client
+mkClient :: TestTransport -> IO Client
 mkClient = flip mkCustomClient (def @ClientOptions)
 
 -- | Like 'mkClient' but accepts custom 'ClientOptions'. The transport is
 -- always set to the given 'TestTransport'; 'TEST_DSN' is used as a fallback
--- when the options do not already include a 'dsn'.
-mkCustomClient :: TestTransport -> ClientOptions -> Client
+-- for @Dsn.Inherit@. Explicit DSNs and @Dsn.Disabled@ are preserved.
+-- Integration setup runs exactly as it does in 'Client.new'.
+mkCustomClient :: TestTransport -> ClientOptions -> IO Client
 mkCustomClient transport opts =
-  Witch.from @ClientOptions @Client
+  Client.new
     opts
-      { dsn = opts.dsn <|> Just TEST_DSN,
+      { dsn = case opts.dsn of Dsn.Inherit -> Dsn.Explicit TEST_DSN; value -> value,
         transport = Just (Witch.from (SomeTransport transport))
       }
 
@@ -113,23 +114,14 @@ mkCustomClient transport opts =
 withClient :: (MonadUnliftIO m) => (TestTransport -> m a) -> m (a, TestTransport)
 withClient = withCustomClient (def @ClientOptions)
 
--- | Like 'withClient' but uses the given 'ClientOptions' (with 'TEST_DSN' and
--- the transport always filled in).
+-- | Like 'withClient' but uses the given 'ClientOptions', supplying the test
+-- transport and replacing only @Dsn.Inherit@ with 'TEST_DSN'.
 --
--- Unlike 'mkCustomClient', this runs the full initialization lifecycle via
--- 'Sentry.Client.new', so 'Sentry.Integration.Integration.setup' is
--- invoked for every integration and default integrations are prepended when
--- 'Sentry.Client.Options.ClientOptions.defaultIntegrations' is @True@.
+-- Runs the same initialization path as 'mkCustomClient'.
 withCustomClient :: (MonadUnliftIO m) => ClientOptions -> (TestTransport -> m a) -> m (a, TestTransport)
 withCustomClient opts f = do
   transport <- liftIO new
-  client <-
-    liftIO $
-      Client.new
-        opts
-          { dsn = opts.dsn <|> Just TEST_DSN,
-            transport = Just (Witch.from (SomeTransport transport))
-          }
+  client <- liftIO $ mkCustomClient transport opts
   result <- ScopeIO.withClient client (f transport)
   pure (result, transport)
 

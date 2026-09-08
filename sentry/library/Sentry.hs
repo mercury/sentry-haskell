@@ -8,9 +8,10 @@
 -- explicitly to opt out (a different transport, a tuned queue size, etc.).
 --
 -- @
+-- import Sentry.Client.Options.Dsn qualified as Dsn
 -- import Sentry qualified as Sentry
 --
--- main = Sentry.withSentry def{dsn = Just dsn} \\_client -> app
+-- main = Sentry.withSentry def{dsn = Dsn.Explicit dsn} \\_client -> app
 -- @
 --
 -- Reach for "Sentry.Core" directly (from @sentry-core@) instead when you need

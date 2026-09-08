@@ -10,6 +10,10 @@ module Sentry.Client.Options.Env
   ( -- * Resolution
     resolve,
     resolveWith,
+    snapshotWith,
+    EnvSnapshot (..),
+    resolveSnapshot,
+    finalize,
 
     -- * Warnings
     Warning (..),
@@ -24,16 +28,18 @@ where
 import Control.Applicative ((<|>))
 import Data.Char (toLower)
 import Data.Kind (Type)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isNothing)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Patrol.Type.Dsn qualified as Patrol.Dsn
+import Sentry.Client.Options.Defaults qualified as Defaults
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Internal (ClientOptions (..))
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
--- | A malformed environment variable that was set but could not be parsed, and
--- was therefore ignored during resolution.
+-- | Invalid configuration ignored during construction. Rate diagnostics also
+-- cover non-finite values supplied by code or integration setup.
 type Warning :: Type
 data Warning
   = -- | The raw @SENTRY_DSN@ value that failed to parse.
@@ -42,6 +48,8 @@ data Warning
     MalformedRate Text Text
   | -- | 'parseBool' could not resolve an environment variable (e.g. @SENTRY_DEBUG@).
     UnrecognizedBool Text
+  | -- | The option field and its non-finite value.
+    InvalidRateOption Text Text
   deriving stock (Eq, Show)
 
 -- | Render a 'Warning' into a human-facing message.
@@ -51,6 +59,8 @@ renderWarning = \case
     "ignoring malformed SENTRY_DSN: " <> raw
   MalformedRate var raw ->
     "ignoring malformed " <> var <> ": " <> raw
+  InvalidRateOption field raw ->
+    "ignoring invalid option " <> field <> " value: " <> raw
   UnrecognizedBool raw ->
     "ignoring unrecognised SENTRY_DEBUG value: " <> raw
 
@@ -62,6 +72,27 @@ renderWarning = \case
 resolve :: ClientOptions -> IO (ClientOptions, [Warning])
 resolve = resolveWith lookupEnv
 
+-- | Environment values captured once for deterministic configuration resolution.
+type EnvSnapshot :: Type
+newtype EnvSnapshot = EnvSnapshot [(String, String)]
+  deriving stock (Eq, Show)
+
+-- | Read each supported variable exactly once.
+snapshotWith :: (Monad m) => (String -> m (Maybe String)) -> m EnvSnapshot
+snapshotWith look =
+  fmap (EnvSnapshot . catMaybes) $
+    traverse
+      readOne
+      ["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_ENVIRONMENT", "SENTRY_DEBUG", "SENTRY_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE", "SENTRY_PROFILES_SAMPLE_RATE"]
+  where
+    readOne key = fmap ((key,) <$>) (look key)
+
+-- | Finalize setup output with terminal defaults; only DSN inheritance can
+-- consult the original snapshot again.
+finalize :: EnvSnapshot -> ClientOptions -> (ClientOptions, [Warning])
+finalize (EnvSnapshot snapshot) =
+  resolveSnapshot (EnvSnapshot (filter ((== "SENTRY_DSN") . fst) snapshot))
+
 -- | 'resolve' generalised over the environment lookup, so tests can inject a
 -- pure lookup instead of touching the real process environment.
 resolveWith ::
@@ -71,38 +102,46 @@ resolveWith ::
   ClientOptions ->
   m (ClientOptions, [Warning])
 resolveWith look opts = do
-  dsnRaw <- look "SENTRY_DSN"
-  releaseRaw <- look "SENTRY_RELEASE"
-  envRaw <- look "SENTRY_ENVIRONMENT"
-  debugRaw <- look "SENTRY_DEBUG"
-  rateRaw <- look "SENTRY_SAMPLE_RATE"
-  tracesRaw <- look "SENTRY_TRACES_SAMPLE_RATE"
-  profilesRaw <- look "SENTRY_PROFILES_SAMPLE_RATE"
-  let dsnEnv = (Patrol.Dsn.fromText . Text.pack) =<< dsnRaw
+  snapshot <- snapshotWith look
+  pure (resolveSnapshot snapshot opts)
+
+-- | Resolve options against captured environment values without further effects.
+resolveSnapshot :: EnvSnapshot -> ClientOptions -> (ClientOptions, [Warning])
+resolveSnapshot (EnvSnapshot snapshot) opts =
+  let look key = lookup key snapshot
+      dsnRaw = look "SENTRY_DSN"
+      releaseRaw = look "SENTRY_RELEASE"
+      envRaw = look "SENTRY_ENVIRONMENT"
+      debugRaw = look "SENTRY_DEBUG"
+      rateRaw = look "SENTRY_SAMPLE_RATE"
+      tracesRaw = look "SENTRY_TRACES_SAMPLE_RATE"
+      profilesRaw = look "SENTRY_PROFILES_SAMPLE_RATE"
+      dsnEnv = (Patrol.Dsn.fromText . Text.pack) =<< dsnRaw
       debugEnv = parseBool =<< debugRaw
       rateEnv = parseRate =<< rateRaw
       tracesEnv = parseRate =<< tracesRaw
       profilesEnv = parseRate =<< profilesRaw
       warnings =
         catMaybes
-          [ warnIf MalformedDsn dsnRaw dsnEnv,
-            warnIf UnrecognizedBool debugRaw debugEnv,
-            warnIf (MalformedRate "SENTRY_SAMPLE_RATE") rateRaw rateEnv,
-            warnIf (MalformedRate "SENTRY_TRACES_SAMPLE_RATE") tracesRaw tracesEnv,
-            warnIf (MalformedRate "SENTRY_PROFILES_SAMPLE_RATE") profilesRaw profilesEnv
+          [ if opts.dsn == Dsn.Inherit then warnIf MalformedDsn dsnRaw dsnEnv else Nothing,
+            if isNothing opts.debug then warnIf UnrecognizedBool debugRaw debugEnv else Nothing,
+            rateWarning "SENTRY_SAMPLE_RATE" "sampleRate" opts.sampleRate rateRaw rateEnv,
+            rateWarning "SENTRY_TRACES_SAMPLE_RATE" "tracesSampleRate" opts.tracesSampleRate tracesRaw tracesEnv,
+            rateWarning "SENTRY_PROFILES_SAMPLE_RATE" "profilesSampleRate" opts.profilesSampleRate profilesRaw profilesEnv
           ]
-  pure
-    ( opts
-        { dsn = opts.dsn <|> dsnEnv,
-          release = opts.release <|> (Text.pack <$> releaseRaw),
-          environment = opts.environment <|> (Text.pack <$> envRaw) <|> Just "production",
-          debug = opts.debug <|> debugEnv <|> Just False,
-          sampleRate = opts.sampleRate <|> rateEnv <|> Just 1.0,
-          tracesSampleRate = opts.tracesSampleRate <|> tracesEnv,
-          profilesSampleRate = opts.profilesSampleRate <|> profilesEnv
-        },
-      warnings
-    )
+   in ( opts
+          { dsn = case opts.dsn of
+              Dsn.Inherit -> maybe Dsn.Disabled Dsn.Explicit dsnEnv
+              value -> value,
+            release = opts.release <|> (Text.pack <$> releaseRaw),
+            environment = opts.environment <|> (Text.pack <$> envRaw) <|> Just Defaults.environment,
+            debug = opts.debug <|> debugEnv <|> Just Defaults.debug,
+            sampleRate = chooseRate opts.sampleRate rateEnv <|> Just Defaults.sampleRate,
+            tracesSampleRate = chooseRate opts.tracesSampleRate tracesEnv,
+            profilesSampleRate = chooseRate opts.profilesSampleRate profilesEnv
+          },
+        warnings
+      )
 
 -- | Emit a warning when an environment variable was set to a non-empty value
 -- that failed to parse.
@@ -128,9 +167,21 @@ parseBool s
     v = map toLower s
 
 -- | Parse a sample-rate environment variable, clamping the result to @[0,1]@.
--- Unparseable input yields 'Nothing'.
+-- Unparseable or non-finite input yields 'Nothing'.
 parseRate :: String -> Maybe Float
-parseRate s = clamp <$> readMaybe s
-  where
-    clamp :: Float -> Float
-    clamp = max 0 . min 1
+parseRate s = readMaybe s >>= normalizeRate
+
+normalizeRate :: Float -> Maybe Float
+normalizeRate rate
+  | isNaN rate || isInfinite rate = Nothing
+  | otherwise = Just (max 0 (min 1 rate))
+
+chooseRate :: Maybe Float -> Maybe Float -> Maybe Float
+chooseRate Nothing fallback = fallback
+chooseRate (Just rate) _ = normalizeRate rate
+
+rateWarning :: Text -> Text -> Maybe Float -> Maybe String -> Maybe Float -> Maybe Warning
+rateWarning name _ Nothing raw parsed = warnIf (MalformedRate name) raw parsed
+rateWarning _ field (Just rate) _ _
+  | isNothing (normalizeRate rate) = Just (InvalidRateOption field (Text.pack (show rate)))
+  | otherwise = Nothing

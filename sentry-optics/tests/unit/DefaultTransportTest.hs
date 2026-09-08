@@ -5,9 +5,10 @@ module DefaultTransportTest where
 import Control.Exception (bracket)
 import Data.Default (def)
 import Data.IORef (newIORef, readIORef, writeIORef)
-import Data.Maybe (isJust)
-import Sentry.Client (Client (..))
+import Data.Maybe (isJust, isNothing)
+import Sentry qualified as Plain
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Optics qualified as Sentry
 import Sentry.Optics.Prelude
 import Sentry.Scope qualified as Scope
@@ -19,14 +20,20 @@ import Test.Hspec
 spec_defaultTransport :: Spec
 spec_defaultTransport =
   describe "Sentry.Optics.init / withSentry (default transport)" do
+    it "Disabled creates no default transport through either facade" do
+      bracket (Sentry.acquireClient def{dsn = Dsn.Disabled}) Sentry.close \handle ->
+        isNothing (Sentry.clientOf handle).transport `shouldBe` True
+      bracket (Plain.acquireClient def{dsn = Dsn.Disabled}) Plain.close \handle ->
+        isNothing (Plain.clientOf handle).transport `shouldBe` True
+
     it "realizes a transport when ClientOptions.transport is left Nothing" do
-      let opts = def{dsn = Just Test.TEST_DSN}
+      let opts = def{dsn = Dsn.Explicit Test.TEST_DSN}
       withGlobalScope $
         bracket (Sentry.init opts) Sentry.close \handle ->
           isJust (Sentry.clientOf handle).transport `shouldBe` True
 
     it "acquires the default transport without installing a global binding" $ withGlobalScope do
-      let opts = def{dsn = Just Test.TEST_DSN}
+      let opts = def{dsn = Dsn.Explicit Test.TEST_DSN}
       bracket (Sentry.acquireClient opts) Sentry.close \handle -> do
         isJust (Sentry.clientOf handle).transport `shouldBe` True
         isJust <$> Scope.lookupClient `shouldReturn` False
@@ -34,7 +41,7 @@ spec_defaultTransport =
 
     it "supplies the default transport for scoped ownership" $ withGlobalScope do
       global <- Scope.getGlobal
-      Sentry.withScopedClient def{dsn = Just Test.TEST_DSN} do
+      Sentry.withScopedClient def{dsn = Dsn.Explicit Test.TEST_DSN} do
         client <- Scope.resolveClient
         isJust client.transport `shouldBe` True
         snapshot <- Scope.readScopeRef global
@@ -47,7 +54,7 @@ spec_defaultTransport =
       let provider = DeferredTransport \_ _ -> do
             writeIORef called True
             pure (SomeTransport transport)
-      Sentry.withScopedClient def{dsn = Just Test.TEST_DSN, transport = Just provider} do
+      Sentry.withScopedClient def{dsn = Dsn.Explicit Test.TEST_DSN, transport = Just provider} do
         readIORef called `shouldReturn` True
       isJust <$> Scope.lookupClient `shouldReturn` False
 

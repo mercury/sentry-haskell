@@ -148,7 +148,7 @@ scopeSpec withCurrent withIsolation withBoundClient = do
       )
       [ ("current", \action -> withCurrent (const action)),
         ("isolation", \action -> withIsolation (const action)),
-        ("client", \action -> Test.new >>= \transport -> withBoundClient (Test.mkClient transport) action)
+        ("client", \action -> Test.new >>= Test.mkClient >>= \client -> withBoundClient client action)
       ]
 
 -- Helpers
@@ -190,8 +190,8 @@ bindingSpec withCurrent withIsolation withBoundClient = do
     it "supplied client wins, nested bindings restore, and parents retain metadata" $ Test.withGlobalScope do
       outer <- Test.new
       inner <- Test.new
-      let outerClient = Test.mkClient outer
-          innerClient = Test.mkCustomClient inner def{maxBreadcrumbs = 1}
+      outerClient <- Test.mkClient outer
+      innerClient <- Test.mkCustomClient inner def{maxBreadcrumbs = 1}
       withCurrent \parent -> do
         Scope.bindClient (Just outerClient) parent
         Scope.setTag parent "parent" "retained"

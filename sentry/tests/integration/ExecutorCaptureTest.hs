@@ -9,6 +9,7 @@ import Network.Connection (TLSSettings (TLSSettingsSimple))
 import Network.HTTP.Client qualified as Http
 import Network.HTTP.Client.TLS (mkManagerSettings)
 import Sentry.Client.Options qualified as Options
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core qualified as Sentry
 import Sentry.Init qualified as Init
 import Sentry.Scope.Monad qualified as Scoped
@@ -33,7 +34,7 @@ spec_ownedCapture =
         bracket (Executor.new 32 Nothing sendFn) (Async.cancel . (.handle)) \executor -> do
           let opts =
                 (Options.DEFAULT_CLIENT_OPTIONS)
-                  { Options.dsn = Just dsn,
+                  { Options.dsn = Dsn.Explicit dsn,
                     Options.transport = Just $ Options.PrebuiltTransport $ Transport.SomeTransport executor,
                     Options.sendClientReports = False
                   }
