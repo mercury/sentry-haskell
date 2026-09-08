@@ -49,13 +49,14 @@ The SDK is organized around the following abstractions:
   they pass through the `Client` on their way to a `Transport`
 - A `Transport`, which delivers a serialized envelope to Sentry
 
-When an artifact is captured using `captureException` or `captureMessage`, the SDK follows this pipeline: resolve the `Client` bound to the nearest `Scope`, merge the three scope layers and apply them to the `Event`, run each integration's `processEvent` hook in order, fill in default values, invoke the user-provided `beforeSend` hook, apply sampling based on the configured rate, wrap the result in an `Envelope`, and deliver it to the transport.
+When an artifact is captured using `captureEvent`, `captureException`, or `captureMessage`, the SDK follows this pipeline: resolve the `Client` bound to the nearest `Scope`, merge the three scope layers and apply them to the `Event`, run each integration's `processEvent` hook in order, fill in default values, invoke the user-provided `beforeSend` hook, apply sampling based on the configured rate, wrap the result in an `Envelope`, and deliver it to the transport.
 
 If an event is discarded at any point in this pipeline, the SDK increments an internal counter for the discard stage. A client report with counters for each stage is sent to Sentry at regular intervals.
 
 > [!IMPORTANT]
 > `init` (and therefore `withSentry`) binds the client onto the _global_ scope,
-> so `captureException` / `captureMessage` work anywhere in the process.
+> so `captureEvent`, `captureException`, and `captureMessage` work anywhere in
+> the process.
 > 
 > For situations where true process-wide global state is unnacceptable (e.g.
 > tests, multi-tenant servers), `withClient` can be used to bind a `Client` to
@@ -265,8 +266,9 @@ The `withScope` function "forks" a new scope from the context provided by its
 parent, and passes a handle to the enclosing function body; this handle can be
 used to attach metadata to the scope with functions in `Sentry.Scope`.
 
-Any `captureException` or `captureMessage` call made from within this function
-body's lexical scope will derive its error report from this metadata.
+Any `captureEvent`, `captureException`, or `captureMessage` call made from
+within this function body's lexical scope will derive its report from this
+metadata.
 
 ```haskell
 import Sentry.Level qualified as Level

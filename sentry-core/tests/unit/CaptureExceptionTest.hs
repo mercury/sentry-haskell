@@ -6,12 +6,14 @@ import Control.Exception.Safe qualified as Safe
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
+import Data.Map.Strict qualified as Map
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Exception qualified as Patrol.Exception
 import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.Capture (captureException)
+import Sentry.Event (CapturedEvent (..))
 import Sentry.Mechanism qualified as Mechanism
 import Sentry.Scope (ScopeData (..))
 import Sentry.Scope qualified as Scope
@@ -39,6 +41,33 @@ spec_captureException = describe "captureException" do
     case events of
       [event] -> event.level `shouldBe` Just Patrol.Level.Warning
       _ -> expectationFailure $ "expected one event, got " <> show (length events)
+
+  it "uses the call-site client while honoring annotated scope data" do
+    ((result, eventsAtCallSite, eventsAtAnnotation), _) <-
+      Test.withClient \transportAtCallSite -> do
+        Scope.IO.withScope \ambientScope -> do
+          Scope.setEventProcessor ambientScope (const Nothing)
+          transportAtAnnotation <- liftIO Test.new
+          let annotationClient = Test.mkClient transportAtAnnotation
+              scopeData =
+                (def @ScopeData)
+                  { client = Just annotationClient,
+                    eventProcessor = \ce ->
+                      Just ce.event{Patrol.Event.tags = Map.singleton "scope" "annotated"}
+                  }
+              annotated =
+                AnnotatedException
+                  [Annotation scopeData]
+                  (toException $ userError "boom")
+          result' <- captureException annotated
+          eventsAtCallSite' <- liftIO $ Test.fetchAndClearEvents transportAtCallSite
+          eventsAtAnnotation' <- liftIO $ Test.fetchAndClearEvents transportAtAnnotation
+          pure (result', eventsAtCallSite', eventsAtAnnotation')
+    result `shouldSatisfy` (/= Nothing)
+    eventsAtAnnotation `shouldSatisfy` null
+    case eventsAtCallSite of
+      [event] -> event.tags `shouldBe` Map.singleton "scope" "annotated"
+      _ -> expectationFailure $ "expected one event at call-site client, got " <> show (length eventsAtCallSite)
 
   it "drops the event when scope's eventProcessor returns Nothing" do
     let scopeData = (def @ScopeData){eventProcessor = \_ -> Nothing}

@@ -53,7 +53,7 @@ import Sentry.Event (CapturedEvent (..))
 import Sentry.Event qualified as Event
 import Sentry.Integration (Integration (..), SomeIntegration)
 import Sentry.Mechanism qualified as Mechanism
-import Sentry.Scope (ScopeData, resolveClient)
+import Sentry.Scope (ScopeData)
 import Sentry.Scope qualified as Scope
 import Sentry.Sdk qualified as Sdk
 import Sentry.Transport (SendResponse (..))
@@ -62,15 +62,19 @@ import System.IO (hPutStrLn, stderr)
 import System.Random (randomRIO)
 import Witch qualified
 
--- | Process an event, applying any integrations & before-send hooks registered
--- with the 'Client' to the given event before handing it off to the transport.
+-- | Capture a pre-built event with the ambient scope, then apply any
+-- integrations and before-send hooks registered with the 'Client' before
+-- handing it off to the transport.
 --
 -- Returns the event's 'Patrol.EventId' on success, otherwise 'Nothing' if the
 -- event was dropped at any stage.
 captureEvent :: (MonadIO m) => Patrol.Event -> m (Maybe Patrol.EventId)
 captureEvent event = do
-  client <- resolveClient
-  captureWith client $ Witch.from event
+  scope <- Scope.readAmbientScope
+  let client = fromMaybe NON_RECORDING_CLIENT (Scope.client scope)
+      captured = Witch.from event
+  prepared <- prepareCapture client scope captured
+  maybe (pure Nothing) (captureWith client) prepared
 
 -- | Convenience alias for a 'captureEvent' call that discards its result.
 captureEvent_ :: (MonadIO m) => Patrol.Event -> m ()
@@ -171,10 +175,10 @@ captureExceptionImpl cs overrides (toException -> orig) = do
         (Event.fromExceptionWith overrides.mechanismOverride inner `Event.withException` inner $ orig)
           { captureCallStack = Just cs
           }
-  case scope `Scope.apply` captured of
-    Just event -> captureWith client captured{event = applyLevelOverride overrides event}
-    Nothing ->
-      Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
+  prepared <- prepareCapture client scope captured
+  maybe (pure Nothing) (captureWith client . applyOverride) prepared
+  where
+    applyOverride captured' = captured'{event = applyLevelOverride overrides captured'.event}
 
 -- | Apply 'CaptureOverrides.levelOverride' to the /result/ of 'Sentry.Scope.apply'.
 applyLevelOverride :: CaptureOverrides -> Patrol.Event -> Patrol.Event
@@ -200,22 +204,30 @@ captureMessage lvl msg = do
         (Witch.from (Event.fromMessage lvl msg))
           { captureCallStack = Just callStack
           }
-  case scope `Scope.apply` captured of
-    Just event' -> captureWith client captured{event = event'}
-    Nothing ->
-      Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
+  prepared <- prepareCapture client scope captured
+  maybe (pure Nothing) (captureWith client) prepared
 
 -- | Convenience alias for a 'captureMessage' call that discards its result.
 captureMessage_ :: (HasCallStack, MonadIO m) => Patrol.Level -> Text -> m ()
 captureMessage_ lvl = withFrozenCallStack $ void . captureMessage lvl
 
+-- | Apply the selected scope to a captured event before dispatching it through
+-- the common capture pipeline. A scope processor drop is recorded here so
+-- every public capture verb reports that drop exactly once.
+prepareCapture :: (MonadIO m) => Client -> ScopeData -> CapturedEvent -> m (Maybe CapturedEvent)
+prepareCapture client scope captured =
+  case scope `Scope.apply` captured of
+    Just event -> pure $ Just captured{event}
+    Nothing ->
+      Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
+
 -- | Internal event processing utility; performs the following steps:
 --
 --     1. Check for a valid DSN and transport (short-circuit for non-recording clients)
---     2. Apply sampling ('ClientOptions.sampleRate')
---     3. Run each integration's 'Sentry.Integration.processEvent'
---     4. Apply SDK defaults via 'applyClientDefaults'
---     5. Run 'ClientOptions.beforeSend'
+--     2. Run each integration's 'Sentry.Integration.processEvent'
+--     3. Apply SDK defaults via 'applyClientDefaults'
+--     4. Run 'ClientOptions.beforeSend'
+--     5. Apply sampling ('ClientOptions.sampleRate')
 --     6. Wrap the event in an envelope and send it via the transport
 captureWith :: (MonadIO m) => Client -> CapturedEvent -> m (Maybe Patrol.EventId)
 captureWith client captured =
