@@ -56,7 +56,6 @@ spec_construction = describe "explicit client construction" do
           opts
             { environment = Just "from-setup",
               sampleRate = Just 2,
-              tracesSampleRate = Just (1 / 0),
               integrations = Vector.empty,
               transport = Just provider
             }
@@ -65,7 +64,7 @@ spec_construction = describe "explicit client construction" do
         provider = DeferredTransport \dsn opts -> do
           modifyIORef' factories (+ 1)
           dsn `shouldBe` Test.TEST_DSN
-          (opts.environment, opts.sampleRate, opts.tracesSampleRate) `shouldBe` (Just "from-setup", Just 1, Nothing)
+          (opts.environment, opts.sampleRate) `shouldBe` (Just "from-setup", Just 1)
           Vector.length opts.integrations `shouldBe` 1
           pure (SomeTransport transport)
         unexpectedTransportFactory = DeferredTransport \_ _ -> do

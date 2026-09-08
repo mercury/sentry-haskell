@@ -1,9 +1,7 @@
-{-# LANGUAGE ViewPatterns #-}
-
 module Sentry.Internal
   ( -- * ClientOptions
     ClientOptions (..),
-    pattern DEFAULT_CLIENT_OPTIONS,
+    defaultClientOptions,
 
     -- * Transport provider
     TransportProvider (..),
@@ -82,39 +80,21 @@ data ClientOptions = ClientOptions
     -- environment variable.
     --
     -- Finite values from code, environment, or setup are clamped to @[0,1]@.
-    -- NaN and infinities default to 1 (optional trace/profile rates become
-    -- unset), with diagnostics when final debug logging is enabled.
+    -- NaN and infinities default to 1, with diagnostics when final debug
+    -- logging is enabled.
     sampleRate :: Maybe Float,
-    -- | Trace/transaction sample rate.
-    --
-    -- Defaults to @Nothing@ when resolved against the
-    -- @SENTRY_TRACES_SAMPLE_RATE@ environment variable.
-    --
-    -- @Nothing@ means tracing is disabled\/unset.
-    --
-    -- __NOTE__: Reserved for forward compatibility. It is parsed and validated,
-    -- but not yet consumed, as there is no tracing subsystem.
-    tracesSampleRate :: Maybe Float,
-    -- | Sample rate for transactions that include profiling data.
-    --
-    -- Defaults to @Nothing@; falls back to the @SENTRY_PROFILES_SAMPLE_RATE@
-    -- environment variable, resolved by 'Sentry.Client.new'.
-    --
-    -- @Nothing@ means profiling is disabled\/unset.
-    --
-    -- __NOTE__: Reserved for forward compatibility. It is parsed and validated,
-    -- but not yet consumed, as there is no profiling subsystem.
-    profilesSampleRate :: Maybe Float,
     -- | Maximum number of breadcrumbs; defaults to 100.
     maxBreadcrumbs :: Word,
-    -- | Whether capturing personally identifying information (PII) is
-    -- permissible.
+    -- | Permission for integrations to collect personally identifying
+    -- information (PII) automatically. Defaults to @False@.
     --
-    -- When enabled, some information that could be considered PII—such as
-    -- potentially sensitive HTTP headers, user IP addresses in server
-    -- integrations, etc.— may be captured by the SDK.
+    -- Integrations that consume this option must document which data it gates,
+    -- such as user IP addresses or sensitive HTTP headers. No current built-in
+    -- integration consumes it; it is retained for integration authors.
     --
-    -- Defaults to @False@.
+    -- This is not a scrubber: explicitly supplied event, user, request, and
+    -- breadcrumb data is not removed when this is @False@. The context
+    -- integration's automatic hostname collection is independent of this flag.
     sendDefaultPII :: Bool,
     -- | The server name to be reported.
     --
@@ -192,59 +172,37 @@ data ClientOptions = ClientOptions
     sendClientReports :: Bool
   }
 
-pattern DEFAULT_CLIENT_OPTIONS :: ClientOptions
-pattern DEFAULT_CLIENT_OPTIONS <-
+-- | Unresolved input defaults, suitable for record updates.
+--
+-- Environment lookup and terminal defaults are applied by client construction.
+-- In particular, 'dsn' inherits and 'debug', 'environment', and 'sampleRate'
+-- remain unset here. Equivalent to 'def'.
+defaultClientOptions :: ClientOptions
+defaultClientOptions =
   ClientOptions
     { dsn = Dsn.Inherit,
       debug = Nothing,
       release = Nothing,
       environment = Nothing,
       sampleRate = Nothing,
-      tracesSampleRate = Nothing,
-      profilesSampleRate = Nothing,
       maxBreadcrumbs = 100,
       sendDefaultPII = False,
       serverName = Nothing,
       dist = Nothing,
-      inAppInclude = (HashSet.null -> True),
-      inAppExclude = (HashSet.null -> True),
-      integrations = (Vector.null -> True),
+      inAppInclude = HashSet.empty,
+      inAppExclude = HashSet.empty,
+      integrations = Vector.empty,
       defaultIntegrations = True,
-      disabledIntegrations = (Set.null -> True),
+      disabledIntegrations = Set.empty,
       beforeSend = Nothing,
       beforeBreadcrumb = Nothing,
       transport = Nothing,
       shutdownTimeout = 2, -- seconds
       sendClientReports = True
     }
-  where
-    DEFAULT_CLIENT_OPTIONS =
-      ClientOptions
-        { dsn = Dsn.Inherit,
-          debug = Nothing,
-          release = Nothing,
-          environment = Nothing,
-          sampleRate = Nothing,
-          tracesSampleRate = Nothing,
-          profilesSampleRate = Nothing,
-          maxBreadcrumbs = 100,
-          sendDefaultPII = False,
-          serverName = Nothing,
-          dist = Nothing,
-          inAppInclude = HashSet.empty,
-          inAppExclude = HashSet.empty,
-          integrations = Vector.empty,
-          defaultIntegrations = True,
-          disabledIntegrations = Set.empty,
-          beforeSend = Nothing,
-          beforeBreadcrumb = Nothing,
-          transport = Nothing,
-          shutdownTimeout = 2, -- seconds
-          sendClientReports = True
-        }
 
 instance Default ClientOptions where
-  def = DEFAULT_CLIENT_OPTIONS
+  def = defaultClientOptions
 
 instance Witch.From Patrol.Dsn ClientOptions where
   from value = def{dsn = Dsn.Explicit value}

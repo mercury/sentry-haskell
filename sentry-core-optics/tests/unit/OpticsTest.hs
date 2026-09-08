@@ -5,7 +5,7 @@ module OpticsTest where
 import Data.Maybe (isJust)
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Client.Options (pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options (defaultClientOptions)
 import Sentry.Core.Optics qualified as Sentry
 import Sentry.Core.Optics.Prelude
 import Sentry.Scope qualified as Scope
@@ -52,7 +52,7 @@ spec_editValue = describe "(&~) runs an editScope-style block over a plain value
 spec_scopedClient :: Spec
 spec_scopedClient = describe "scoped lifecycle re-export" do
   it "keeps core scoped clients transport-agnostic" $ Test.withGlobalScope do
-    Sentry.withScopedClient DEFAULT_CLIENT_OPTIONS do
+    Sentry.withScopedClient defaultClientOptions do
       client <- Scope.resolveClient
       isJust client.transport `shouldBe` False
     isJust <$> Scope.lookupClient `shouldReturn` False

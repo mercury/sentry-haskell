@@ -3,7 +3,7 @@ module OptionsEnvTest where
 import Data.Default (def)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text qualified as Text
-import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options (ClientOptions (..), defaultClientOptions)
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Client.Options.Env qualified as Env
 import Sentry.Test qualified as Test
@@ -39,12 +39,6 @@ spec_optionsEnv = describe "environment-variable resolution" do
     it "reads SENTRY_SAMPLE_RATE" do
       (resolvedFrom [("SENTRY_SAMPLE_RATE", "0.25")]).sampleRate `shouldBe` Just 0.25
 
-    it "reads SENTRY_TRACES_SAMPLE_RATE" do
-      (resolvedFrom [("SENTRY_TRACES_SAMPLE_RATE", "0.5")]).tracesSampleRate `shouldBe` Just 0.5
-
-    it "reads SENTRY_PROFILES_SAMPLE_RATE" do
-      (resolvedFrom [("SENTRY_PROFILES_SAMPLE_RATE", "0.125")]).profilesSampleRate `shouldBe` Just 0.125
-
   describe "code configuration takes strict precedence" do
     it "keeps an explicit dsn over SENTRY_DSN" do
       let opts = def{dsn = Dsn.Explicit Test.TEST_DSN}
@@ -74,10 +68,6 @@ spec_optionsEnv = describe "environment-variable resolution" do
     it "defaults sampleRate to 1.0" do
       (resolvedFrom []).sampleRate `shouldBe` Just 1.0
 
-    it "leaves tracesSampleRate/profilesSampleRate unset (no default)" do
-      let opts = resolvedFrom []
-      (opts.tracesSampleRate, opts.profilesSampleRate) `shouldBe` (Nothing, Nothing)
-
   describe "DSN parsing" do
     it "parses a valid DSN with no warnings" do
       let (opts, warnings) = resolvePure [("SENTRY_DSN", "https://public@sentry.invalid/1")] def
@@ -105,11 +95,6 @@ spec_optionsEnv = describe "environment-variable resolution" do
       opts.sampleRate `shouldBe` Just 1.0
       warnings `shouldBe` [Env.MalformedRate "SENTRY_SAMPLE_RATE" "abc"]
 
-    it "warns for a malformed traces rate and leaves the field unset" do
-      let (opts, warnings) = resolvePure [("SENTRY_TRACES_SAMPLE_RATE", "nope")] def
-      opts.tracesSampleRate `shouldBe` Nothing
-      warnings `shouldBe` [Env.MalformedRate "SENTRY_TRACES_SAMPLE_RATE" "nope"]
-
   describe "debug parsing" do
     it "recognises truthy and falsy spellings case-insensitively" do
       map Env.parseBool ["1", "true", "YES", "On", "0", "false", "No", "OFF"]
@@ -132,6 +117,24 @@ spec_optionsEnv = describe "environment-variable resolution" do
 
 spec_finalization :: Spec
 spec_finalization = describe "configuration finalization" do
+  it "keeps named input defaults unresolved and supports record updates" do
+    let opts = defaultClientOptions
+    (opts.dsn, opts.debug, opts.environment, opts.sampleRate, opts.sendDefaultPII)
+      `shouldBe` (Dsn.Inherit, Nothing, Nothing, Nothing, False)
+    let (resolved, warnings) = resolvePure [("SENTRY_DEBUG", "true"), ("SENTRY_SAMPLE_RATE", "1")] opts{debug = Just False, sampleRate = Just 0}
+    (resolved.debug, resolved.sampleRate) `shouldBe` (Just False, Just 0)
+    warnings `shouldBe` []
+
+  it "ignores removed tracing and profiling variables in supplied snapshots" do
+    mapM_
+      ( \raw -> do
+          let (opts, warnings) = resolvePure [("SENTRY_TRACES_SAMPLE_RATE", raw), ("SENTRY_PROFILES_SAMPLE_RATE", raw)] defaultClientOptions
+          (opts.dsn, opts.debug, opts.environment, opts.sampleRate)
+            `shouldBe` (Dsn.Disabled, Just False, Just "production", Just 1)
+          warnings `shouldBe` []
+      )
+      ["0.5", "bad", "NaN"]
+
   it "reads each environment variable once into a reusable snapshot" do
     calls <- newIORef ([] :: [String])
     snapshot <- Env.snapshotWith \key -> do
@@ -144,9 +147,7 @@ spec_finalization = describe "configuration finalization" do
             "SENTRY_RELEASE",
             "SENTRY_ENVIRONMENT",
             "SENTRY_DEBUG",
-            "SENTRY_SAMPLE_RATE",
-            "SENTRY_TRACES_SAMPLE_RATE",
-            "SENTRY_PROFILES_SAMPLE_RATE"
+            "SENTRY_SAMPLE_RATE"
           ]
     seen `shouldBe` expectedKeys
     snapshot `shouldBe` Env.EnvSnapshot [(key, "value") | key <- expectedKeys]
@@ -155,15 +156,13 @@ spec_finalization = describe "configuration finalization" do
     warnings
       `shouldBe` [ Env.MalformedDsn "value",
                    Env.UnrecognizedBool "value",
-                   Env.MalformedRate "SENTRY_SAMPLE_RATE" "value",
-                   Env.MalformedRate "SENTRY_TRACES_SAMPLE_RATE" "value",
-                   Env.MalformedRate "SENTRY_PROFILES_SAMPLE_RATE" "value"
+                   Env.MalformedRate "SENTRY_SAMPLE_RATE" "value"
                  ]
 
   it "does not diagnose shadowed malformed environment values" do
-    let opts = def{dsn = Dsn.Disabled, debug = Just False, sampleRate = Just 0, tracesSampleRate = Just 0, profilesSampleRate = Just 0}
+    let opts = def{dsn = Dsn.Disabled, debug = Just False, sampleRate = Just 0}
         vars :: [(String, String)]
-        vars = [(key, "bad") | key <- ["SENTRY_DSN", "SENTRY_DEBUG", "SENTRY_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE", "SENTRY_PROFILES_SAMPLE_RATE"]]
+        vars = [(key, "bad") | key <- ["SENTRY_DSN", "SENTRY_DEBUG", "SENTRY_SAMPLE_RATE"]]
         (resolved, warnings) = resolvePure vars opts
     resolved.dsn `shouldBe` Dsn.Disabled
     warnings `shouldBe` []
@@ -174,14 +173,14 @@ spec_finalization = describe "configuration finalization" do
 
   it "uses terminal defaults for cleared setup fields, retaining only DSN inheritance" do
     let snapshot :: [(String, String)]
-        snapshot = [("SENTRY_DSN", "https://public@sentry.invalid/1"), ("SENTRY_DEBUG", "true"), ("SENTRY_ENVIRONMENT", "staging"), ("SENTRY_SAMPLE_RATE", "0.5"), ("SENTRY_TRACES_SAMPLE_RATE", "0.5")]
+        snapshot = [("SENTRY_DSN", "https://public@sentry.invalid/1"), ("SENTRY_DEBUG", "true"), ("SENTRY_ENVIRONMENT", "staging"), ("SENTRY_SAMPLE_RATE", "0.5")]
         (opts, warnings) = Env.finalize (Env.EnvSnapshot snapshot) def
     opts.dsn
       `shouldSatisfy` ( \case
                           Dsn.Explicit _ -> True
                           _ -> False
                       )
-    (opts.debug, opts.environment, opts.sampleRate, opts.tracesSampleRate) `shouldBe` (Just False, Just "production", Just 1, Nothing)
+    (opts.debug, opts.environment, opts.sampleRate) `shouldBe` (Just False, Just "production", Just 1)
     warnings `shouldBe` []
 
   it "clamps finite code rates quietly, including boundaries" do
@@ -193,25 +192,21 @@ spec_finalization = describe "configuration finalization" do
       ( \rate -> do
           let (opts, warnings) =
                 resolvePure
-                  [("SENTRY_SAMPLE_RATE", "0"), ("SENTRY_TRACES_SAMPLE_RATE", "0.5"), ("SENTRY_PROFILES_SAMPLE_RATE", "0.5")]
-                  def{sampleRate = Just rate, tracesSampleRate = Just rate, profilesSampleRate = Just rate}
-          (opts.sampleRate, opts.tracesSampleRate, opts.profilesSampleRate) `shouldBe` (Just 1, Nothing, Nothing)
+                  [("SENTRY_SAMPLE_RATE", "0")]
+                  def{sampleRate = Just rate}
+          opts.sampleRate `shouldBe` Just 1
           warnings
-            `shouldBe` [ Env.InvalidRateOption field (Text.pack (show rate))
-                       | field <- ["sampleRate", "tracesSampleRate", "profilesSampleRate"]
-                       ]
+            `shouldBe` [Env.InvalidRateOption "sampleRate" (Text.pack (show rate))]
       )
       [0 / 0, 1 / 0, -1 / 0]
 
   it "rejects non-finite and malformed environment rates with diagnostics" do
     mapM_
       ( \raw -> do
-          let (opts, warnings) = resolvePure [("SENTRY_SAMPLE_RATE", raw), ("SENTRY_TRACES_SAMPLE_RATE", raw), ("SENTRY_PROFILES_SAMPLE_RATE", raw)] def
-          (opts.sampleRate, opts.tracesSampleRate, opts.profilesSampleRate) `shouldBe` (Just 1, Nothing, Nothing)
+          let (opts, warnings) = resolvePure [("SENTRY_SAMPLE_RATE", raw)] def
+          opts.sampleRate `shouldBe` Just 1
           warnings
-            `shouldBe` [ Env.MalformedRate variable (Text.pack raw)
-                       | variable <- ["SENTRY_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE", "SENTRY_PROFILES_SAMPLE_RATE"]
-                       ]
+            `shouldBe` [Env.MalformedRate "SENTRY_SAMPLE_RATE" (Text.pack raw)]
       )
       ["NaN", "Infinity", "-Infinity", "1e1000", "bad"]
 

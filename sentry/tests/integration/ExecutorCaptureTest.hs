@@ -33,7 +33,7 @@ spec_ownedCapture =
               pure rl
         bracket (Executor.new 32 Nothing sendFn) (Async.cancel . (.handle)) \executor -> do
           let opts =
-                (Options.DEFAULT_CLIENT_OPTIONS)
+                (Options.defaultClientOptions)
                   { Options.dsn = Dsn.Explicit dsn,
                     Options.transport = Just $ Options.PrebuiltTransport $ Transport.SomeTransport executor,
                     Options.sendClientReports = False

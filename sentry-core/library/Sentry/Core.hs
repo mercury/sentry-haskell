@@ -36,7 +36,7 @@ module Sentry.Core
     -- * Client Options
     ClientOptions (..),
     DsnSource (..),
-    pattern DEFAULT_CLIENT_OPTIONS,
+    defaultClientOptions,
     TransportProvider (..),
     disableIntegration,
 
@@ -98,7 +98,7 @@ import Sentry.Capture
     captureUnhandledException_,
   )
 import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
-import Sentry.Client.Options (ClientOptions (..), DsnSource (..), TransportProvider (..), pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options (ClientOptions (..), DsnSource (..), TransportProvider (..), defaultClientOptions)
 import Sentry.Event (CapturedEvent (..))
 import Sentry.Init (ClientHandle, acquireClient, clientOf, close, init, withScopedClient, withSentry)
 import Sentry.Integration.Stacktrace

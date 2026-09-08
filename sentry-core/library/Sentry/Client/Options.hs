@@ -2,7 +2,7 @@ module Sentry.Client.Options
   ( -- * ClientOptions
     DsnSource (..),
     Internal.ClientOptions (..),
-    pattern Internal.DEFAULT_CLIENT_OPTIONS,
+    Internal.defaultClientOptions,
 
     -- * Transport provider
     Internal.TransportProvider (..),

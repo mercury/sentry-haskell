@@ -83,7 +83,7 @@ snapshotWith look =
   fmap (EnvSnapshot . catMaybes) $
     traverse
       readOne
-      ["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_ENVIRONMENT", "SENTRY_DEBUG", "SENTRY_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE", "SENTRY_PROFILES_SAMPLE_RATE"]
+      ["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_ENVIRONMENT", "SENTRY_DEBUG", "SENTRY_SAMPLE_RATE"]
   where
     readOne key = fmap ((key,) <$>) (look key)
 
@@ -114,20 +114,14 @@ resolveSnapshot (EnvSnapshot snapshot) opts =
       envRaw = look "SENTRY_ENVIRONMENT"
       debugRaw = look "SENTRY_DEBUG"
       rateRaw = look "SENTRY_SAMPLE_RATE"
-      tracesRaw = look "SENTRY_TRACES_SAMPLE_RATE"
-      profilesRaw = look "SENTRY_PROFILES_SAMPLE_RATE"
       dsnEnv = (Patrol.Dsn.fromText . Text.pack) =<< dsnRaw
       debugEnv = parseBool =<< debugRaw
       rateEnv = parseRate =<< rateRaw
-      tracesEnv = parseRate =<< tracesRaw
-      profilesEnv = parseRate =<< profilesRaw
       warnings =
         catMaybes
           [ if opts.dsn == Dsn.Inherit then warnIf MalformedDsn dsnRaw dsnEnv else Nothing,
             if isNothing opts.debug then warnIf UnrecognizedBool debugRaw debugEnv else Nothing,
-            rateWarning "SENTRY_SAMPLE_RATE" "sampleRate" opts.sampleRate rateRaw rateEnv,
-            rateWarning "SENTRY_TRACES_SAMPLE_RATE" "tracesSampleRate" opts.tracesSampleRate tracesRaw tracesEnv,
-            rateWarning "SENTRY_PROFILES_SAMPLE_RATE" "profilesSampleRate" opts.profilesSampleRate profilesRaw profilesEnv
+            rateWarning "SENTRY_SAMPLE_RATE" "sampleRate" opts.sampleRate rateRaw rateEnv
           ]
    in ( opts
           { dsn = case opts.dsn of
@@ -136,9 +130,7 @@ resolveSnapshot (EnvSnapshot snapshot) opts =
             release = opts.release <|> (Text.pack <$> releaseRaw),
             environment = opts.environment <|> (Text.pack <$> envRaw) <|> Just Defaults.environment,
             debug = opts.debug <|> debugEnv <|> Just Defaults.debug,
-            sampleRate = chooseRate opts.sampleRate rateEnv <|> Just Defaults.sampleRate,
-            tracesSampleRate = chooseRate opts.tracesSampleRate tracesEnv,
-            profilesSampleRate = chooseRate opts.profilesSampleRate profilesEnv
+            sampleRate = chooseRate opts.sampleRate rateEnv <|> Just Defaults.sampleRate
           },
         warnings
       )

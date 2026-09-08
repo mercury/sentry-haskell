@@ -32,7 +32,7 @@ import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Sentry.Client.Internal (Client (..), integrations, options, transport)
 import Sentry.Client.Internal qualified as ClientInternal
-import Sentry.Client.Options (ClientOptions, pattern DEFAULT_CLIENT_OPTIONS)
+import Sentry.Client.Options (ClientOptions, defaultClientOptions)
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Client.Options.Env qualified as Env
 import Sentry.Integration (Integration (..), SomeIntegration (..), fromIntegration)
@@ -169,7 +169,7 @@ pattern NON_RECORDING_CLIENT <- Client _ Nothing _ _
         opts =
           fst $
             Env.finalize (Env.EnvSnapshot []) $
-              (DEFAULT_CLIENT_OPTIONS)
+              (defaultClientOptions)
                 { Internal.dsn = Dsn.Disabled,
                   Internal.defaultIntegrations = False
                 }

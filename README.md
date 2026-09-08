@@ -179,8 +179,6 @@ code override values sourced from the environment.
 | `SENTRY_ENVIRONMENT`           | `environment`          | `"production"`                                     |
 | `SENTRY_DEBUG`                 | `debug`                | `False`                                            |
 | `SENTRY_SAMPLE_RATE`           | `sampleRate`           | `1.0`                                              |
-| `SENTRY_TRACES_SAMPLE_RATE`    | `tracesSampleRate`     | `Nothing`                                          |
-| `SENTRY_PROFILES_SAMPLE_RATE`  | `profilesSampleRate`   | `Nothing`                                          |
 
 Booleans (`SENTRY_DEBUG`) accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`,
 case-insensitively; anything else is treated as unset.
@@ -493,11 +491,6 @@ that need to manage client binding themselves,
 
 ## Reference
 
-### Selected `ClientOptions`
-
-`ClientOptions` is constructed with `def` (or the `DEFAULT_CLIENT_OPTIONS`
-pattern) and updated record-style.
-
 Commonly set `ClientOptions` fields:
 
 | Field               | Type                                          | Purpose                                                                  |
@@ -507,7 +500,7 @@ Commonly set `ClientOptions` fields:
 | `environment`       | `Maybe Text`                                  | Environment tag (e.g. `"production"`)                                    |
 | `release`           | `Maybe Text`                                  | Release identifier attached to events                                    |
 | `sampleRate`        | `Maybe Float`                                 | Fraction of events to send, in `[0,1]`                                   |
-| `sendDefaultPII`    | `Bool`                                        | Whether to include personally-identifiable info                          |
+| `sendDefaultPII`    | `Bool`                                        | Permission for integration-defined automatic PII collection              |
 | `maxBreadcrumbs`    | `Word`                                        | Per-scope breadcrumb cap                                                 |
 | `beforeSend`        | `Maybe (CapturedEvent -> Maybe Patrol.Event)` | Final hook to rewrite or drop each event                                 |
 | `beforeBreadcrumb`  | `Maybe (Breadcrumb -> Maybe Breadcrumb)`      | Hook to rewrite or drop each breadcrumb                                  |

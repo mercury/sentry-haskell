@@ -193,7 +193,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
       let sendFn _ rl = putMVar entered () >> readMVar never >> pure rl
       executor <- AsyncExecutor.new 1 Nothing sendFn
       let opts =
-            (Options.DEFAULT_CLIENT_OPTIONS)
+            (Options.defaultClientOptions)
               { Options.dsn = Dsn.Explicit Test.TEST_DSN,
                 Options.defaultIntegrations = False,
                 Options.transport = Just (Options.PrebuiltTransport (Transport.SomeTransport executor)),
@@ -378,7 +378,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
           putMVar created executor
           pure $ Transport.SomeTransport executor
         opts =
-          (Options.DEFAULT_CLIENT_OPTIONS)
+          (Options.defaultClientOptions)
             { Options.dsn = Dsn.Explicit Test.TEST_DSN,
               Options.defaultIntegrations = False,
               Options.transport = Just (Options.DeferredTransport factory),
