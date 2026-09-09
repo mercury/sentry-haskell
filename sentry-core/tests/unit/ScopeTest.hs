@@ -9,7 +9,7 @@ import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (runReaderT)
 import Data.Default (def)
-import Data.Foldable (toList)
+import Data.Foldable (toList, traverse_)
 import Data.Map.Strict qualified as Map
 import Data.Typeable (cast)
 import OpenTelemetry.Context qualified as Context
@@ -125,7 +125,7 @@ scopeSpec withCurrent withIsolation withBoundClient = do
           length scopes `shouldBe` 1
 
   describe "async exceptions" do
-    mapM_
+    traverse_
       ( \(label, runScope) -> it (label <> " restores scope and preserves cancellation identity") $ Test.withGlobalScope do
           withIsolation \parent -> do
             Scope.setTag parent "parent" "retained"
@@ -160,9 +160,9 @@ immutableScopes anns = [s | Annotation a <- anns, Just s <- [cast @_ @ScopeData 
 bindingSpec :: (forall a. (Scope.Scope -> IO a) -> IO a) -> (forall a. (Scope.Scope -> IO a) -> IO a) -> (forall a. Client -> IO a -> IO a) -> Spec
 bindingSpec withCurrent withIsolation withBoundClient = do
   describe "restoration and ownership" do
-    mapM_
+    traverse_
       ( \(label, bracketScope) -> describe label do
-          mapM_
+          traverse_
             ( \fails -> it ("restores parents and unrelated context; failure=" <> show fails) $ Test.withGlobalScope do
                 key <- Context.newKey "scope-test-unrelated"
                 withIsolation \parentIso -> withCurrent \parentCurrent -> do

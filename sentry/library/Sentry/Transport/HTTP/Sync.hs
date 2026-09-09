@@ -7,7 +7,7 @@
 -- This is the simplest transport implementation and is useful for:
 --
 -- * CLI tools and short-lived processes
--- * Situations where you want delivery confirmation before proceeding
+-- * Situations where you want HTTP acknowledgement or failure before proceeding
 -- * As the underlying send function for 'Sentry.Transport.Executor.Async'
 module Sentry.Transport.HTTP.Sync
   ( -- * Sync HTTP Transport
@@ -194,7 +194,7 @@ instance Transport SyncHttpTransport where
     for_ transport.clientReports \cr ->
       ClientReport.recordItemDrops cr ClientReport.RatelimitBackoff filtered.dropped
     case filtered.kept of
-      Nothing -> pure Sentry.Transport.SendProcessed
+      Nothing -> pure Sentry.Transport.SendFailed_Other
       Just filteredEnvelope -> do
         -- Piggyback any pending client report (forced — no background drainer).
         piggybacked <- case transport.clientReports of
@@ -203,14 +203,18 @@ instance Transport SyncHttpTransport where
             mReport <- ClientReport.takePending cr now True
             pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
         outcome <- toOutcome <$> transport.sendFn piggybacked
-        -- Record send/network failures (a 429 is accounted for by the rate
-        -- limiter, not as a drop) against the pre-piggyback envelope.
+        -- Record failures against attempted items, excluding the piggybacked
+        -- report. Upstream accounts for HTTP 429 rejections.
         for_ (Delivery.discardReason outcome) \reason ->
           for_ transport.clientReports \cr ->
             ClientReport.recordEnvelopeDrop cr reason filteredEnvelope
         atomicModifyIORefCAS_ transport.rateLimiter \current ->
           RateLimiter.updateFromResponse current now outcome
-        pure Sentry.Transport.SendProcessed
+        pure $ case outcome of
+          Delivery.Responded status _
+            | let code = HttpTypes.statusCode status in 200 <= code && code < 300 -> Sentry.Transport.SendProcessed
+          Delivery.Responded _ _ -> Sentry.Transport.SendFailed_Other
+          Delivery.NetworkFailure _ -> Sentry.Transport.SendFailed_Other
 
   recordDiscards :: SyncHttpTransport -> DiscardReason -> DataCategory -> Int -> IO ()
   recordDiscards transport reason category n =

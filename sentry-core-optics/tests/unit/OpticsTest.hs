@@ -57,3 +57,9 @@ spec_scopedClient = describe "scoped lifecycle re-export" do
       client <- Scope.resolveClient
       isJust client.transport `shouldBe` False
     isJust <$> Scope.lookupClient `shouldReturn` False
+
+spec_captureFacade :: Spec
+spec_captureFacade = describe "capture facade" do
+  it "exports capture outcomes and transport acceptance" do
+    Sentry.withClient Sentry.NON_RECORDING_CLIENT $
+      Sentry.captureEvent Sentry.emptyEvent `shouldReturn` Nothing

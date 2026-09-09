@@ -76,6 +76,8 @@ data Counts = Counts
     -- | Backpressure events: a 'Transport.SendFailed_QueueFull' that we paused
     -- on and retried (so the event still went through).
     retries :: !Int,
+    -- | Events rejected with another immediate transport failure.
+    failed :: !Int,
     -- | Events abandoned because the transport reported shutdown mid-run.
     shutdownDropped :: !Int
   }
@@ -165,12 +167,13 @@ runH1 cfg manager dsn = do
 -- backpressure on a full queue so every event traverses the worker rather than
 -- being dropped.
 drive :: (Transport.Transport t) => t -> Int -> Patrol.Envelope -> IO Counts
-drive transport total envelope = go total (Counts 0 0 0)
+drive transport total envelope = go total (Counts 0 0 0 0)
   where
     go 0 !counts = pure counts
     go k !counts =
       Transport.send transport envelope >>= \case
         Transport.SendProcessed -> go (k - 1) counts{processed = counts.processed + 1}
+        Transport.SendFailed_Other -> go (k - 1) counts{failed = counts.failed + 1}
         -- Queue full: back off briefly (rather than hot-spinning, which would
         -- dominate the profile) and retry the same envelope; k is not
         -- decremented, so the event is delivered rather than dropped.
@@ -184,6 +187,7 @@ report counts elapsed = do
   let throughput = if elapsed > 0 then fromIntegral counts.processed / elapsed else 0 :: Double
   printf "  processed: %d  (%.0f/s)\n" counts.processed throughput
   printf "  queue-full retries: %d\n" counts.retries
+  printf "  terminal failures: %d\n" counts.failed
   printf "  shutdown drops: %d\n" counts.shutdownDropped
 
 -- | An @https@ DSN pointing at the sink for project @1@.

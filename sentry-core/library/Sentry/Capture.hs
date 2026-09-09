@@ -66,8 +66,9 @@ import Witch qualified
 -- integrations and before-send hooks registered with the 'Client' before
 -- handing it off to the transport.
 --
--- Returns the event's 'Patrol.EventId' on success, otherwise 'Nothing' if the
--- event was dropped at any stage.
+-- Returns the final event ID when the pipeline completes and the transport
+-- reports no immediate rejection; otherwise returns 'Nothing'. This does not
+-- guarantee delivery: asynchronous failures can occur after capture returns.
 captureEvent :: (MonadIO m) => Patrol.Event -> m (Maybe Patrol.EventId)
 captureEvent event = do
   scope <- Scope.readAmbientScope
@@ -257,13 +258,13 @@ captureWith client captured =
       case result of
         Left reason ->
           Nothing <$ noteDrop client reason (eventCategory captured.event)
+        -- Transport failures are accounted for by the transport itself.
         Right (finalEvent, response) ->
           pure $ case response of
-            -- Executor records QueueOverflow itself; don't double-count here.
-            SendFailed_QueueFull -> Nothing
-            -- SDK is shutting down; nothing useful to report.
-            SendFailed_Shutdown -> Nothing
             SendProcessed -> Just finalEvent.eventId
+            SendFailed_QueueFull -> Nothing
+            SendFailed_Shutdown -> Nothing
+            SendFailed_Other -> Nothing
   where
     sample :: (MonadIO m) => Float -> m Bool
     sample rate

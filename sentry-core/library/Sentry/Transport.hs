@@ -57,19 +57,16 @@ class Transport t where
 -- | Potential responses from a call to 'send'.
 type SendResponse :: Type
 data SendResponse
-  = -- | The transport failed to send because it has been shut down.
-    SendFailed_Shutdown
-  | -- | The transport failed to send because its queue is full.
-    --
-    -- This only really applies to transports that queue or buffer envelopes to
-    -- be sent, but that's probably going to be the majority of them.
-    SendFailed_QueueFull
-  | -- | The request to send was successfully processed.
-    --
-    -- This does /not/ mean that the 'Patrol.Type.Envelope.Envelope' was
-    -- /delivered/ successfully, whether or not that is true depends on the
-    -- semantics of the transport itself.
+  = -- | No immediate rejection was reported. Async queue admission and
+    -- successful synchronous HTTP requests return this; delivery is not guaranteed.
     SendProcessed
+  | -- | The transport queue is full.
+    SendFailed_QueueFull
+  | -- | The transport has shut down.
+    SendFailed_Shutdown
+  | -- | Another immediate failure, including HTTP rejection, network failure,
+    -- or full local rate-limit suppression.
+    SendFailed_Other
   deriving stock (Eq, Show)
 
 -- | Potential responses from a call to 'flush'.

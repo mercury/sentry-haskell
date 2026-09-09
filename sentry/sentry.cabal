@@ -103,9 +103,9 @@ library
     patrol ^>=1.2,
     sentry-core,
     stm,
+    stm-chans,
     text,
     time,
-    unagi-chan,
     unliftio,
     witch,
     zlib,
@@ -182,6 +182,7 @@ test-suite unit
   -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
   other-modules:
     AsyncExecutorTest
+    DeliveryTest
     RateLimiterTest
 
   build-depends:
@@ -189,10 +190,12 @@ test-suite unit
     base,
     bytestring,
     hspec,
+    http-types,
     patrol,
     sentry,
     sentry-core,
     stm,
+    stm-chans,
     time,
     unliftio,
 
@@ -203,19 +206,29 @@ test-suite integration
   main-is: Driver.hs
   -- cabal-gild: discover tests/integration --exclude=tests/integration/Driver.hs
   other-modules:
+    DeliveryOutcomeTest
+    ExecutorCaptureTest
     Http2CaptureTest
     Http2ConcurrencyTest
 
   build-depends:
+    aeson,
     async,
     base,
+    bytestring,
+    crypton-connection,
     data-default,
     hspec,
+    http-client,
+    http-client-tls,
     http-types,
     http2-tls,
+    patrol,
     sentry,
     sentry-core,
     testkit,
+    text,
+    time,
     unliftio,
 
 -- Gated behind the `kent` flag: needs a running kent-server mock backend.

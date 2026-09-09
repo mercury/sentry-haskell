@@ -7,6 +7,7 @@ import Control.Monad (replicateM_, void)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
+import Data.Foldable (traverse_)
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.IORef qualified as IORef
 import Data.Kind (Type)
@@ -403,11 +404,11 @@ spec_lifecycle = do
       let t = ShutdownAction \budget -> do
             IORef.atomicModifyIORef' budgets (\xs -> (xs <> [budget], ()))
             pure ShutdownSucceeded
-      mapM_ (\budget -> bracket (Sentry.acquireClient ((transportOptions t){shutdownTimeout = budget})) Sentry.close (const (pure ()))) [2.5, 0, -1]
+      traverse_ (\budget -> bracket (Sentry.acquireClient ((transportOptions t){shutdownTimeout = budget})) Sentry.close (const (pure ()))) [2.5, 0, -1]
       readIORef budgets `shouldReturn` [2.5, 0, 0]
 
   describe "default transport shutdown" do
-    mapM_
+    traverse_
       ( \(response, expected) ->
           it ("propagates " <> show response) $
             shutdown (FlushOnly response) 1 `shouldReturn` expected

@@ -84,8 +84,7 @@ build opts clientReports queueSize manager dsn = do
       sendFn envelope rateLimiter = do
         now <- getCurrentTime
         outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
-        -- Record send/network failures as drops (a 429 is accounted for by the
-        -- rate limiter via updateFromResponse, not as a drop).
+        -- Record failures; upstream accounts for HTTP 429 rejections.
         for_ (Delivery.discardReason outcome) \reason ->
           for_ (fmap (.accumulator) reportConfig) \cr ->
             ClientReport.recordEnvelopeDrop cr reason envelope

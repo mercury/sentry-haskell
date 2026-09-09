@@ -57,3 +57,9 @@ spec_opticsSurface =
     it "emptyUser + optics operators compose end to end" do
       let user = Sentry.emptyUser & #email .~ "alice@example.com"
       (user ^. #email) `shouldBe` "alice@example.com"
+
+spec_captureFacade :: Spec
+spec_captureFacade = describe "capture facade" do
+  it "exports capture outcomes and transport acceptance" do
+    Sentry.withClient Sentry.NON_RECORDING_CLIENT $
+      Sentry.captureEvent Sentry.emptyEvent `shouldReturn` Nothing

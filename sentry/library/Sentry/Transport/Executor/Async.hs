@@ -16,11 +16,6 @@
 --
 -- This allows the same executor to work with different HTTP libraries or
 -- custom delivery mechanisms.
---
--- == Concurrency
---
--- The worker drains the queue __serially__: at most one send is outstanding at
--- a time.
 module Sentry.Transport.Executor.Async
   ( AsyncExecutor (..),
     ClientReportConfig (..),
@@ -34,17 +29,19 @@ module Sentry.Transport.Executor.Async
   )
 where
 
-import Control.Concurrent.Async (Async, async)
+import Control.Concurrent.Async (Async, asyncWithUnmask)
 import Control.Concurrent.Async qualified as Async
-import Control.Concurrent.Chan.Unagi.Bounded qualified as Unagi
-import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar)
-import Control.Exception (mask, onException)
-import Control.Monad (void)
+import Control.Concurrent.STM (atomically, orElse)
+import Control.Concurrent.STM.TBMQueue (TBMQueue)
+import Control.Concurrent.STM.TBMQueue qualified as TBM
+import Control.Concurrent.STM.TMVar (TMVar, newEmptyTMVarIO, readTMVar, tryPutTMVar)
+import Control.Exception (SomeException, finally, mask, onException)
+import Control.Monad (void, when)
 import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
+import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime, getCurrentTime)
-import GHC.Conc.Sync (TVar, atomically, newTVarIO, readTVar, readTVarIO, writeTVar)
 import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory (DataCategory)
@@ -54,7 +51,7 @@ import Sentry.Transport (Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import UnliftIO.Exception (catchAny)
+import UnliftIO.Exception (catchAny, displayException)
 import UnliftIO.Timeout qualified as UnliftIO (timeout)
 
 -- | Tasks that can be sent to the worker thread.
@@ -63,9 +60,7 @@ data Task
   = -- | Send an envelope to Sentry.
     SendEnvelope Patrol.Envelope
   | -- | Flush pending envelopes, synchronizing completion with the caller.
-    Flush (MVar ())
-  | -- | Signal the worker thread to shut down.
-    Shutdown
+    Flush (TMVar ())
 
 -- | Asynchronous executor that can be used to construct a
 -- 'Sentry.Transport.Transport' which processes 'Patrol.Type.Envelope.Envelope's
@@ -79,8 +74,7 @@ data Task
 -- generic over the actual delivery mechanism.
 type AsyncExecutor :: Type
 data AsyncExecutor = AsyncExecutor
-  { taskQueue :: Unagi.InChan Task,
-    shutdownRef :: TVar Bool,
+  { taskQueue :: TBMQueue Task,
     handle :: Async (),
     clientReports :: Maybe ClientReports
   }
@@ -100,7 +94,8 @@ data ClientReportConfig = ClientReportConfig
     toEnvelope :: Patrol.ClientReport.ClientReport -> Patrol.Envelope
   }
 
--- | Create a new 'AsyncExecutor'.
+-- | Create a new 'AsyncExecutor' with an exact, positive queue capacity.
+-- Nonpositive capacities raise an IO exception.
 --
 -- The send function handles the actual envelope delivery and is called
 -- by the worker thread for each envelope. It receives the current rate
@@ -125,32 +120,33 @@ new ::
   Maybe ClientReportConfig ->
   (Patrol.Envelope -> RateLimiter -> IO RateLimiter) ->
   IO AsyncExecutor
-new queueSize reports sendFn = do
-  (taskQueue, outChan) <- Unagi.newChan queueSize
-  shutdownRef <- newTVarIO False
+new queueSize reports sendFn = mask \_ -> do
+  when (queueSize <= 0) $ fail "Executor queue size must be positive"
+  taskQueue <- TBM.newTBMQueueIO queueSize
   let clientReports = fmap (.accumulator) reports
-  handle <- async $ mkWorker outChan reports sendFn
-  pure AsyncExecutor{taskQueue, shutdownRef, handle, clientReports}
+  handle <- asyncWithUnmask $ \unmask ->
+    unmask (mkWorker taskQueue reports sendFn) `finally` atomically (TBM.closeTBMQueue taskQueue)
+  pure AsyncExecutor{taskQueue, handle, clientReports}
 
 -- | Worker thread loop that processes tasks from the queue.
 mkWorker ::
-  Unagi.OutChan Task ->
+  TBMQueue Task ->
   Maybe ClientReportConfig ->
   (Patrol.Envelope -> RateLimiter -> IO RateLimiter) ->
   IO ()
-mkWorker outChan reports sendFn = loop RateLimiter.new
+mkWorker queue reports sendFn = loop RateLimiter.new
   where
     loop :: RateLimiter -> IO ()
     loop rateLimiter =
-      Unagi.readChan outChan >>= \case
+      atomically (TBM.readTBMQueue queue) >>= \case
         -- Drain any pending client report before exiting (best-effort).
-        Shutdown -> void $ drainReports rateLimiter
+        Nothing -> void $ drainReports rateLimiter
         -- Drain, then signal completion, carrying any rate limit learned from
         -- the drain's response into the rest of the loop.
-        Flush syncVar -> do
+        Just (Flush syncVar) -> do
           rateLimiter' <- drainReports rateLimiter
-          tryPutMVar syncVar () *> loop rateLimiter'
-        SendEnvelope envelope -> do
+          atomically (tryPutTMVar syncVar ()) *> loop rateLimiter'
+        Just (SendEnvelope envelope) -> do
           now <- getCurrentTime
           let filtered = RateLimiter.filterEnvelope rateLimiter now envelope
           -- Account for every item dropped by rate limiting, whether the whole
@@ -194,64 +190,69 @@ mkWorker outChan reports sendFn = loop RateLimiter.new
 
 instance Sentry.Transport.Transport AsyncExecutor where
   send :: AsyncExecutor -> Patrol.Envelope -> IO Sentry.Transport.SendResponse
-  send executor envelope = unlessShutdown executor.shutdownRef Sentry.Transport.SendFailed_Shutdown do
-    -- Non-blocking send: drop if queue is full.
-    Unagi.tryWriteChan executor.taskQueue (SendEnvelope envelope) >>= \case
-      True -> pure Sentry.Transport.SendProcessed
-      False -> do
+  send executor envelope = do
+    result <- atomically $ TBM.tryWriteTBMQueue executor.taskQueue (SendEnvelope envelope)
+    case result of
+      Nothing -> pure Sentry.Transport.SendFailed_Shutdown
+      Just True -> pure Sentry.Transport.SendProcessed
+      Just False -> do
         for_ executor.clientReports \cr ->
           ClientReport.recordEnvelopeDrop cr ClientReport.QueueOverflow envelope
         pure Sentry.Transport.SendFailed_QueueFull
 
   flush :: AsyncExecutor -> NominalDiffTime -> IO Sentry.Transport.FlushResponse
-  flush executor timeout = unlessShutdown executor.shutdownRef Sentry.Transport.FlushFailed_Shutdown do
-    syncVar <- newEmptyMVar
-    success <- Unagi.tryWriteChan executor.taskQueue (Flush syncVar)
-    if success
-      then do
-        result <- UnliftIO.timeout (toMicroseconds timeout) do
-          Sentry.Transport.FlushSucceeded <$ readMVar syncVar
-        pure $ (fromMaybe $ Sentry.Transport.FlushFailed_TimedOut timeout) result
-      else pure Sentry.Transport.FlushFailed_QueueFull
+  flush executor duration = do
+    result <- UnliftIO.timeout (toMicroseconds duration) do
+      syncVar <- newEmptyTMVarIO
+      admitted <- atomically $ TBM.tryWriteTBMQueue executor.taskQueue (Flush syncVar)
+      case admitted of
+        Nothing -> do
+          Async.poll executor.handle >>= \case
+            Just (Left err) -> pure $ Sentry.Transport.FlushFailed_Other (Text.pack $ displayException err)
+            _ -> pure Sentry.Transport.FlushFailed_Shutdown
+        Just False -> pure Sentry.Transport.FlushFailed_QueueFull
+        Just True ->
+          atomically $
+            (Sentry.Transport.FlushSucceeded <$ readTMVar syncVar)
+              `orElse` (workerFlushResult <$> Async.waitCatchSTM executor.handle)
+    pure $ fromMaybe (Sentry.Transport.FlushFailed_TimedOut duration) result
 
   shutdown :: AsyncExecutor -> NominalDiffTime -> IO Sentry.Transport.ShutdownResponse
-  shutdown executor timeout = mask \restore -> do
-    -- Claim shutdown once and install cancellation cleanup before unmasking.
-    alreadyShutdown <- atomically do
-      closed <- readTVar executor.shutdownRef
-      writeTVar executor.shutdownRef True
-      pure closed
-    if alreadyShutdown
+  shutdown executor duration = mask \restore -> do
+    claimed <- atomically do
+      closed <- TBM.isClosedTBMQueue executor.taskQueue
+      TBM.closeTBMQueue executor.taskQueue
+      pure (not closed)
+    if not claimed
       then pure Sentry.Transport.ShutdownFailed_AlreadyShutdown
       else do
         result <-
           restore
-            ( UnliftIO.timeout (toMicroseconds timeout) do
-                Unagi.writeChan executor.taskQueue Shutdown
-                Sentry.Transport.ShutdownSucceeded <$ Async.wait executor.handle
+            ( UnliftIO.timeout (toMicroseconds duration) do
+                workerShutdownResult <$> Async.waitCatch executor.handle
             )
             `onException` Async.cancel executor.handle
         case result of
           Just success -> pure success
           Nothing -> do
             Async.cancel executor.handle
-            pure $ Sentry.Transport.ShutdownFailed_TimedOut timeout
+            pure $ Sentry.Transport.ShutdownFailed_TimedOut duration
 
   recordDiscards :: AsyncExecutor -> DiscardReason -> DataCategory -> Int -> IO ()
   recordDiscards executor reason category n =
     for_ executor.clientReports \reports ->
       ClientReport.record reports reason category n
 
--- | Helper to check whether the executor has been shut down and should refuse
--- to perform a given action.
-unlessShutdown :: TVar Bool -> a -> IO a -> IO a
-unlessShutdown ref a ma =
-  readTVarIO ref >>= \case
-    True -> pure a
-    False -> ma
-{-# INLINE unlessShutdown #-}
+workerFlushResult :: Either SomeException () -> Sentry.Transport.FlushResponse
+workerFlushResult = \case
+  Left err -> Sentry.Transport.FlushFailed_Other (Text.pack $ displayException err)
+  Right () -> Sentry.Transport.FlushFailed_Other "Worker stopped before flush acknowledgement"
 
--- | Convert a 'Data.Time.Clock.NominalDiffTime' duration to an integer
--- number of microseconds.
+workerShutdownResult :: Either SomeException () -> Sentry.Transport.ShutdownResponse
+workerShutdownResult = \case
+  Left err -> Sentry.Transport.ShutdownFailed_Other (Text.pack $ displayException err)
+  Right () -> Sentry.Transport.ShutdownSucceeded
+
+-- | Nonpositive durations expire immediately; huge durations saturate.
 toMicroseconds :: NominalDiffTime -> Int
-toMicroseconds dt = floor $ dt * 1_000_000
+toMicroseconds dt = fromInteger $ max 0 $ min (toInteger (maxBound :: Int)) (floor $ dt * 1_000_000)

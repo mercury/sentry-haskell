@@ -547,7 +547,7 @@ Transport operations return explicit sum types rather than throwing:
 
 | Type               | Constructors                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `SendResponse`     | `SendProcessed`, `SendFailed_QueueFull`, `SendFailed_Shutdown`                                                 |
+| `SendResponse`     | `SendProcessed`, `SendFailed_QueueFull`, `SendFailed_Shutdown`, `SendFailed_Other`                                                 |
 | `FlushResponse`    | `FlushSucceeded`, `FlushFailed_TimedOut`, `FlushFailed_QueueFull`, `FlushFailed_Shutdown`, `FlushFailed_Other` |
 | `ShutdownResponse` | `ShutdownSucceeded`, `ShutdownFailed_TimedOut`, `ShutdownFailed_AlreadyShutdown`, `ShutdownFailed_Other`       |
 

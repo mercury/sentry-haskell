@@ -38,9 +38,8 @@ data Outcome
 -- envelope's items, if any.
 --
 -- * A successful send (2xx) records nothing.
--- * HTTP 429 records nothing — the rate limiter accounts for it via
---   'Sentry.Transport.Executor.RateLimiter.updateFromResponse', and the items
---   are retried, not dropped.
+-- * HTTP 429 records nothing: upstream accounts for the rejected items.
+--   Discard without retrying; later local suppression is ratelimit_backoff.
 -- * Any other non-2xx status is a 'ClientReport.SendError'.
 -- * A network failure is a 'ClientReport.NetworkError'.
 discardReason :: Outcome -> Maybe DiscardReason
