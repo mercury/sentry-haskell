@@ -124,8 +124,7 @@ just build
 - Default extensions: `BlockArguments`, `ImportQualifiedPost`, `OverloadedRecordDot`, etc.
 - Debug info included (`-g`)
 
-Package-specific additions (e.g. `-Wno-orphans` in `patrol-optics` and
-`sentry-core-optics`) layer on top via a derived `common` stanza that
+Package-specific additions layer on top via a derived `common` stanza that
 `import:`s `defaults` — nothing package-specific goes in the fragment itself,
 since a fragment pragma replaces the whole section it's attached to.
 

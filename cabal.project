@@ -1,9 +1,6 @@
 packages:
   sentry
   , sentry-core
-  , patrol-optics
-  , sentry-core-optics
-  , sentry-optics
 
 tests: True
 -- Pin the Hackage snapshot so the resolved dependency set is a function of this
