@@ -1,5 +1,3 @@
-{-# LANGUAGE DerivingVia #-}
-
 -- | Apply updates to 'Sentry.Scope.Internal.ScopeData' via the composable
 -- 'ScopeUpdate' value.
 --
@@ -17,15 +15,28 @@
 --     <> Update.setUser u
 -- @
 --
+-- A list is accepted anywhere a single update is, so the same thing reads:
+--
+-- @
+-- Update.apply scope
+--   [ Update.setLevel Warning,
+--     Update.setTag \"env\" \"prod\",
+--     Update.setUser u
+--   ]
+-- @
+--
 -- Update bundles can be factored out and reused:
 --
 -- @
 -- let stagingTags = Update.setTag \"env\" \"staging\" <> Update.setTag \"tier\" \"free\"
 -- scope `Update.apply` (stagingTags <> Update.setUser u)
 -- @
+--
+-- This is the same 'Sentry.Update.Update' the builder modules use; see
+-- "Sentry.Update" for the shared composition rules.
 module Sentry.Scope.Update
   ( -- * Type
-    ScopeUpdate (..),
+    ScopeUpdate,
 
     -- * Application
     apply,
@@ -37,6 +48,8 @@ module Sentry.Scope.Update
     unsetLevel,
     setUser,
     unsetUser,
+    modifyUser,
+    modifyExistingUser,
     setFingerprint,
     unsetFingerprint,
     setTransaction,
@@ -54,6 +67,19 @@ module Sentry.Scope.Update
 
     -- ** Contexts
     setContext,
+    setOsContext,
+    modifyOsContext,
+    modifyExistingOsContext,
+    setAppContext,
+    modifyAppContext,
+    modifyExistingAppContext,
+    setRuntimeContext,
+    modifyRuntimeContext,
+    modifyExistingRuntimeContext,
+    setContextValues,
+    setContextValue,
+    removeContextValue,
+    modifyContextValues,
     removeContext,
     clearContexts,
 
@@ -74,33 +100,48 @@ import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson qualified as Aeson
 import Data.Foldable (toList)
 import Data.Kind (Type)
+import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Monoid (Dual (..), Endo (..))
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
-import Data.Vector (Vector)
 import Patrol qualified
-import Sentry.Event (CapturedEvent (..))
+import Patrol.Type.Context qualified as Patrol.Context
+import Sentry.AppContext qualified
+import Sentry.Breadcrumb (BreadcrumbUpdate)
+import Sentry.Breadcrumb qualified
+import Sentry.Context.Internal qualified
+import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.OsContext qualified
+import Sentry.RuntimeContext (RuntimeContextUpdate)
+import Sentry.RuntimeContext qualified
 import Sentry.Scope.Internal (Scope, ScopeData (..), modifyScopeData)
+import Sentry.Update (Update (..))
+import Sentry.Update qualified
+import Sentry.User (UserUpdate)
+import Sentry.User qualified
+import Witch qualified
 
 -- | A pending modification to a 'Scope'.
 --
--- Updates can be chained with '<>'; the left operand is applied first, so later
--- updates win on conflicting scalar fields. Build one with a smart constructor
--- below or the 'ScopeUpdate' constructor directly; recover the wrapped
--- 'ScopeData -> ScopeData' with 'runScopeUpdate' (e.g. @'runScopeUpdate' upd
--- 'mempty'@ yields the 'ScopeData' the update produces against an empty scope).
+-- Updates can be chained with '<>' or collected in a list; the left operand is
+-- applied first, so later updates win on conflicting scalar fields. Build one
+-- with a smart constructor below; recover the wrapped
+-- @'ScopeData' -> 'ScopeData'@ with 'Sentry.Update.runUpdate', or run it
+-- against a base with 'Sentry.Update.run' — @'Witch.from' upd@ (or
+-- @'Sentry.Update.run' upd 'Sentry.Update.empty'@) yields the 'ScopeData' the
+-- update produces against an empty scope, the same as every other record.
 type ScopeUpdate :: Type
-newtype ScopeUpdate = ScopeUpdate {runScopeUpdate :: ScopeData -> ScopeData}
-  deriving (Semigroup, Monoid) via (Dual (Endo ScopeData))
+type ScopeUpdate = Update ScopeData
 
--- | Apply a 'ScopeUpdate' to a 'Scope' as a single atomic 'IORef' update.
-apply :: (MonadIO m) => Scope -> ScopeUpdate -> m ()
-apply scope = modifyScopeData scope . runScopeUpdate
+-- | Apply an update to a 'Scope' as a single atomic 'IORef' update.
+--
+-- Accepts a single 'ScopeUpdate' or a list of them.
+apply :: (MonadIO m, Witch.From a ScopeUpdate) => Scope -> a -> m ()
+apply scope = modifyScopeData scope . Sentry.Update.run
 
 -- | Internal builder shared by the smart constructors below.
 edit :: (ScopeData -> ScopeData) -> ScopeUpdate
-edit = ScopeUpdate
+edit = Update
 
 -- * Scalar field updates
 
@@ -112,16 +153,38 @@ setLevel l = edit \s -> s{level = Just l}
 unsetLevel :: ScopeUpdate
 unsetLevel = edit \s -> s{level = Nothing}
 
--- | Set the 'Patrol.Type.User.User'.
-setUser :: Patrol.User -> ScopeUpdate
-setUser u = edit \s -> s{user = Just u}
+-- | Establish the user on this scope from an empty one, replacing any user it
+-- already had.
+--
+-- Accepts a 'Sentry.User.UserUpdate', a list of them, or a
+-- 'Sentry.User.User' you already hold. Use 'modifyUser' to refine a user this
+-- scope already has, or create one when absent.
+--
+-- The new value is forced before it is stored, so the update runs as part of
+-- this single atomic scope modification rather than being retained as a thunk.
+setUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
+setUser upd =
+  edit \s -> let !u = Sentry.Update.run upd Sentry.User.empty in s{user = Just u}
 
--- | Clear the 'Patrol.Type.User.User'.
+-- | Remove the local user override, potentially revealing an inherited user.
 unsetUser :: ScopeUpdate
 unsetUser = edit \s -> s{user = Nothing}
 
+-- | Modify the user, starting from empty when absent. The result is forced before storing.
+-- Only the local user is read; inherited users are never copied.
+modifyUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
+modifyUser upd = edit \s -> case s.user of
+  Nothing -> Sentry.Update.run (setUser upd) s
+  Just _ -> Sentry.Update.run (modifyExistingUser upd) s
+
+-- | Modify an existing user. When absent, leave it absent without evaluating the update.
+modifyExistingUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
+modifyExistingUser upd = edit \s -> case s.user of
+  Nothing -> s
+  Just u -> let !u' = Sentry.Update.run upd u in s{user = Just u'}
+
 -- | Set the fingerprint.
-setFingerprint :: Vector Text -> ScopeUpdate
+setFingerprint :: [Text] -> ScopeUpdate
 setFingerprint fp = edit \s -> s{fingerprint = Just fp}
 
 -- | Clear the fingerprint.
@@ -170,7 +233,55 @@ clearExtras = edit \s -> s{extras = Map.empty}
 setContext :: Text -> Patrol.Context -> ScopeUpdate
 setContext k v = edit \s -> s{contexts = Map.insert k v s.contexts}
 
--- | Remove the context at the given key, if present.
+-- | Replace the context at @\"runtime\"@ with a runtime context, including
+-- any custom context previously stored at that key.
+--
+-- Accepts a 'Sentry.RuntimeContext.RuntimeContextUpdate', a list of them, or a
+-- 'Sentry.RuntimeContext.RuntimeContext' you already hold.
+setRuntimeContext :: (Witch.From a RuntimeContextUpdate) => a -> ScopeUpdate
+setRuntimeContext upd =
+  let !rc = Sentry.Update.run upd Sentry.RuntimeContext.empty
+   in setContext "runtime" (Patrol.Context.Runtime rc)
+
+-- | Replace the context at the given key with a custom context built from
+-- key/value pairs. Later entries win when a key occurs more than once.
+--
+-- An empty list stores an empty context, serialized as @{}@ at that key.
+-- It can shadow an inherited context; use 'removeContext' to remove the entry
+-- from this scope.
+setContextValues :: Text -> [(Text, Aeson.Value)] -> ScopeUpdate
+setContextValues k kvs = let !values = Map.fromList kvs in setContext k (Patrol.Context.Other values)
+
+-- | Insert (or overwrite) a single value inside the custom context at the
+-- given key, leaving its other entries alone.
+--
+-- See 'modifyContextValues' for what happens when the context is absent or is
+-- a typed variant.
+setContextValue :: Text -> Text -> Aeson.Value -> ScopeUpdate
+setContextValue k key value = modifyContextValues k (Map.insert key value)
+
+-- | Remove a single value from the custom context at the given key, leaving
+-- its other entries alone. An absent local context stays absent; removing
+-- its last field retains an empty context. Typed contexts are unchanged.
+removeContextValue :: Text -> Text -> ScopeUpdate
+removeContextValue k key = edit \s -> let !result = Sentry.Context.Internal.removeValue k key s.contexts in s{contexts = result}
+
+-- | Transform the key/value payload of the custom context at the given key.
+--
+-- Two cases are worth stating outright:
+--
+-- * When this scope has no context at that key, the function runs against an
+--   empty map and its result is stored. As with 'setContextValues', that
+--   shadows any context inherited from an outer scope rather than reaching
+--   through to it.
+-- * When the entry is a typed variant ('Patrol.Type.Context.Runtime',
+--   'Patrol.Type.Context.Os', …) rather than
+--   'Patrol.Type.Context.Other', this changes nothing and the function is
+--   never applied. Use 'setContextValues' to replace it outright.
+modifyContextValues :: Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> ScopeUpdate
+modifyContextValues k f = edit \s -> let !result = Sentry.Context.Internal.modifyValues k f s.contexts in s{contexts = result}
+
+-- | Remove the local context override, potentially revealing an inherited payload.
 removeContext :: Text -> ScopeUpdate
 removeContext k = edit \s -> s{contexts = Map.delete k s.contexts}
 
@@ -180,17 +291,24 @@ clearContexts = edit \s -> s{contexts = Map.empty}
 
 -- * Breadcrumb updates
 
--- | Append a 'Patrol.Type.Breadcrumb.Breadcrumb' verbatim.
+-- | Append a 'Sentry.Breadcrumb.Breadcrumb' verbatim.
+--
+-- Accepts a 'Sentry.Breadcrumb.BreadcrumbUpdate', a list of them, or a whole
+-- 'Sentry.Breadcrumb.Breadcrumb'; an update is run against
+-- 'Patrol.Type.Breadcrumb.empty', since a breadcrumb is appended rather than
+-- refined.
 --
 -- This is the pure mutation primitive: it does /not/ default the timestamp, run
 -- 'Sentry.Client.Options.ClientOptions.beforeBreadcrumb', or trim to
 -- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'. Use
--- 'Sentry.Scope.addBreadcrumb' for the policy-applying, timestamp-defaulting
+-- 'Sentry.addBreadcrumb' for the policy-applying, timestamp-defaulting
 -- entry point.
-addBreadcrumb :: Patrol.Breadcrumb -> ScopeUpdate
-addBreadcrumb crumb = edit \s -> s{breadcrumbs = s.breadcrumbs Seq.|> crumb}
+addBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
+addBreadcrumb upd = edit \s ->
+  let !crumb = Sentry.Update.run upd Sentry.Breadcrumb.empty
+   in s{breadcrumbs = s.breadcrumbs Seq.|> crumb}
 
--- | Append several 'Patrol.Type.Breadcrumb.Breadcrumb's verbatim, in order. See
+-- | Append several 'Sentry.Breadcrumb.Breadcrumb's verbatim, in order. See
 -- 'addBreadcrumb' for the caveats around policy and defaulting.
 addBreadcrumbs :: (Foldable f) => f Patrol.Breadcrumb -> ScopeUpdate
 addBreadcrumbs crumbs = edit \s -> s{breadcrumbs = s.breadcrumbs <> Seq.fromList (toList crumbs)}
@@ -209,20 +327,94 @@ trimBreadcrumbs n = edit \s ->
 -- * Event-processor updates
 
 -- | Replace the scope's event processor with the given function.
+--
+-- Return the resulting event, or 'Nothing' to drop it.
 setEventProcessor :: (CapturedEvent -> Maybe Patrol.Event) -> ScopeUpdate
 setEventProcessor f = edit \s -> s{eventProcessor = f}
 
 -- | Chain a new processor after the existing one.
 --
--- The existing processor runs first; its output is then passed to the new
--- processor. If the existing processor drops the event ('Nothing'), the new
--- processor is not called. Matches the left-to-right chaining of the 'ScopeData'
--- 'Semigroup'.
+-- The existing processor runs first, and the new processor sees its effect
+-- as the next input event. If the existing
+-- processor drops the event ('Nothing'), the new processor is not called.
+-- Matches the left-to-right chaining of the 'ScopeData' 'Semigroup'.
 addEventProcessor :: (CapturedEvent -> Maybe Patrol.Event) -> ScopeUpdate
 addEventProcessor g = edit \s ->
-  s{eventProcessor = \ce -> s.eventProcessor ce >>= \ev -> g ce{event = ev}}
+  s
+    { eventProcessor = \ce -> do
+        event <- s.eventProcessor ce
+        g ce{event}
+    }
 
 -- | Reset the scope's event processor to the default pass-through (no filtering
 -- or mutation).
 unsetEventProcessor :: ScopeUpdate
 unsetEventProcessor = edit \s -> s{eventProcessor = \ce -> Just ce.event}
+
+-- | Replace the entire @"os"@ payload from an update, list, or record.
+setOsContext :: (Witch.From a Sentry.OsContext.OsContextUpdate) => a -> ScopeUpdate
+setOsContext upd = let !record = Sentry.Update.run upd Sentry.OsContext.empty in setContext "os" (Patrol.Context.Os record)
+
+-- | Replace the entire @"app"@ payload from an update, list, or record.
+setAppContext :: (Witch.From a Sentry.AppContext.AppContextUpdate) => a -> ScopeUpdate
+setAppContext upd = let !record = Sentry.Update.run upd Sentry.AppContext.empty in setContext "app" (Patrol.Context.App record)
+
+-- | Modify the local OS context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyOsContext :: (Witch.From a Sentry.OsContext.OsContextUpdate) => a -> ScopeUpdate
+modifyOsContext upd = edit \s ->
+  let !result = Sentry.Context.Internal.modifyTyped True "os" Sentry.OsContext.empty project Patrol.Context.Os (Sentry.Update.run upd) s.contexts
+   in s{contexts = result}
+  where
+    project (Patrol.Context.Os record) = Just record
+    project _ = Nothing
+
+-- | Modify the local OS context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingOsContext :: (Witch.From a Sentry.OsContext.OsContextUpdate) => a -> ScopeUpdate
+modifyExistingOsContext upd = edit \s ->
+  let !result = Sentry.Context.Internal.modifyTyped False "os" Sentry.OsContext.empty project Patrol.Context.Os (Sentry.Update.run upd) s.contexts
+   in s{contexts = result}
+  where
+    project (Patrol.Context.Os record) = Just record
+    project _ = Nothing
+
+-- | Modify the local app context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyAppContext :: (Witch.From a Sentry.AppContext.AppContextUpdate) => a -> ScopeUpdate
+modifyAppContext upd = edit \s ->
+  let !result = Sentry.Context.Internal.modifyTyped True "app" Sentry.AppContext.empty project Patrol.Context.App (Sentry.Update.run upd) s.contexts
+   in s{contexts = result}
+  where
+    project (Patrol.Context.App record) = Just record
+    project _ = Nothing
+
+-- | Modify the local app context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingAppContext :: (Witch.From a Sentry.AppContext.AppContextUpdate) => a -> ScopeUpdate
+modifyExistingAppContext upd = edit \s ->
+  let !result = Sentry.Context.Internal.modifyTyped False "app" Sentry.AppContext.empty project Patrol.Context.App (Sentry.Update.run upd) s.contexts
+   in s{contexts = result}
+  where
+    project (Patrol.Context.App record) = Just record
+    project _ = Nothing
+
+-- | Modify the local runtime context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyRuntimeContext :: (Witch.From a Sentry.RuntimeContext.RuntimeContextUpdate) => a -> ScopeUpdate
+modifyRuntimeContext upd = edit \s ->
+  let !result = Sentry.Context.Internal.modifyTyped True "runtime" Sentry.RuntimeContext.empty project Patrol.Context.Runtime (Sentry.Update.run upd) s.contexts
+   in s{contexts = result}
+  where
+    project (Patrol.Context.Runtime record) = Just record
+    project _ = Nothing
+
+-- | Modify the local runtime context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingRuntimeContext :: (Witch.From a Sentry.RuntimeContext.RuntimeContextUpdate) => a -> ScopeUpdate
+modifyExistingRuntimeContext upd = edit \s ->
+  let !result = Sentry.Context.Internal.modifyTyped False "runtime" Sentry.RuntimeContext.empty project Patrol.Context.Runtime (Sentry.Update.run upd) s.contexts
+   in s{contexts = result}
+  where
+    project (Patrol.Context.Runtime record) = Just record
+    project _ = Nothing

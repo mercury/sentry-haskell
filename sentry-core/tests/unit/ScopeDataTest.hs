@@ -5,15 +5,15 @@ import Data.Default (def)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
-import Data.Vector qualified as Vector
 import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
-import Sentry.Event (CapturedEvent (..))
-import Sentry.Scope (ScopeData (..), ScopeType (..))
+import Sentry.Event qualified
+import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Scope.Operations (ScopeData (..), ScopeType (..))
 import Test.Hspec
 import Witch qualified
 
@@ -34,13 +34,13 @@ spec_ScopeData_Semigroup = describe "ScopeData Semigroup" do
     (old <> def).level `shouldBe` Just Patrol.Level.Warning
 
   it "right-biased for fingerprint (new wins)" do
-    let old = def{fingerprint = Just (Vector.fromList ["old"])}
-        new = def{fingerprint = Just (Vector.fromList ["new"])}
-    (old <> new).fingerprint `shouldBe` Just (Vector.fromList ["new"])
+    let old = def{fingerprint = Just ["old"]}
+        new = def{fingerprint = Just ["new"]}
+    (old <> new).fingerprint `shouldBe` Just ["new"]
 
   it "falls back to old fingerprint when new is Nothing" do
-    let old = def{fingerprint = Just (Vector.fromList ["old"])}
-    (old <> def).fingerprint `shouldBe` Just (Vector.fromList ["old"])
+    let old = def{fingerprint = Just ["old"]}
+    (old <> def).fingerprint `shouldBe` Just ["old"]
 
   it "right-biased for transaction (new wins)" do
     let old = def{transaction = Just "old-txn"}
@@ -85,11 +85,13 @@ spec_ScopeData_Semigroup = describe "ScopeData Semigroup" do
     let old = def{eventProcessor = \_ -> Nothing}
         new = def{eventProcessor = \ce -> Just ce.event}
     -- old processor drops the event, so the chain should produce Nothing
-    (old <> new).eventProcessor (Witch.into @CapturedEvent Patrol.Event.empty) `shouldBe` Nothing
+    case (old <> new).eventProcessor (Witch.into @CapturedEvent Patrol.Event.empty) of
+      Nothing -> pure ()
+      Just _ -> expectationFailure "expected the chain to drop the event"
 
-  it "chains eventProcessors — both pass-through preserves event" do
-    let old = def{eventProcessor = \ce -> Just ce.event{Patrol.Event.level = Just Patrol.Level.Warning}}
-        new = def{eventProcessor = \ce -> Just ce.event{Patrol.Event.level = Just Patrol.Level.Error}}
+  it "passes the preceding processor result to the next layer" do
+    let old = def{eventProcessor = \ce -> Just (Sentry.Event.apply ce.event (Sentry.Event.setLevel Patrol.Level.Warning))}
+        new = def{eventProcessor = \ce -> if ce.event.level == Just Patrol.Level.Warning then Just ce.event{Patrol.Event.level = Just Patrol.Level.Error} else Nothing}
         merged = old <> new
     case merged.eventProcessor (Witch.into @CapturedEvent Patrol.Event.empty) of
       Nothing -> expectationFailure "expected event to pass through"

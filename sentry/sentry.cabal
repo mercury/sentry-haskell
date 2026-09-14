@@ -184,11 +184,15 @@ test-suite unit
     AsyncExecutorTest
     DeliveryTest
     RateLimiterTest
+    ScopeMetadataTest
 
   build-depends:
+    aeson,
     async,
     base,
     bytestring,
+    containers,
+    data-default,
     hspec,
     http-types,
     patrol,

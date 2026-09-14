@@ -19,11 +19,12 @@ import Patrol.Type.User qualified as Patrol.User
 import Sentry.Capture (captureEvent, captureException, captureExceptionWith, captureMessage, captureUnhandledException)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason (..))
-import Sentry.Event (CapturedEvent (..))
+import Sentry.Event qualified
+import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Integration (Integration (..), fromIntegration)
-import Sentry.Scope (ScopeData (..))
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
+import Sentry.Scope.Operations (ScopeData (..))
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Scope.Update qualified as Scope.Update
 import Sentry.Test qualified as Test
 import Test.Hspec
@@ -53,12 +54,8 @@ spec_captureDrop = describe "drop-site instrumentation" do
       let scopeCrumb = crumb "scope"
           processorCrumb = crumb "processor"
           process ce =
-            let crumbs = fromMaybe [] (Patrol.Breadcrumbs.values <$> ce.event.breadcrumbs)
-             in Just
-                  ce.event
-                    { Patrol.Event.breadcrumbs =
-                        Just (Patrol.Breadcrumbs.Breadcrumbs (crumbs <> [processorCrumb]))
-                    }
+            let crumbs = foldMap Patrol.Breadcrumbs.values ce.event.breadcrumbs
+             in Just $ Sentry.Event.apply ce.event (Sentry.Event.setBreadcrumbs (Patrol.Breadcrumbs.Breadcrumbs (crumbs <> [processorCrumb])))
       (result, transport) <- Test.withClient \_ ->
         Scope.IO.withScope \scope -> do
           Scope.setTag scope "scope-tag" "present"

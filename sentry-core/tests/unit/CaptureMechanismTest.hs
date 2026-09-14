@@ -12,9 +12,9 @@ import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.Capture (CaptureOverrides (..), captureException, captureExceptionWith, captureMessage, captureUnhandledException)
 import Sentry.Mechanism qualified as Mechanism
-import Sentry.Scope (ScopeData (..))
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
+import Sentry.Scope.Operations (ScopeData (..))
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Test.Hspec
 

@@ -25,9 +25,9 @@ import Data.Unique (Unique, newUnique)
 import Sentry.Client (Client)
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.Internal qualified as Internal
 import Sentry.Scope.Monad qualified as Scope.Monad
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Transport (ShutdownResponse (..), SomeTransport (..), Transport (..))
 import Prelude hiding (init)
 

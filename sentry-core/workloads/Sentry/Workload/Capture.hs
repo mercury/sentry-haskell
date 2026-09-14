@@ -1,13 +1,12 @@
 module Sentry.Workload.Capture where
 
-import Control.Monad (replicateM_)
+import Control.Monad (replicateM_, when)
 import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Vector qualified as Vector
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Level qualified as Patrol.Level
 import Sentry.Client (Client)
@@ -15,11 +14,12 @@ import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core qualified as Sentry
-import Sentry.Scope (Scope)
-import Sentry.Scope qualified as Scope
+import Sentry.Scope.Operations (Scope)
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Transport
+import Sentry.User qualified
 import Witch qualified
 
 -- | Number of capture calls per case.
@@ -33,7 +33,18 @@ data Profile = Profile
     requestTags :: Int,
     currentTags :: Int,
     requestExtras :: Int,
-    requestBreadcrumbs :: Int
+    requestBreadcrumbs :: Int,
+    -- | Number of successive 'Scope.modifyUser' calls against the current
+    -- scope's user.
+    --
+    -- 'Sentry.Scope.Update.modifyUser' forces each new user before storing it,
+    -- so residency here should stay flat as this count grows. Before that
+    -- force existed, every call left a nested closure in the scope's 'IORef' —
+    -- the @Maybe@-wrapped @fmap@ was lazy, so @Just (f x)@ was already in
+    -- weak head normal form and @f x@ never ran. Nothing collapsed the chain
+    -- under 'discardingClient', whose transport never inspects the envelope
+    -- it is handed. This axis is the regression guard for that.
+    userEdits :: Int
   }
 
 -- | An ordinary instrumented error event: a handful of tags spread across the
@@ -45,7 +56,8 @@ typical =
       requestTags = 5,
       currentTags = 2,
       requestExtras = 5,
-      requestBreadcrumbs = 20
+      requestBreadcrumbs = 20,
+      userEdits = 5
     }
 
 -- | A heavily-instrumented upper bound: more tags and a breadcrumb trail near
@@ -57,7 +69,8 @@ heavy =
       requestTags = 15,
       currentTags = 5,
       requestExtras = 20,
-      requestBreadcrumbs = 100
+      requestBreadcrumbs = 100,
+      userEdits = 50
     }
 
 -- | Build a client and install it on the process-global scope.
@@ -123,6 +136,16 @@ addBreadcrumbs count =
   for_ [1 .. count] \i ->
     Sentry.addBreadcrumb Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = "breadcrumb-" <> tshow i}
 
+-- | Call 'Scope.modifyUser' @count@ times in a row, each assigning a distinct
+-- name so GHC can't collapse the calls via common-subexpression elimination.
+-- See 'userEdits' for why this is worth measuring.
+--
+-- 'Scope.modifyUser' no-ops without a user to update, so seed one first.
+modifyUserRepeatedly :: Scope -> Int -> IO ()
+modifyUserRepeatedly scope count = when (count > 0) do
+  Scope.setUser scope (Sentry.User.setId "workload")
+  for_ [1 .. count] \i -> Scope.modifyUser scope (Sentry.User.setName (tshow i))
+
 tshow :: Int -> Text
 tshow = Text.pack . show
 
@@ -154,5 +177,6 @@ runProfile mkClient p () = do
     addBreadcrumbs p.requestBreadcrumbs
     Sentry.withScope \cur -> do
       setTags cur "span.tag-" p.currentTags
-      Scope.setFingerprint cur (Vector.fromList ["benchmark", "sample"])
+      Scope.setFingerprint cur ["benchmark", "sample"]
+      modifyUserRepeatedly cur p.userEdits
       captureN

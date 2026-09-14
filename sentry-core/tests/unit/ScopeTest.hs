@@ -19,10 +19,10 @@ import Patrol.Type.Level qualified as Level
 import Sentry.Capture qualified as Capture
 import Sentry.Client (Client)
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Scope (ScopeData (..), ScopeType (..))
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Monad qualified as Scope.Monad
+import Sentry.Scope.Operations (ScopeData (..), ScopeType (..))
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Test.Hspec
 

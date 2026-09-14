@@ -53,8 +53,8 @@ import Data.Annotation (tryAnnotations)
 -- 'mergeCallStackIntoThread' for message events).
 --
 -- Frames from @callStack@ are placed first (newer) and deduped against any
--- frames already present (older), so registering multiple sources
--- monotonically enriches without clobbering.
+-- frames already present (older), so registering multiple sources adds frames
+-- while preserving existing frames.
 mergeCallStackIntoException :: CallStack -> Patrol.Event -> Patrol.Event
 mergeCallStackIntoException callStack event =
   case event.exception of

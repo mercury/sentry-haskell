@@ -10,26 +10,27 @@ import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
+import Sentry.Breadcrumb qualified
 import Sentry.Client (pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
-import Sentry.Event (CapturedEvent (..))
-import Sentry.Scope (ScopeData (..))
-import Sentry.Scope qualified as Scope
+import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Scope.IO qualified as Scope.IO
+import Sentry.Scope.Operations (ScopeData (..))
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Test.Hspec
 import Witch qualified
 
 spec_breadcrumbs :: Spec
 spec_breadcrumbs = do
-  describe "Scope.apply breadcrumb merge" do
+  describe "Scope.applyToEvent breadcrumb merge" do
     it "appends scope breadcrumbs after event breadcrumbs" do
       let eventCrumb = crumb "event"
           scopeCrumb = crumb "scope"
           scope = def{breadcrumbs = Seq.fromList [scopeCrumb]}
           event = Patrol.Event.empty{Patrol.Event.breadcrumbs = Just $ Patrol.Breadcrumbs.Breadcrumbs [eventCrumb]}
           ce = Witch.from @Patrol.Event @CapturedEvent event
-      case Scope.apply scope ce of
+      case Scope.applyToEvent scope ce of
         Nothing -> expectationFailure "event processor dropped event"
         Just result ->
           result.breadcrumbs
@@ -37,7 +38,7 @@ spec_breadcrumbs = do
 
     it "omits breadcrumbs entirely when both sides are empty" do
       let ce = Witch.from @Patrol.Event @CapturedEvent Patrol.Event.empty
-      case Scope.apply def ce of
+      case Scope.applyToEvent def ce of
         Nothing -> expectationFailure "event processor dropped event"
         Just result -> result.breadcrumbs `shouldBe` Nothing
 
@@ -45,7 +46,7 @@ spec_breadcrumbs = do
       let scopeCrumb = crumb "scope"
           scope = def{breadcrumbs = Seq.fromList [scopeCrumb]}
           ce = Witch.from @Patrol.Event @CapturedEvent Patrol.Event.empty
-      case Scope.apply scope ce of
+      case Scope.applyToEvent scope ce of
         Nothing -> expectationFailure "event processor dropped event"
         Just result ->
           result.breadcrumbs
@@ -94,7 +95,7 @@ spec_breadcrumbs = do
       scopeData.breadcrumbs `shouldBe` mempty
 
     it "beforeBreadcrumb can modify the crumb" do
-      let tweak b = Just b{Patrol.Breadcrumb.message = "modified"}
+      let tweak c = Just (Sentry.Breadcrumb.apply c (Sentry.Breadcrumb.setMessage "modified"))
       (scopeData, _) <- Test.withCustomClient def{beforeBreadcrumb = Just tweak} \_ ->
         Scope.IO.withIsolationScope \scope -> do
           Scope.addBreadcrumb (crumb "original")
@@ -132,3 +133,21 @@ spec_breadcrumbs = do
 -- | Minimal breadcrumb with a distinguishable message.
 crumb :: Text -> Patrol.Breadcrumb
 crumb msg = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = msg}
+
+-- | 'Scope.addBreadcrumb' accepts field updates, not just a whole record, so
+-- that it reads like every other establishing operation.
+spec_addBreadcrumbUpdates :: Spec
+spec_addBreadcrumbUpdates = describe "addBreadcrumb input forms" do
+  it "accepts a list of field updates, a single update, and a whole record" do
+    (scopeData, _) <- Test.withClient \_ ->
+      Scope.IO.withIsolationScope \scope -> do
+        Scope.addBreadcrumb
+          [ Sentry.Breadcrumb.setCategory "ui",
+            Sentry.Breadcrumb.setMessage "from a list"
+          ]
+        Scope.addBreadcrumb (Sentry.Breadcrumb.setMessage "from one update")
+        Scope.addBreadcrumb (crumb "from a record")
+        liftIO $ Scope.readScopeRef scope
+    map (.message) (toList scopeData.breadcrumbs)
+      `shouldBe` ["from a list", "from one update", "from a record"]
+    map (.category) (toList scopeData.breadcrumbs) `shouldBe` ["ui", "", ""]

@@ -1,0 +1,766 @@
+{-# LANGUAGE ViewPatterns #-}
+
+-- | Thread-local scope metadata management for tags, breadcrumbs, and user
+-- information attached to captured events.
+--
+-- Sentry uses a three-layer scope model:
+--
+-- * __Global__ — process-wide metadata applied to every event ('global').
+-- * __Isolation__ — per-request or per-task metadata (e.g. one per HTTP request).
+-- * __Current__ — narrowly-scoped metadata within a single operation.
+--
+-- When an exception is captured, these layers are merged (global \< isolation
+-- \< current) and attached as an annotation. Later values override earlier ones
+-- for scalar fields; collection fields (breadcrumbs, tags, extras, contexts)
+-- are combined.
+--
+-- Metadata setters such as 'setTag' take an explicit 'Scope'. Breadcrumb
+-- append operations such as 'addBreadcrumb' use the ambient isolation scope.
+-- Their @*At@ variants, such as 'setTagAt' and 'addBreadcrumbAt', take an
+-- explicit OpenTelemetry 'Context'.
+module Sentry.Scope.Operations
+  ( -- * Scope
+
+    -- ** Definition
+    Scope,
+    ScopeType (..),
+    ScopeData (..),
+
+    -- ** Construction
+    create,
+    clone,
+
+    -- ** Access
+    readScopeRef,
+    readAmbientScope,
+    readScopeAt,
+
+    -- ** Client resolution
+    resolveClient,
+    resolveClientAt,
+    lookupClient,
+    lookupClientAt,
+    bindClient,
+
+    -- ** Mutation
+
+    -- *** Scalar fields
+    setLevel,
+    setLevelAt,
+    unsetLevel,
+    unsetLevelAt,
+    setUser,
+    setUserAt,
+    unsetUser,
+    unsetUserAt,
+    modifyUser,
+    modifyUserAt,
+    modifyExistingUser,
+    modifyExistingUserAt,
+    setFingerprint,
+    setFingerprintAt,
+    unsetFingerprint,
+    unsetFingerprintAt,
+    setTransaction,
+    setTransactionAt,
+    unsetTransaction,
+    unsetTransactionAt,
+
+    -- *** Tags
+    setTag,
+    setTagAt,
+    removeTag,
+    removeTagAt,
+    clearTags,
+    clearTagsAt,
+
+    -- *** Extras
+    setExtra,
+    setExtraAt,
+    removeExtra,
+    removeExtraAt,
+    clearExtras,
+    clearExtrasAt,
+
+    -- *** Contexts
+    setContext,
+    setContextAt,
+    setOsContext,
+    setAppContext,
+    setRuntimeContext,
+    setOsContextAt,
+    setAppContextAt,
+    setRuntimeContextAt,
+    setContextValues,
+    setContextValuesAt,
+    setContextValue,
+    setContextValueAt,
+    removeContextValue,
+    removeContextValueAt,
+    modifyContextValues,
+    modifyContextValuesAt,
+    removeContext,
+    removeContextAt,
+    clearContexts,
+    clearContextsAt,
+
+    -- *** Breadcrumbs
+    addBreadcrumb,
+    addBreadcrumbAt,
+    addBreadcrumbs,
+    addBreadcrumbsAt,
+    clearBreadcrumbs,
+    clearBreadcrumbsAt,
+
+    -- ** Thread-local Context Manipulation
+    lookupCurrent,
+    insertCurrent,
+    removeCurrent,
+    lookupIsolation,
+    insertIsolation,
+    removeIsolation,
+
+    -- ** Context-first operations
+    resolveMutationScope,
+    resolveBreadcrumbScope,
+    updateAt,
+
+    -- ** Global Scope
+    getGlobal,
+    configureGlobal,
+
+    -- ** Event Processor
+    setEventProcessor,
+    setEventProcessorAt,
+    addEventProcessor,
+    addEventProcessorAt,
+    unsetEventProcessor,
+    unsetEventProcessorAt,
+
+    -- ** Event Modification
+    applyToEvent,
+  )
+where
+
+import Control.Applicative ((<|>))
+import Control.Exception (mask_)
+import Control.Monad (guard)
+import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Aeson qualified as Aeson
+import Data.Default (def)
+import Data.Foldable (for_, toList)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import Data.Time.Clock (getCurrentTime)
+import OpenTelemetry.Context (Context, Key)
+import OpenTelemetry.Context qualified as Context
+import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
+import Patrol qualified
+import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
+import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
+import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
+import Patrol.Type.Event qualified as Patrol.Event
+import Sentry.AppContext (AppContextUpdate)
+import Sentry.Breadcrumb qualified
+import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
+import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.OsContext (OsContextUpdate)
+import Sentry.RuntimeContext (RuntimeContextUpdate)
+import Sentry.Scope.Internal (Scope, ScopeData (..), ScopeType (..))
+import Sentry.Scope.Internal qualified as Internal
+import Sentry.Scope.Update qualified as Update
+import Sentry.Update qualified
+import Sentry.User (UserUpdate)
+import System.IO.Unsafe (unsafePerformIO)
+import Witch qualified
+
+-- | Read the current state of the 'ScopeData' contained within the given
+-- 'Scope' reference.
+readScopeRef :: (MonadIO m) => Scope -> m ScopeData
+readScopeRef = liftIO . Internal.readScopeData
+
+-- * Scalar setters
+
+--
+-- These are thin, immediate wrappers over the composable constructors in
+-- "Sentry.Scope.Update"; the mutation logic lives there.
+
+-- | Set the 'Patrol.Type.Level.Level' for the given 'Scope'.
+setLevel :: (MonadIO m) => Scope -> Patrol.Level -> m ()
+setLevel scope level = Update.apply scope (Update.setLevel level)
+
+-- | Clear the 'Patrol.Type.Level.Level' from the given 'Scope'.
+unsetLevel :: (MonadIO m) => Scope -> m ()
+unsetLevel scope = Update.apply scope Update.unsetLevel
+
+-- | Establish the user on the given 'Scope'. See 'Update.setUser'.
+setUser :: (MonadIO m, Witch.From a UserUpdate) => Scope -> a -> m ()
+setUser scope u = Update.apply scope (Update.setUser u)
+
+-- | Clear the 'Patrol.Type.User.User' from the given 'Scope'.
+unsetUser :: (MonadIO m) => Scope -> m ()
+unsetUser scope = Update.apply scope Update.unsetUser
+
+-- | Update the local user, starting from empty when absent. See
+-- 'Update.modifyUser'.
+modifyUser :: (MonadIO m, Witch.From a UserUpdate) => Scope -> a -> m ()
+modifyUser scope upd = Update.apply scope (Update.modifyUser upd)
+
+-- | Set the fingerprint for the given 'Scope'.
+setFingerprint :: (MonadIO m) => Scope -> [Text] -> m ()
+setFingerprint scope fp = Update.apply scope (Update.setFingerprint fp)
+
+-- | Clear the fingerprint from the given 'Scope'.
+unsetFingerprint :: (MonadIO m) => Scope -> m ()
+unsetFingerprint scope = Update.apply scope Update.unsetFingerprint
+
+-- | Set the transaction name for the given 'Scope'.
+setTransaction :: (MonadIO m) => Scope -> Text -> m ()
+setTransaction scope t = Update.apply scope (Update.setTransaction t)
+
+-- | Clear the transaction name from the given 'Scope'.
+unsetTransaction :: (MonadIO m) => Scope -> m ()
+unsetTransaction scope = Update.apply scope Update.unsetTransaction
+
+-- * Tag setters
+
+-- | Insert (or overwrite) a tag at the given key.
+setTag :: (MonadIO m) => Scope -> Text -> Text -> m ()
+setTag scope k v = Update.apply scope (Update.setTag k v)
+
+-- | Remove the tag at the given key, if present.
+removeTag :: (MonadIO m) => Scope -> Text -> m ()
+removeTag scope k = Update.apply scope (Update.removeTag k)
+
+-- | Clear all tags from the given 'Scope'.
+clearTags :: (MonadIO m) => Scope -> m ()
+clearTags scope = Update.apply scope Update.clearTags
+
+-- * Extra setters
+
+-- | Insert (or overwrite) an extra value at the given key.
+setExtra :: (MonadIO m) => Scope -> Text -> Aeson.Value -> m ()
+setExtra scope k v = Update.apply scope (Update.setExtra k v)
+
+-- | Remove the extra value at the given key, if present.
+removeExtra :: (MonadIO m) => Scope -> Text -> m ()
+removeExtra scope k = Update.apply scope (Update.removeExtra k)
+
+-- | Clear all extras from the given 'Scope'.
+clearExtras :: (MonadIO m) => Scope -> m ()
+clearExtras scope = Update.apply scope Update.clearExtras
+
+-- * Context setters
+
+-- | Insert (or overwrite) a context at the given key.
+setContext :: (MonadIO m) => Scope -> Text -> Patrol.Context -> m ()
+setContext scope k v = Update.apply scope (Update.setContext k v)
+
+-- | Replace the context at @\"runtime\"@ on the given 'Scope' with a runtime
+-- context. See 'Update.setRuntimeContext'.
+setRuntimeContext :: (MonadIO m, Witch.From a RuntimeContextUpdate) => Scope -> a -> m ()
+setRuntimeContext scope rc = Update.apply scope (Update.setRuntimeContext rc)
+
+-- | Replace the context at the given key with a custom context built from
+-- key/value pairs. Later duplicate keys win. An empty list stores an empty
+-- context; use 'removeContext' to remove the entry. See 'Update.setContextValues'.
+setContextValues :: (MonadIO m) => Scope -> Text -> [(Text, Aeson.Value)] -> m ()
+setContextValues scope k kvs = Update.apply scope (Update.setContextValues k kvs)
+
+-- | Insert (or overwrite) a single value inside the custom context at the
+-- given key, leaving its other entries alone. See 'Update.setContextValue'.
+setContextValue :: (MonadIO m) => Scope -> Text -> Text -> Aeson.Value -> m ()
+setContextValue scope k key value = Update.apply scope (Update.setContextValue k key value)
+
+-- | Remove a single value from the custom context at the given key. See
+-- 'Update.removeContextValue'.
+removeContextValue :: (MonadIO m) => Scope -> Text -> Text -> m ()
+removeContextValue scope k key = Update.apply scope (Update.removeContextValue k key)
+
+-- | Transform the key/value payload of the custom context at the given key.
+--
+-- Creates the context when this scope has none at that key, and does nothing
+-- when the entry is a typed variant. See 'Update.modifyContextValues'.
+modifyContextValues :: (MonadIO m) => Scope -> Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> m ()
+modifyContextValues scope k f = Update.apply scope (Update.modifyContextValues k f)
+
+-- | Remove the context at the given key, if present.
+removeContext :: (MonadIO m) => Scope -> Text -> m ()
+removeContext scope k = Update.apply scope (Update.removeContext k)
+
+-- | Clear all contexts from the given 'Scope'.
+clearContexts :: (MonadIO m) => Scope -> m ()
+clearContexts scope = Update.apply scope Update.clearContexts
+
+-- | Resolve the global 'Scope' visible on the calling thread.
+--
+-- Returns the thread-local override installed by 'Sentry.Test.withGlobalScope'
+-- (or, at the lower level, 'Sentry.Scope.Internal.insertGlobal') when one
+-- exists, falling back to the true process-wide singleton
+-- ('Sentry.Scope.Internal.processGlobal') otherwise.
+--
+-- In production, where no override should ever installed, this is a single
+-- context lookup that returns the process singleton immediately.
+getGlobal :: (MonadIO m) => m Scope
+getGlobal = liftIO $ fromMaybe Internal.processGlobal . Internal.lookupGlobal <$> ThreadLocal.getContext
+
+-- | Apply a modification to the resolved global 'Scope'.
+--
+-- Equivalent to @'getGlobal' >>= f@ — fetches the thread-local override
+-- (or the process singleton) and passes it to @f@. Useful for writing
+-- process-wide defaults at startup:
+--
+-- @
+-- configureGlobal \\scope -> Sentry.setTag scope "release" version
+-- @
+configureGlobal :: (MonadIO m) => (Scope -> m a) -> m a
+configureGlobal f = getGlobal >>= f
+
+currentScopeKey :: Key Scope
+currentScopeKey = unsafePerformIO $ Context.newKey "current_scope"
+{-# NOINLINE currentScopeKey #-}
+
+-- | Attempt to retrieve 'Current' scope if one exists on thread-local storage.
+lookupCurrent :: Context -> Maybe Scope
+lookupCurrent = Context.lookup currentScopeKey
+
+-- | Insert the given 'Current' scope on thread-local storage.
+insertCurrent :: Scope -> Context -> Context
+insertCurrent = Context.insert currentScopeKey
+
+-- | Remove any active 'Current' scope from thread-local storage.
+removeCurrent :: Context -> Context
+removeCurrent = Context.delete currentScopeKey
+
+isolationScopeKey :: Key Scope
+isolationScopeKey = unsafePerformIO $ Context.newKey "isolation_scope"
+{-# NOINLINE isolationScopeKey #-}
+
+-- | Attempt to retrieve 'Isolation' scope if one exists on thread-local storage.
+lookupIsolation :: Context -> Maybe Scope
+lookupIsolation = Context.lookup isolationScopeKey
+
+-- | Insert the given 'Isolation' scope on thread-local storage.
+insertIsolation :: Scope -> Context -> Context
+insertIsolation = Context.insert isolationScopeKey
+
+-- | Remove any active 'Isolation' scope from thread-local storage.
+removeIsolation :: Context -> Context
+removeIsolation = Context.delete isolationScopeKey
+
+-- | Create a fresh 'Scope' of the given 'ScopeType'.
+create :: (MonadIO m) => ScopeType -> m Scope
+create (Just -> type_) = liftIO $ Internal.newScope (def{type_})
+
+-- | Return an independent copy of the given 'Scope'. Mutations to the clone
+-- do not affect the original, and vice versa. The effective client is copied
+-- as an unmanaged binding; lifecycle ownership is not copied.
+clone :: (MonadIO m) => Scope -> m Scope
+clone scope = liftIO $ Internal.readScopeData scope >>= Internal.newScope
+
+-- | Read the merged ambient 'ScopeData' visible at the call site:
+-- global (process singleton or thread-local override) \<> isolation (from
+-- thread-local) \<> current (from thread-local).
+--
+-- Missing layers contribute 'mempty'.
+--
+-- Like 'readScopeAt', but reads the thread-local 'Context' instead of taking
+-- one explicitly.
+readAmbientScope :: (MonadIO m) => m ScopeData
+readAmbientScope = liftIO ThreadLocal.getContext >>= readScopeAt
+
+-- | Resolve the 'Client' visible at the call site by walking the scope chain
+-- (current \> isolation \> global, most-specific wins), falling back to
+-- 'NON_RECORDING_CLIENT' when no layer has a client bound.
+--
+-- This reuses the same right-biased merge as 'readAmbientScope', so the client
+-- is resolved exactly like every other piece of scope data.
+resolveClient :: (MonadIO m) => m Client
+resolveClient = liftIO ThreadLocal.getContext >>= resolveClientAt
+
+-- | Like 'resolveClient', but reports the absence of a bound client as
+-- 'Nothing' rather than substituting 'NON_RECORDING_CLIENT'.
+lookupClient :: (MonadIO m) => m (Maybe Client)
+lookupClient = liftIO ThreadLocal.getContext >>= lookupClientAt
+
+-- | Bind (or clear, with 'Nothing') the 'Client' on a specific scope layer.
+--
+-- This deliberately replaces any managed initialization bindings on the scope;
+-- stale handle releases cannot restore over it. It neither acquires nor closes
+-- resources. 'Sentry.Scope.IO.withClient' uses it on a fresh isolation scope.
+bindClient :: (MonadIO m) => Maybe Client -> Scope -> m ()
+bindClient mc scope = liftIO $ Internal.bindUnmanaged scope mc
+
+-- * Event processor setters
+
+-- | Replace the 'Scope's event processor with the given function.
+--
+-- Return the resulting event, or 'Nothing' to drop it. Returning the input
+-- event preserves it.
+setEventProcessor :: (MonadIO m) => Scope -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
+setEventProcessor scope f = Update.apply scope (Update.setEventProcessor f)
+
+-- | Chain a new processor after the existing one.
+--
+-- The existing processor runs first; its output is then passed to the new
+-- processor. If the existing processor drops the event ('Nothing'), the new
+-- processor is not called. Matches the left-to-right chaining of the
+-- 'Semigroup' instance.
+addEventProcessor :: (MonadIO m) => Scope -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
+addEventProcessor scope g = Update.apply scope (Update.addEventProcessor g)
+
+-- | Reset the 'Scope's event processor to the default pass-through (no
+-- filtering or mutation).
+unsetEventProcessor :: (MonadIO m) => Scope -> m ()
+unsetEventProcessor scope = Update.apply scope Update.unsetEventProcessor
+
+-- | Apply a 'ScopeData' snapshot to a 'Patrol.Event', then run the scope's
+-- 'eventProcessor' as the final step.
+--
+-- Field semantics:
+--
+-- * Scalar fields ('level', 'fingerprint', 'transaction', 'user'): scope wins
+--   when it carries a value, otherwise the event's value is preserved. Scope
+--   is treated as authoritative because it represents the most-specific
+--   contextual state (whether ambient or attached as an annotation), and
+--   because event constructors like 'Patrol.Type.Event.fromSomeException'
+--   prefill defaults that scope is expected to override.
+-- * Collection fields ('tags', 'extras', 'contexts'): unioned, with the
+--   event's keys overriding the scope's on conflicts.
+-- * 'breadcrumbs': the event's own breadcrumbs come first; scope breadcrumbs
+--   are appended. The field is omitted entirely when both sides are empty.
+--
+-- Finally the scope's processor runs on the merged event.
+--
+-- Returns 'Nothing' when the scope's 'eventProcessor' drops the event.
+applyToEvent :: ScopeData -> CapturedEvent -> Maybe Patrol.Event
+applyToEvent scope ce = scope.eventProcessor ce{event = merged}
+  where
+    event = ce.event
+    merged =
+      event
+        { Patrol.Event.level = scope.level <|> event.level,
+          Patrol.Event.fingerprint = fromMaybe event.fingerprint scope.fingerprint,
+          Patrol.Event.transaction = fromMaybe event.transaction scope.transaction,
+          Patrol.Event.user = scope.user <|> event.user,
+          Patrol.Event.tags = Map.union event.tags scope.tags,
+          Patrol.Event.extra = Map.union event.extra scope.extras,
+          Patrol.Event.contexts = Map.union event.contexts scope.contexts,
+          Patrol.Event.breadcrumbs =
+            let crumbs =
+                  foldMap Patrol.Breadcrumbs.values event.breadcrumbs
+                    <> toList scope.breadcrumbs
+             in Patrol.Breadcrumbs.Breadcrumbs crumbs <$ guard (not $ null crumbs)
+        }
+
+-- * Breadcrumb writers
+
+-- | Add a 'Patrol.Breadcrumb' to the active isolation scope.
+--
+-- Accepts a 'Sentry.Breadcrumb.BreadcrumbUpdate', a list of them, or a whole
+-- 'Sentry.Breadcrumb.Breadcrumb'.
+--
+-- Defaults 'Patrol.Type.Breadcrumb.timestamp' to 'getCurrentTime' and
+-- 'Patrol.Type.Breadcrumb.type_' to 'Patrol.Type.BreadcrumbType.Default' when
+-- absent, enforces 'Sentry.Client.Options.ClientOptions.beforeBreadcrumb', and
+-- trims the oldest entries to stay within
+-- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'.
+--
+-- Lazily establishes a thread-local isolation scope when a recording client
+-- is available. This scope persists on the context, including across
+-- 'Sentry.Scope.IO.withScope' exits. Use an isolation bracket at request/task
+-- boundaries. No state is created for a non-recording client.
+--
+-- Unlike 'addBreadcrumbAt', this convenience operation can establish missing
+-- isolation state on the thread-local 'Context'.
+addBreadcrumb :: (MonadIO m, Witch.From a Sentry.Breadcrumb.BreadcrumbUpdate) => a -> m ()
+addBreadcrumb upd = do
+  let !crumb = Sentry.Update.run upd Sentry.Breadcrumb.empty
+  target <- ambientBreadcrumbTarget
+  for_ target \(client, scope) -> addBreadcrumbToScope client.options scope crumb
+
+-- | Add multiple 'Patrol.Breadcrumb's to the active isolation scope in order.
+--
+-- Equivalent to calling 'addBreadcrumb' on each element; each crumb is
+-- independently filtered and trimmed.
+--
+-- Uses the same lazy isolation acquisition as 'addBreadcrumb'. An empty batch
+-- does not establish state. Explicit 'addBreadcrumbsAt' never establishes it.
+addBreadcrumbs :: (MonadIO m) => [Patrol.Breadcrumb] -> m ()
+addBreadcrumbs [] = pure ()
+addBreadcrumbs crumbs = do
+  target <- ambientBreadcrumbTarget
+  for_ target \(client, scope) ->
+    for_ crumbs (addBreadcrumbToScope client.options scope)
+
+-- | Establish only the missing isolation key; leave client resolution live.
+-- Existing explicit scopes retain their behavior even without a transport.
+--
+-- This operation can install a scope in the thread-local 'Context'. Explicit
+-- context mutations only use scopes already attached to the supplied context;
+-- see 'resolveMutationScope'.
+ambientBreadcrumbTarget :: (MonadIO m) => m (Maybe (Client, Scope))
+ambientBreadcrumbTarget = liftIO $ mask_ do
+  context <- ThreadLocal.getContext
+  client <- resolveClientAt context
+  case lookupIsolation context of
+    Just scope -> pure $ Just (client, scope)
+    Nothing -> case client of
+      NON_RECORDING_CLIENT -> pure Nothing
+      _ -> do
+        scope <- create Isolation
+        ThreadLocal.adjustContext (insertIsolation scope)
+        pure $ Just (client, scope)
+
+-- | Clear all breadcrumbs from the given 'Scope'.
+clearBreadcrumbs :: (MonadIO m) => Scope -> m ()
+clearBreadcrumbs scope = Update.apply scope Update.clearBreadcrumbs
+
+-- * Context-first operations
+
+-- $context-first
+--
+-- These mirror the 'Scope'-first and ambient operations above, but take an
+-- explicit 'Context' argument instead of resolving one from thread-local
+-- storage.
+--
+-- They exist for callers who are /handed/ a 'Context', which can happen when
+-- writing OpenTelemetry processor code, and need to modify 'Scope' metadata
+-- for /that/ context rather than the one attached to the thread they are
+-- executing upon.
+--
+-- Two caveats:
+--
+-- 1. The 'Context' a hook receives is not guaranteed to be the ambient one
+-- 2. Mutations no-op when their target scope is absent. General metadata
+--    targets current or isolation; breadcrumb writers require isolation.
+
+-- | Resolve the scope that general mutations target: 'Current', falling back
+-- to 'Isolation'.
+--
+-- Return 'Nothing' when neither scope exists, so dependent mutations no-op.
+-- The supplied 'Context' is immutable; this function never installs a scope.
+resolveMutationScope :: Context -> Maybe Scope
+resolveMutationScope ctx = lookupCurrent ctx <|> lookupIsolation ctx
+
+-- | Resolve the scope that breadcrumbs target: 'Isolation' only.
+resolveBreadcrumbScope :: Context -> Maybe Scope
+resolveBreadcrumbScope = lookupIsolation
+
+-- | Apply a 'Update.ScopeUpdate' to the scope resolved by
+-- 'resolveMutationScope' on the given 'Context'.
+updateAt :: (MonadIO m) => Context -> Update.ScopeUpdate -> m ()
+updateAt ctx upd = for_ (resolveMutationScope ctx) \scope -> Update.apply scope upd
+
+-- | Like 'readAmbientScope', but reads the given 'Context' instead of the
+-- thread-local one.
+readScopeAt :: (MonadIO m) => Context -> m ScopeData
+readScopeAt context = liftIO do
+  let globalScopeRef = fromMaybe Internal.processGlobal (Internal.lookupGlobal context)
+  globalScope <- readScopeRef globalScopeRef
+  isolationScope <- maybe (pure mempty) readScopeRef (lookupIsolation context)
+  currentScope <- maybe (pure mempty) readScopeRef (lookupCurrent context)
+  pure $ globalScope <> isolationScope <> currentScope
+
+-- | Like 'resolveClient', but reads the given 'Context' instead of the
+-- thread-local one.
+resolveClientAt :: (MonadIO m) => Context -> m Client
+resolveClientAt context = fromMaybe NON_RECORDING_CLIENT . (.client) <$> readScopeAt context
+
+-- | Like 'lookupClient', but reads the given 'Context' instead of the
+-- thread-local one.
+lookupClientAt :: (MonadIO m) => Context -> m (Maybe Client)
+lookupClientAt context = (.client) <$> readScopeAt context
+
+-- | Like 'setLevel', but targets 'resolveMutationScope' on the given 'Context'.
+setLevelAt :: (MonadIO m) => Context -> Patrol.Level -> m ()
+setLevelAt ctx level = updateAt ctx (Update.setLevel level)
+
+-- | Like 'unsetLevel', but targets 'resolveMutationScope' on the given 'Context'.
+unsetLevelAt :: (MonadIO m) => Context -> m ()
+unsetLevelAt ctx = updateAt ctx Update.unsetLevel
+
+-- | Like 'setUser', but targets 'resolveMutationScope' on the given 'Context'.
+setUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
+setUserAt ctx u = updateAt ctx (Update.setUser u)
+
+-- | Like 'unsetUser', but targets 'resolveMutationScope' on the given 'Context'.
+unsetUserAt :: (MonadIO m) => Context -> m ()
+unsetUserAt ctx = updateAt ctx Update.unsetUser
+
+-- | Like 'modifyUser', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+modifyUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
+modifyUserAt ctx upd = updateAt ctx (Update.modifyUser upd)
+
+-- | Like 'setFingerprint', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setFingerprintAt :: (MonadIO m) => Context -> [Text] -> m ()
+setFingerprintAt ctx fp = updateAt ctx (Update.setFingerprint fp)
+
+-- | Like 'unsetFingerprint', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+unsetFingerprintAt :: (MonadIO m) => Context -> m ()
+unsetFingerprintAt ctx = updateAt ctx Update.unsetFingerprint
+
+-- | Like 'setTransaction', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setTransactionAt :: (MonadIO m) => Context -> Text -> m ()
+setTransactionAt ctx t = updateAt ctx (Update.setTransaction t)
+
+-- | Like 'unsetTransaction', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+unsetTransactionAt :: (MonadIO m) => Context -> m ()
+unsetTransactionAt ctx = updateAt ctx Update.unsetTransaction
+
+-- | Like 'setTag', but targets 'resolveMutationScope' on the given 'Context'.
+setTagAt :: (MonadIO m) => Context -> Text -> Text -> m ()
+setTagAt ctx k v = updateAt ctx (Update.setTag k v)
+
+-- | Like 'removeTag', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+removeTagAt :: (MonadIO m) => Context -> Text -> m ()
+removeTagAt ctx k = updateAt ctx (Update.removeTag k)
+
+-- | Like 'clearTags', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+clearTagsAt :: (MonadIO m) => Context -> m ()
+clearTagsAt ctx = updateAt ctx Update.clearTags
+
+-- | Like 'setExtra', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setExtraAt :: (MonadIO m) => Context -> Text -> Aeson.Value -> m ()
+setExtraAt ctx k v = updateAt ctx (Update.setExtra k v)
+
+-- | Like 'removeExtra', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+removeExtraAt :: (MonadIO m) => Context -> Text -> m ()
+removeExtraAt ctx k = updateAt ctx (Update.removeExtra k)
+
+-- | Like 'clearExtras', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+clearExtrasAt :: (MonadIO m) => Context -> m ()
+clearExtrasAt ctx = updateAt ctx Update.clearExtras
+
+-- | Like 'setContext', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setContextAt :: (MonadIO m) => Context -> Text -> Patrol.Context -> m ()
+setContextAt ctx k v = updateAt ctx (Update.setContext k v)
+
+-- | Like 'removeContext', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+removeContextAt :: (MonadIO m) => Context -> Text -> m ()
+removeContextAt ctx k = updateAt ctx (Update.removeContext k)
+
+-- | Like 'clearContexts', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+clearContextsAt :: (MonadIO m) => Context -> m ()
+clearContextsAt ctx = updateAt ctx Update.clearContexts
+
+-- | Like 'setRuntimeContext', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setRuntimeContextAt :: (MonadIO m, Witch.From a RuntimeContextUpdate) => Context -> a -> m ()
+setRuntimeContextAt ctx rc = updateAt ctx (Update.setRuntimeContext rc)
+
+-- | Like 'setContextValues', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setContextValuesAt :: (MonadIO m) => Context -> Text -> [(Text, Aeson.Value)] -> m ()
+setContextValuesAt ctx k kvs = updateAt ctx (Update.setContextValues k kvs)
+
+-- | Like 'setContextValue', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setContextValueAt :: (MonadIO m) => Context -> Text -> Text -> Aeson.Value -> m ()
+setContextValueAt ctx k key value = updateAt ctx (Update.setContextValue k key value)
+
+-- | Like 'removeContextValue', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+removeContextValueAt :: (MonadIO m) => Context -> Text -> Text -> m ()
+removeContextValueAt ctx k key = updateAt ctx (Update.removeContextValue k key)
+
+-- | Like 'modifyContextValues', but targets 'resolveMutationScope' on the
+-- given 'Context'.
+modifyContextValuesAt :: (MonadIO m) => Context -> Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> m ()
+modifyContextValuesAt ctx k f = updateAt ctx (Update.modifyContextValues k f)
+
+-- | Like 'setEventProcessor', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+setEventProcessorAt :: (MonadIO m) => Context -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
+setEventProcessorAt ctx f = updateAt ctx (Update.setEventProcessor f)
+
+-- | Like 'addEventProcessor', but targets 'resolveMutationScope' on the given
+-- 'Context'.
+addEventProcessorAt :: (MonadIO m) => Context -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
+addEventProcessorAt ctx g = updateAt ctx (Update.addEventProcessor g)
+
+-- | Like 'unsetEventProcessor', but targets 'resolveMutationScope' on the
+-- given 'Context'.
+unsetEventProcessorAt :: (MonadIO m) => Context -> m ()
+unsetEventProcessorAt ctx = updateAt ctx Update.unsetEventProcessor
+
+-- | Like 'addBreadcrumb', but takes the 'Context' explicitly instead of
+-- reading the thread-local one.
+--
+-- Targets 'resolveBreadcrumbScope' (isolation only) — no-ops when no
+-- isolation scope is active on the given 'Context'.
+addBreadcrumbAt :: (MonadIO m, Witch.From a Sentry.Breadcrumb.BreadcrumbUpdate) => Context -> a -> m ()
+addBreadcrumbAt ctx upd = do
+  let !crumb = Sentry.Update.run upd Sentry.Breadcrumb.empty
+  client <- resolveClientAt ctx
+  for_ (resolveBreadcrumbScope ctx) \scope ->
+    addBreadcrumbToScope client.options scope crumb
+
+-- | Like 'addBreadcrumbs', but takes the 'Context' explicitly instead of
+-- reading the thread-local one.
+addBreadcrumbsAt :: (MonadIO m) => Context -> [Patrol.Breadcrumb] -> m ()
+addBreadcrumbsAt ctx crumbs = do
+  client <- resolveClientAt ctx
+  for_ (resolveBreadcrumbScope ctx) \scope ->
+    for_ crumbs (addBreadcrumbToScope client.options scope)
+
+-- | Like 'clearBreadcrumbs', but resolves the target 'Scope' from the given
+-- 'Context' via 'resolveBreadcrumbScope' (isolation only) instead of taking
+-- one explicitly.
+clearBreadcrumbsAt :: (MonadIO m) => Context -> m ()
+clearBreadcrumbsAt ctx = for_ (resolveBreadcrumbScope ctx) \scope -> Update.apply scope Update.clearBreadcrumbs
+
+-- | Enforce 'ClientOptions.beforeBreadcrumb' and trim to
+-- 'ClientOptions.maxBreadcrumbs', then append to the scope.
+addBreadcrumbToScope :: (MonadIO m) => ClientOptions -> Scope -> Patrol.Breadcrumb -> m ()
+addBreadcrumbToScope opts scope crumb0 = liftIO do
+  now <- getCurrentTime
+  -- Default timestamp and type_ when absent.
+  let crumb1 = crumb0{Patrol.Breadcrumb.timestamp = crumb0.timestamp <|> Just now}
+      crumb2 = crumb1{Patrol.Breadcrumb.type_ = crumb1.type_ <|> Just Patrol.BreadcrumbType.Default}
+      maxN = fromIntegral opts.maxBreadcrumbs :: Int
+  -- Run beforeBreadcrumb; Nothing from the callback drops the crumb.
+  case maybe (Just crumb2) ($ crumb2) opts.beforeBreadcrumb of
+    Nothing -> pure ()
+    Just !crumb3 ->
+      Update.apply scope (Update.addBreadcrumb crumb3 <> Update.trimBreadcrumbs maxN)
+
+-- | Replace the local typed context. See 'Update.setOsContext'.
+setOsContext :: (MonadIO m, Witch.From a OsContextUpdate) => Scope -> a -> m ()
+setOsContext scope upd = Update.apply scope (Update.setOsContext upd)
+
+-- | Replace the typed context on the selected mutation scope.
+setOsContextAt :: (MonadIO m, Witch.From a OsContextUpdate) => Context -> a -> m ()
+setOsContextAt ctx upd = updateAt ctx (Update.setOsContext upd)
+
+-- | Replace the local typed context. See 'Update.setAppContext'.
+setAppContext :: (MonadIO m, Witch.From a AppContextUpdate) => Scope -> a -> m ()
+setAppContext scope upd = Update.apply scope (Update.setAppContext upd)
+
+-- | Replace the typed context on the selected mutation scope.
+setAppContextAt :: (MonadIO m, Witch.From a AppContextUpdate) => Context -> a -> m ()
+setAppContextAt ctx upd = updateAt ctx (Update.setAppContext upd)
+
+-- | Modify a local user only when present, without evaluating the update when absent.
+modifyExistingUser :: (MonadIO m, Witch.From a UserUpdate) => Scope -> a -> m ()
+modifyExistingUser scope upd = Update.apply scope (Update.modifyExistingUser upd)
+
+-- | Like 'modifyExistingUser', targeting the current mutation scope.
+modifyExistingUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
+modifyExistingUserAt ctx upd = updateAt ctx (Update.modifyExistingUser upd)

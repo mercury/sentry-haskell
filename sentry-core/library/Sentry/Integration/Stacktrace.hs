@@ -15,7 +15,9 @@ where
 import Control.Exception (SomeException, fromException)
 import Control.Exception.Annotated (AnnotatedException (..), annotations)
 import Data.Kind (Type)
-import Sentry.Event (CapturedEvent (..))
+import GHC.Stack (CallStack)
+import Sentry.Event (Event)
+import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Integration (Integration (..))
 import Sentry.Internal (ClientOptions (..))
 import Sentry.Stacktrace qualified as Stacktrace
@@ -29,19 +31,12 @@ data AttachAnnotatedExceptionIntegration = AttachAnnotatedExceptionIntegration
 instance Integration AttachAnnotatedExceptionIntegration where
   name _ = "AttachAnnotatedExceptionIntegration"
 
-  processEvent _ ce _ = pure . Just $
-    case ce.originalException of
-      Nothing -> ce.event
-      Just orig ->
-        let anns = case fromException @(AnnotatedException SomeException) orig of
-              Just ae -> annotations ae
-              Nothing -> []
-         in case Stacktrace.callStackFromAnnotations anns of
-              Nothing -> ce.event
-              Just cs ->
-                if isMessage ce
-                  then Stacktrace.mergeCallStackIntoThread cs ce.event
-                  else Stacktrace.mergeCallStackIntoException cs ce.event
+  processEvent _ ce _ = pure . Just $ maybe ce.event (\cs -> mergeCallStack cs ce) stack
+    where
+      stack = do
+        orig <- ce.originalException
+        let anns = foldMap annotations (fromException @(AnnotatedException SomeException) orig)
+        Stacktrace.callStackFromAnnotations anns
 
 -- | Attach stack frames from the GHC
 -- 'Control.Exception.Context.ExceptionContext' backtrace.
@@ -52,13 +47,9 @@ data AttachExceptionContextIntegration = AttachExceptionContextIntegration
 instance Integration AttachExceptionContextIntegration where
   name _ = "AttachExceptionContextIntegration"
 
-  processEvent _ ce _ = pure . Just $
-    case ce.originalException >>= Stacktrace.callStackFromExceptionContext of
-      Nothing -> ce.event
-      Just cs ->
-        if isMessage ce
-          then Stacktrace.mergeCallStackIntoThread cs ce.event
-          else Stacktrace.mergeCallStackIntoException cs ce.event
+  processEvent _ ce _ = pure . Just $ maybe ce.event (\cs -> mergeCallStack cs ce) stack
+    where
+      stack = ce.originalException >>= Stacktrace.callStackFromExceptionContext
 
 -- | Attach the 'GHC.Stack.CallStack' carried along by 'CapturedEvent' from the
 -- callsite that captured the event itself.
@@ -69,13 +60,7 @@ data AttachCallStackIntegration = AttachCallStackIntegration
 instance Integration AttachCallStackIntegration where
   name _ = "AttachCallStackIntegration"
 
-  processEvent _ ce _ = pure . Just $
-    case ce.captureCallStack of
-      Nothing -> ce.event
-      Just cs ->
-        if isMessage ce
-          then Stacktrace.mergeCallStackIntoThread cs ce.event
-          else Stacktrace.mergeCallStackIntoException cs ce.event
+  processEvent _ ce _ = pure . Just $ maybe ce.event (\cs -> mergeCallStack cs ce) ce.captureCallStack
 
 -- | Classify each stack frame as in-app or not-in-app.
 --
@@ -92,11 +77,19 @@ instance Integration ProcessStacktraceIntegration where
     pure . Just $
       Stacktrace.classifyInApp opts.inAppInclude opts.inAppExclude ce.event
 
--- | Return 'True' when this 'CapturedEvent' represents a message rather than
--- an exception capture.
+-- | Merge a 'CallStack' into whichever frame container this event uses,
+-- returning the resulting event record.
 --
 -- Message events use a 'Patrol.Type.Thread.Thread' as the frame container;
 -- exception events attach frames to the last entry in @exception.values@.
+mergeCallStack :: CallStack -> CapturedEvent -> Event
+mergeCallStack cs ce =
+  if isMessage ce
+    then Stacktrace.mergeCallStackIntoThread cs ce.event
+    else Stacktrace.mergeCallStackIntoException cs ce.event
+
+-- | Return 'True' when this 'CapturedEvent' represents a message rather than
+-- an exception capture.
 isMessage :: CapturedEvent -> Bool
 isMessage ce = case ce.exception of
   Nothing -> True

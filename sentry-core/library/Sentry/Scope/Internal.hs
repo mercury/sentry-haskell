@@ -32,7 +32,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
-import Data.Atomics (atomicModifyIORefCAS_)
+import Data.Atomics.Extra (atomicModifyIORefCAS'_)
 import Data.Default (Default (def))
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.Kind (Type)
@@ -40,12 +40,12 @@ import Data.Map.Strict (Map)
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Unique (Unique)
-import Data.Vector (Vector)
 import OpenTelemetry.Context (Context, Key)
 import OpenTelemetry.Context qualified as Context
 import Patrol qualified
 import Sentry.Client (Client)
-import Sentry.Event (CapturedEvent (..))
+import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Update (Empty (..))
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | A mutable reference to 'ScopeData' that lives on thread-local context.
@@ -89,7 +89,7 @@ type ScopeData :: Type
 data ScopeData = ScopeData
   { type_ :: Maybe ScopeType,
     level :: Maybe Patrol.Level,
-    fingerprint :: Maybe (Vector Text),
+    fingerprint :: Maybe [Text],
     transaction :: Maybe Text,
     breadcrumbs :: Seq Patrol.Breadcrumb,
     user :: Maybe Patrol.User,
@@ -150,8 +150,8 @@ instance Semigroup ScopeData where
         tags = new.tags <> old.tags,
         contexts = new.contexts <> old.contexts,
         eventProcessor = \ce -> do
-          event' <- old.eventProcessor ce
-          new.eventProcessor ce{event = event'},
+          event <- old.eventProcessor ce
+          new.eventProcessor ce{event},
         client = new.client <|> old.client
       }
 
@@ -161,8 +161,11 @@ instance Monoid ScopeData where
 instance Default ScopeData where
   def = defaultScopeData
 
+instance Empty ScopeData where
+  empty = mempty
+
 -- | An "empty" 'ScopeData' with no metadata and a pass-through event
--- processor.
+-- processor (returning the input event).
 defaultScopeData :: ScopeData
 defaultScopeData =
   ScopeData
@@ -181,12 +184,14 @@ defaultScopeData =
 
 -- | Apply a pure modification to the 'ScopeData' inside a 'Scope'.
 --
--- /Internal:/ Callers should use the field-specific setters from "Sentry.Scope"
--- or compose updates via "Sentry.Scope.Update"; writing ad-hoc
--- 'ScopeData -> ScopeData' modifiers should be avoided. The client field is
--- owned by the binding operations and cannot be changed by metadata updates.
+-- /Internal:/ Callers should use 'Sentry.updateScope' with builders from
+-- "Sentry.Scope"; writing ad-hoc 'ScopeData -> ScopeData' modifiers should be
+-- avoided.
+--
+-- Under contention 'Data.Atomics.Extra.atomicModifyIORefCAS'_' may
+-- evaluate the modification more than once.
 modifyScopeData :: (MonadIO m) => Scope -> (ScopeData -> ScopeData) -> m ()
-modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS_ ref \s ->
+modifyScopeData (Scope ref) f = liftIO $ atomicModifyIORefCAS'_ ref \s ->
   s{scopeData = (f s.scopeData){client = s.scopeData.client}}
 
 -- | Create an independent, unmanaged scope from a metadata snapshot.
@@ -199,17 +204,17 @@ readScopeData (Scope ref) = (.scopeData) <$> readIORef ref
 
 -- | Deliberately replace all managed bindings with an unmanaged binding.
 bindUnmanaged :: Scope -> Maybe Client -> IO ()
-bindUnmanaged (Scope ref) client = atomicModifyIORefCAS_ ref \s ->
+bindUnmanaged (Scope ref) client = atomicModifyIORefCAS'_ ref \s ->
   ScopeState{scopeData = s.scopeData{client}, baseClient = client, bindings = []}
 
 -- | Install a binding with a token allocated by its owner before acquisition.
 bindManaged :: Scope -> Unique -> Client -> IO ()
-bindManaged (Scope ref) token client = atomicModifyIORefCAS_ ref \s ->
+bindManaged (Scope ref) token client = atomicModifyIORefCAS'_ ref \s ->
   s{scopeData = s.scopeData{client = Just client}, bindings = (token, client) : s.bindings}
 
 -- | Remove an owned binding.  Stale releases are harmless.
 unbindManaged :: Scope -> Unique -> IO ()
-unbindManaged (Scope ref) token = atomicModifyIORefCAS_ ref \s ->
+unbindManaged (Scope ref) token = atomicModifyIORefCAS'_ ref \s ->
   let bindings = filter ((/= token) . fst) s.bindings
       client = case bindings of
         (_, newest) : _ -> Just newest

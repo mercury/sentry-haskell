@@ -13,11 +13,12 @@ import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.Capture (captureException)
-import Sentry.Event (CapturedEvent (..))
+import Sentry.Event qualified
+import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Mechanism qualified as Mechanism
-import Sentry.Scope (ScopeData (..))
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
+import Sentry.Scope.Operations (ScopeData (..))
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Test.Hspec
 
@@ -53,7 +54,7 @@ spec_captureException = describe "captureException" do
                 (def @ScopeData)
                   { client = Just annotationClient,
                     eventProcessor = \ce ->
-                      Just ce.event{Patrol.Event.tags = Map.singleton "scope" "annotated"}
+                      Just (Sentry.Event.apply ce.event (Sentry.Event.setTags (Map.singleton "scope" "annotated")))
                   }
               annotated =
                 AnnotatedException

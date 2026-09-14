@@ -1,6 +1,7 @@
 module ScopeContextTest where
 
 import Control.Monad.IO.Class (liftIO)
+import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Foldable (toList, traverse_)
 import Data.Kind (Type)
@@ -10,13 +11,17 @@ import OpenTelemetry.Context (Context)
 import OpenTelemetry.Context qualified as Context
 import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
+import Patrol.Type.Context qualified as Patrol.Context
+import Sentry.AppContext qualified
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
-import Sentry.Scope (Scope, ScopeData (..))
-import Sentry.Scope qualified as Scope
+import Sentry.OsContext qualified
+import Sentry.RuntimeContext qualified
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Internal qualified as Internal
+import Sentry.Scope.Operations (Scope, ScopeData (..))
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Test.Hspec
 
@@ -220,3 +225,77 @@ spec_ambientUnaffected = describe "ambient addBreadcrumb (regression guard)" do
         Scope.addBreadcrumb (crumb "ambient")
         liftIO $ Scope.readScopeRef scope
     map (.message) (toList scopeData.breadcrumbs) `shouldBe` ["ambient"]
+
+-- | The keyed context-value operations, which reach inside the @Other@ payload
+-- at one key rather than replacing it.
+--
+-- Two branches are worth pinning down: an absent context is materialized (which
+-- shadows an inherited one, as 'Scope.setContextValues' already does), and a
+-- typed variant is left completely alone.
+spec_contextValues :: Spec
+spec_contextValues = describe "keyed context values" do
+  let payloadAt key scopeData = case Map.lookup key scopeData.contexts of
+        Just (Patrol.Context.Other values) -> Just values
+        _ -> Nothing
+
+  it "sets and removes single values without disturbing their siblings" do
+    scope <- Scope.create Scope.Current
+    Scope.setContextValues scope "feature" [("a", Aeson.Bool True), ("b", Aeson.Bool False)]
+    Scope.setContextValue scope "feature" "c" (Aeson.String "added")
+    Scope.setContextValue scope "feature" "a" (Aeson.String "overwritten")
+    Scope.removeContextValue scope "feature" "b"
+    Scope.removeContextValue scope "feature" "absent"
+    scopeData <- Scope.readScopeRef scope
+    payloadAt "feature" scopeData
+      `shouldBe` Just
+        ( Map.fromList
+            [ ("a", Aeson.String "overwritten"),
+              ("c", Aeson.String "added")
+            ]
+        )
+
+  it "materializes an absent context rather than no-oping" do
+    scope <- Scope.create Scope.Current
+    Scope.setContextValue scope "feature" "a" (Aeson.Bool True)
+    scopeData <- Scope.readScopeRef scope
+    payloadAt "feature" scopeData `shouldBe` Just (Map.singleton "a" (Aeson.Bool True))
+
+  it "transforms the whole payload with modifyContextValues" do
+    scope <- Scope.create Scope.Current
+    Scope.setContextValues scope "feature" [("keep", Aeson.Bool True), ("drop", Aeson.Bool True)]
+    Scope.modifyContextValues scope "feature" (Map.delete "drop")
+    scopeData <- Scope.readScopeRef scope
+    payloadAt "feature" scopeData `shouldBe` Just (Map.singleton "keep" (Aeson.Bool True))
+
+  it "leaves a typed context variant untouched, and never runs the function" do
+    scope <- Scope.create Scope.Current
+    Scope.setRuntimeContext scope (Sentry.RuntimeContext.setName "ghc")
+    Scope.setContextValue scope "runtime" "a" (Aeson.Bool True)
+    Scope.removeContextValue scope "runtime" "a"
+    Scope.modifyContextValues scope "runtime" (error "must not run")
+    scopeData <- Scope.readScopeRef scope
+    case Map.lookup "runtime" scopeData.contexts of
+      Just (Patrol.Context.Runtime rc) -> rc.name `shouldBe` "ghc"
+      other -> expectationFailure ("expected the runtime variant, got " <> show other)
+
+  it "targets the context-first variants at the resolved mutation scope" do
+    layers <- allLayers
+    Scope.setContextValueAt layers.context "feature" "a" (Aeson.Bool True)
+    Scope.modifyContextValuesAt layers.context "feature" (Map.insert "b" (Aeson.Bool False))
+    scopeData <- Scope.readScopeAt layers.context
+    payloadAt "feature" scopeData
+      `shouldBe` Just (Map.fromList [("a", Aeson.Bool True), ("b", Aeson.Bool False)])
+
+spec_typedContextAt :: Spec
+spec_typedContextAt = describe "typed context selection" do
+  it "replaces whole local payloads via explicit context operations" do
+    layers <- globalOnly
+    scope <- Scope.create Scope.Current
+    let ctx = Scope.insertCurrent scope layers.context
+    Scope.setContextValues scope "os" [("old", Aeson.Null)]
+    Scope.setOsContextAt ctx [Sentry.OsContext.setName "Linux", Sentry.OsContext.setVersion "old"]
+    Scope.setOsContextAt ctx (Sentry.OsContext.setName "new")
+    Scope.setAppContextAt ctx Sentry.AppContext.empty
+    result <- Scope.readScopeRef scope
+    Map.lookup "os" result.contexts `shouldBe` Just (Patrol.Context.Os Sentry.OsContext.empty{Sentry.OsContext.name = "new"})
+    Map.lookup "app" result.contexts `shouldBe` Just (Patrol.Context.App Sentry.AppContext.empty)

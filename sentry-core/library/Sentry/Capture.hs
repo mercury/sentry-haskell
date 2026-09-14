@@ -50,12 +50,13 @@ import Sentry.Client.Internal qualified as ClientInternal
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
-import Sentry.Event (CapturedEvent (..))
-import Sentry.Event qualified as Event
+import Sentry.Event qualified
+import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Event.Captured qualified as Captured
 import Sentry.Integration (Integration (..), SomeIntegration)
-import Sentry.Mechanism qualified as Mechanism
-import Sentry.Scope (ScopeData)
-import Sentry.Scope qualified as Scope
+import Sentry.Mechanism qualified
+import Sentry.Scope.Operations (ScopeData)
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Sdk qualified as Sdk
 import Sentry.Transport (SendResponse (..))
 import Sentry.Transport qualified as Transport
@@ -121,7 +122,7 @@ instance Default CaptureOverrides where
 captureException :: (HasCallStack, MonadIO m, Exception e) => e -> m (Maybe Patrol.EventId)
 captureException e =
   withFrozenCallStack $
-    captureExceptionImpl callStack def{mechanismOverride = Just Mechanism.generic} e
+    captureExceptionImpl callStack def{mechanismOverride = Just Sentry.Mechanism.generic} e
 
 -- | Convenience alias for a 'captureException' call that discards its result.
 captureException_ :: (HasCallStack, MonadIO m, Exception e) => e -> m ()
@@ -149,7 +150,7 @@ captureExceptionWith_ overrides = withFrozenCallStack $ void . captureExceptionW
 captureUnhandledException :: (HasCallStack, MonadIO m, Exception e) => Text -> e -> m (Maybe Patrol.EventId)
 captureUnhandledException ty e =
   withFrozenCallStack $
-    captureExceptionImpl callStack def{mechanismOverride = Just (Mechanism.unhandled ty)} e
+    captureExceptionImpl callStack def{mechanismOverride = Just (Sentry.Mechanism.unhandled ty)} e
 
 -- | Convenience alias for a 'captureUnhandledException' call that discards
 -- its result.
@@ -174,7 +175,7 @@ captureExceptionImpl cs overrides (toException -> orig) = do
       scopeFromAnnotation = listToMaybe [s | Annotation a <- anns, Just s <- [cast @_ @ScopeData a]]
       scope = fromMaybe ambient scopeFromAnnotation
       captured =
-        (Event.fromExceptionWith overrides.mechanismOverride inner `Event.withException` inner $ orig)
+        (Sentry.Event.fromExceptionWith overrides.mechanismOverride inner `Captured.withException` inner $ orig)
           { captureCallStack = Just cs
           }
   prepared <- prepareCapture client scope captured
@@ -182,7 +183,7 @@ captureExceptionImpl cs overrides (toException -> orig) = do
   where
     applyOverride captured' = captured'{event = applyLevelOverride overrides captured'.event}
 
--- | Apply 'CaptureOverrides.levelOverride' to the /result/ of 'Sentry.Scope.apply'.
+-- | Apply 'CaptureOverrides.levelOverride' to the /result/ of 'Sentry.Scope.applyToEvent'.
 applyLevelOverride :: CaptureOverrides -> Patrol.Event -> Patrol.Event
 applyLevelOverride overrides event =
   maybe event (\lvl -> event{Patrol.Event.level = Just lvl}) overrides.levelOverride
@@ -203,7 +204,7 @@ captureMessage lvl msg = do
   scope <- Scope.readAmbientScope
   let client = fromMaybe NON_RECORDING_CLIENT (Scope.client scope)
       captured =
-        (Witch.from (Event.fromMessage lvl msg))
+        (Witch.from (Sentry.Event.fromMessage lvl msg))
           { captureCallStack = Just callStack
           }
   prepared <- prepareCapture client scope captured
@@ -218,7 +219,7 @@ captureMessage_ lvl = withFrozenCallStack $ void . captureMessage lvl
 -- every public capture verb reports that drop exactly once.
 prepareCapture :: (MonadIO m) => Client -> ScopeData -> CapturedEvent -> m (Maybe CapturedEvent)
 prepareCapture client scope captured =
-  case scope `Scope.apply` captured of
+  case scope `Scope.applyToEvent` captured of
     Just event -> pure $ Just captured{event}
     Nothing ->
       Nothing <$ noteDrop client ClientReport.EventProcessor (eventCategory captured.event)
@@ -243,12 +244,15 @@ captureWith client captured = do
       result <- runExceptT do
         maybeEvent <- liftIO $ runIntegrations client.options captured client.integrations
         event <- maybe (throwError ClientReport.EventProcessor) pure maybeEvent
-        enriched <- liftIO $ applyClientDefaults client.options runtime client.integrations event
-        let processed = captured{event = enriched}
+        eventWithDefaults <- liftIO $ applyClientDefaults client.options runtime client.integrations event
+        let processed = captured{event = eventWithDefaults}
         finalEvent <- case client.options.beforeSend of
           Nothing -> pure processed.event
           Just callback ->
-            maybe (throwError ClientReport.BeforeSend) pure (callback processed)
+            maybe
+              (throwError ClientReport.BeforeSend)
+              pure
+              (callback processed)
         -- sample /after/ processing events, so that an event processor has the
         -- opportunity to drop an event even if it wasn't going to be sampled;
         -- this ensures more accurate discard counts in Sentry's dashboards.
@@ -326,7 +330,8 @@ applyClientDefaults opts runtime integrations event = do
     orElse :: Text -> Text -> Text
     t `orElse` fallback = if Text.null t then fallback else t
 
--- | Run each integration's 'Sentry.Integration.processEvent' in sequence.
+-- | Run each integration's 'Sentry.Integration.processEvent' in sequence,
+-- passing each resulting event directly to the next.
 --
 -- Short-circuits on the first 'Nothing'.
 runIntegrations :: (MonadIO m) => ClientOptions -> CapturedEvent -> Vector SomeIntegration -> m (Maybe Patrol.Event)

@@ -14,8 +14,8 @@ import Sentry.Capture qualified as Capture
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Init qualified as Init
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as Scope.IO
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Sentry.Transport (SomeTransport (..))
 import Test.Hspec

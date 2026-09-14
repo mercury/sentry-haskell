@@ -1,37 +1,140 @@
--- | The in-flight value that flows through the capture pipeline, plus pure
--- event builders.
+-- | An event reported to Sentry, and builders for its fields.
 --
--- A 'CapturedEvent' bundles a 'Patrol.Type.Event.Event' with optional
--- contextual metadata:
+-- @
+-- scrub ce = Just $ Sentry.Event.apply
+--   ce.event
+--   [Sentry.Event.unsetUser, Sentry.Event.removeExtra "authorization"]
+-- @
 --
--- * the originating 'Control.Exception.SomeException', if the event was
---   constructed from one (typically via 'Sentry.Capture.captureException')
+-- The record and its fields are exported here, so hooks can also use record
+-- updates without depending on @patrol@ directly.
 --
--- Integrations and 'Sentry.Client.Options.beforeSend' callbacks receive this
--- wrapper and can use it to enrich the event (e.g. by downcasting the
--- exception to a library-specific type).
+-- See "Sentry.Update" for the composition rules every builder module shares.
 module Sentry.Event
-  ( -- * In-flight wrapper
-    CapturedEvent (..),
-    withException,
+  ( -- * Record
+    Event (..),
+    empty,
 
-    -- * Pure event builders
+    -- * Updates
+    EventUpdate,
+    with,
+    apply,
+
+    -- * Text fields
+    setDist,
+    setEnvironment,
+    setLogger,
+    setRelease,
+    setServerName,
+    setTransaction,
+    setVersion,
+
+    -- * Identity and severity
+    setEventId,
+    setLevel,
+    unsetLevel,
+    setType,
+    unsetType,
+    setPlatform,
+    unsetPlatform,
+    setTimestamp,
+    unsetTimestamp,
+    setTimeSpent,
+    unsetTimeSpent,
+
+    -- * Tags
+    setTags,
+    setTag,
+    removeTag,
+    clearTags,
+
+    -- * Extra data
+    setExtras,
+    setExtra,
+    removeExtra,
+    clearExtras,
+
+    -- * Contexts
+    setContexts,
+    setContext,
+    setOsContext,
+    modifyOsContext,
+    modifyExistingOsContext,
+    setAppContext,
+    modifyAppContext,
+    modifyExistingAppContext,
+    setRuntimeContext,
+    modifyRuntimeContext,
+    modifyExistingRuntimeContext,
+    setContextValues,
+    setContextValue,
+    removeContextValue,
+    modifyContextValues,
+    removeContext,
+    clearContexts,
+
+    -- * Modules
+    setModules,
+    setModule,
+    removeModule,
+    clearModules,
+
+    -- * Fingerprint
+    setFingerprint,
+    addFingerprint,
+    clearFingerprint,
+
+    -- * Processing errors
+    setErrors,
+    addError,
+    clearErrors,
+
+    -- * User
+    setUser,
+    modifyUser,
+    modifyExistingUser,
+    unsetUser,
+
+    -- * Integration-populated payloads
+    setBreadcrumbs,
+    unsetBreadcrumbs,
+    setDebugMeta,
+    unsetDebugMeta,
+    setException,
+    unsetException,
+    setLogentry,
+    unsetLogentry,
+    setRequest,
+    modifyRequest,
+    modifyExistingRequest,
+    unsetRequest,
+    setSdk,
+    unsetSdk,
+    setThreads,
+    unsetThreads,
+    setTransactionInfo,
+    unsetTransactionInfo,
+
+    -- * Whole-event builders
     fromException,
     fromExceptionWith,
     fromMessage,
-
-    -- * Event enrichment
     attachMechanism,
   )
 where
 
 import Control.Exception (SomeException)
+import Data.Aeson qualified as Aeson
 import Data.Kind (Type)
 import Data.List (unsnoc)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import GHC.Stack (CallStack)
+import Data.Time.Clock (NominalDiffTime, UTCTime)
 import Patrol qualified
+import Patrol.Type.Context qualified as Patrol.Context
+import Patrol.Type.Event (Event (..), empty)
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.EventType qualified as Patrol.EventType
 import Patrol.Type.Exception qualified as Patrol.Exception
@@ -39,85 +142,332 @@ import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.LogEntry qualified as Patrol.LogEntry
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
+import Sentry.AppContext qualified
+import Sentry.Context.Internal qualified
+import Sentry.OsContext qualified
+import Sentry.Request qualified
+import Sentry.RuntimeContext qualified
+import Sentry.Update (Update (..))
+import Sentry.Update qualified
+import Sentry.User qualified
 import Witch qualified
 
--- | A 'Patrol.Type.Event.Event' plus any contextual metadata that integrations
--- or callbacks may want to inspect.
-type CapturedEvent :: Type
-data CapturedEvent = CapturedEvent
-  { -- | The wire-format event under construction.
-    event :: Patrol.Event,
-    -- | The inner (unwrapped) exception from which the event was built, if the
-    -- event was constructed via 'Sentry.Capture.captureException'.
-    --
-    -- When the originating exception was an
-    -- 'Control.Exception.Annotated.AnnotatedException', this holds the
-    -- /inner/ exception — the same value used to build the 'Patrol.Event'.
-    exception :: Maybe SomeException,
-    -- | The original, unmodified exception exactly as it was passed to
-    -- 'Sentry.Capture.captureException' — before any
-    -- 'Control.Exception.Annotated.AnnotatedException' unwrapping.
-    --
-    -- Integrations that extract 'GHC.Stack.CallStack' annotations (e.g.
-    -- "Sentry.Integration.Stacktrace") read this field so they see the full
-    -- annotation set.  'Nothing' for events built from messages.
-    originalException :: Maybe SomeException,
-    -- | The 'GHC.Stack.CallStack' at the
-    -- 'Sentry.Capture.captureException' \/ 'Sentry.Capture.captureMessage'
-    -- call site.
-    --
-    -- Populated only when those functions are called with a
-    -- 'GHC.Stack.HasCallStack' constraint in scope, which is the case for all
-    -- public entry points in "Sentry.Capture".  Acts as a universal backstop
-    -- when no richer frame source (e.g. 'annotated-exception' annotations or
-    -- GHC 'Control.Exception.Context.ExceptionContext') is available.
-    captureCallStack :: Maybe CallStack
-  }
+-- | A pending change to an 'Event'. See "Sentry.Update".
+type EventUpdate :: Type
+type EventUpdate = Update Event
 
--- | Wrap a 'Patrol.Type.Event.Event' with no extra context.  Use
--- 'withException' when the event was constructed from a 'SomeException'.
-instance Witch.From Patrol.Event CapturedEvent where
-  from event =
-    CapturedEvent
-      { event,
-        exception = Nothing,
-        originalException = Nothing,
-        captureCallStack = Nothing
-      }
-
--- | Wrap a 'Patrol.Type.Event.Event' that was constructed from the given
--- 'SomeException'.
+-- | Build an update using the event's current value, including preceding
+-- updates in the composition. Apply the resulting update to that same record.
 --
--- * @exception@ receives the inner (post-unwrap) exception used to build the
---   event body.
--- * @originalException@ receives @orig@ — the exception before any
---   'Control.Exception.Annotated.AnnotatedException' unwrapping.
-withException :: Patrol.Event -> SomeException -> SomeException -> CapturedEvent
-withException event exception originalException =
-  CapturedEvent
-    { event,
-      exception = Just exception,
-      originalException = Just originalException,
-      captureCallStack = Nothing
-    }
+-- @
+-- Sentry.Event.with \\e -> Sentry.Event.setTag \"had_user\" (maybe \"no\" (const \"yes\") e.user)
+-- @
+with :: (Witch.From a EventUpdate) => (Event -> a) -> EventUpdate
+with = Sentry.Update.with
 
--- | Build a minimal 'Patrol.Event' from a 'SomeException'. Attaches no
+-- * Text fields
+
+-- | Assign the build distribution identifier.
+setDist :: Text -> EventUpdate
+setDist !assigned = Update \e -> e{Patrol.Event.dist = assigned}
+
+-- | Assign the environment name.
+setEnvironment :: Text -> EventUpdate
+setEnvironment !assigned = Update \e -> e{Patrol.Event.environment = assigned}
+
+-- | Assign the logger name.
+setLogger :: Text -> EventUpdate
+setLogger !assigned = Update \e -> e{Patrol.Event.logger = assigned}
+
+-- | Assign the release version.
+setRelease :: Text -> EventUpdate
+setRelease !assigned = Update \e -> e{Patrol.Event.release = assigned}
+
+-- | Assign the reporting server name.
+setServerName :: Text -> EventUpdate
+setServerName !assigned = Update \e -> e{Patrol.Event.serverName = assigned}
+
+-- | Assign the transaction name.
+setTransaction :: Text -> EventUpdate
+setTransaction !assigned = Update \e -> e{Patrol.Event.transaction = assigned}
+
+-- | Assign the protocol version.
+setVersion :: Text -> EventUpdate
+setVersion !assigned = Update \e -> e{Patrol.Event.version = assigned}
+
+-- * Identity and severity
+
+-- | Assign the event id. Capture generates one when this is left at
+-- 'Patrol.Type.EventId.empty'.
+setEventId :: Patrol.EventId -> EventUpdate
+setEventId !assigned = Update \e -> e{Patrol.Event.eventId = assigned}
+
+-- | Assign the severity level.
+setLevel :: Patrol.Level -> EventUpdate
+setLevel !assigned = Update \e -> e{Patrol.Event.level = Just assigned}
+
+-- | Clear the severity level.
+unsetLevel :: EventUpdate
+unsetLevel = Update \e -> e{Patrol.Event.level = Nothing}
+
+-- | Assign the event type.
+setType :: Patrol.EventType -> EventUpdate
+setType !assigned = Update \e -> e{Patrol.Event.type_ = Just assigned}
+
+-- | Clear the event type.
+unsetType :: EventUpdate
+unsetType = Update \e -> e{Patrol.Event.type_ = Nothing}
+
+-- | Assign the platform.
+setPlatform :: Patrol.Platform -> EventUpdate
+setPlatform !assigned = Update \e -> e{Patrol.Event.platform = Just assigned}
+
+-- | Clear the platform.
+unsetPlatform :: EventUpdate
+unsetPlatform = Update \e -> e{Patrol.Event.platform = Nothing}
+
+-- | Assign the timestamp. Capture defaults this to the current time when it is
+-- absent.
+setTimestamp :: UTCTime -> EventUpdate
+setTimestamp !assigned = Update \e -> e{Patrol.Event.timestamp = Just assigned}
+
+-- | Clear the timestamp.
+unsetTimestamp :: EventUpdate
+unsetTimestamp = Update \e -> e{Patrol.Event.timestamp = Nothing}
+
+-- | Assign the time spent, in seconds.
+setTimeSpent :: NominalDiffTime -> EventUpdate
+setTimeSpent !assigned = Update \e -> e{Patrol.Event.timeSpent = Just assigned}
+
+-- | Clear the time spent.
+unsetTimeSpent :: EventUpdate
+unsetTimeSpent = Update \e -> e{Patrol.Event.timeSpent = Nothing}
+
+-- * Tags
+
+-- | Replace every tag.
+setTags :: Map Text Text -> EventUpdate
+setTags !assigned = Update \e -> e{Patrol.Event.tags = assigned}
+
+-- | Insert or overwrite one tag.
+setTag :: Text -> Text -> EventUpdate
+setTag !key !value = Update \e -> let !result = Map.insert key value e.tags in e{Patrol.Event.tags = result}
+
+-- | Remove one tag; absent keys are ignored.
+removeTag :: Text -> EventUpdate
+removeTag !key = Update \e -> let !result = Map.delete key e.tags in e{Patrol.Event.tags = result}
+
+-- | Remove every tag.
+clearTags :: EventUpdate
+clearTags = Update \e -> e{Patrol.Event.tags = Map.empty}
+
+-- * Extra data
+
+-- | Replace the whole @extra@ map.
+setExtras :: Map Text Aeson.Value -> EventUpdate
+setExtras !assigned = Update \e -> e{Patrol.Event.extra = assigned}
+
+-- | Insert or overwrite one @extra@ key.
+setExtra :: Text -> Aeson.Value -> EventUpdate
+setExtra !key !value = Update \e -> let !result = Map.insert key value e.extra in e{Patrol.Event.extra = result}
+
+-- | Remove one @extra@ key; absent keys are ignored.
+removeExtra :: Text -> EventUpdate
+removeExtra !key = Update \e -> let !result = Map.delete key e.extra in e{Patrol.Event.extra = result}
+
+-- | Remove every @extra@ key.
+clearExtras :: EventUpdate
+clearExtras = Update \e -> e{Patrol.Event.extra = Map.empty}
+
+-- * Contexts
+
+-- | Replace every context.
+setContexts :: Map Text Patrol.Context -> EventUpdate
+setContexts !assigned = Update \e -> e{Patrol.Event.contexts = assigned}
+
+-- | Insert or overwrite the context at one key. See "Sentry.Context" for the
+-- variants.
+setContext :: Text -> Patrol.Context -> EventUpdate
+setContext !key !value = Update \e -> let !result = Map.insert key value e.contexts in e{Patrol.Event.contexts = result}
+
+-- | Remove the context from the supplied event, including merged scope metadata.
+-- Absent keys are ignored. Removal does not reveal inherited values.
+removeContext :: Text -> EventUpdate
+removeContext !key = Update \e -> let !result = Map.delete key e.contexts in e{Patrol.Event.contexts = result}
+
+-- | Remove every context.
+clearContexts :: EventUpdate
+clearContexts = Update \e -> e{Patrol.Event.contexts = Map.empty}
+
+-- * Modules
+
+-- | Replace the module\/version map.
+setModules :: Map Text Text -> EventUpdate
+setModules !assigned = Update \e -> e{Patrol.Event.modules = assigned}
+
+-- | Insert or overwrite one module version.
+setModule :: Text -> Text -> EventUpdate
+setModule !key !value = Update \e -> let !result = Map.insert key value e.modules in e{Patrol.Event.modules = result}
+
+-- | Remove one module; absent keys are ignored.
+removeModule :: Text -> EventUpdate
+removeModule !key = Update \e -> let !result = Map.delete key e.modules in e{Patrol.Event.modules = result}
+
+-- | Remove every module.
+clearModules :: EventUpdate
+clearModules = Update \e -> e{Patrol.Event.modules = Map.empty}
+
+-- * Fingerprint
+
+-- | Replace the fingerprint.
+setFingerprint :: [Text] -> EventUpdate
+setFingerprint !assigned = Update \e -> e{Patrol.Event.fingerprint = assigned}
+
+-- | Append one fingerprint component.
+addFingerprint :: Text -> EventUpdate
+addFingerprint !value = Update \e -> let !result = e.fingerprint <> [value] in e{Patrol.Event.fingerprint = result}
+
+-- | Remove the fingerprint, restoring Sentry's default grouping.
+clearFingerprint :: EventUpdate
+clearFingerprint = Update \e -> e{Patrol.Event.fingerprint = []}
+
+-- * Processing errors
+
+-- | Replace the processing-error list.
+setErrors :: [Patrol.EventProcessingError] -> EventUpdate
+setErrors !assigned = Update \e -> e{Patrol.Event.errors = assigned}
+
+-- | Append one processing error.
+addError :: Patrol.EventProcessingError -> EventUpdate
+addError !value = Update \e -> let !result = e.errors <> [value] in e{Patrol.Event.errors = result}
+
+-- | Remove every processing error.
+clearErrors :: EventUpdate
+clearErrors = Update \e -> e{Patrol.Event.errors = []}
+
+-- * User
+
+-- | Establish the event's user from an empty one, replacing any it already
+-- had.
+--
+-- Accepts a 'Sentry.User.UserUpdate', a list of them, or a
+-- 'Sentry.User.User' you already hold.
+setUser :: (Witch.From a Sentry.User.UserUpdate) => a -> EventUpdate
+setUser upd = Update \e ->
+  let !u = Sentry.Update.run upd Sentry.User.empty in e{Patrol.Event.user = Just u}
+
+-- | Modify the user, starting from empty when absent. The result is forced before storing.
+modifyUser :: (Witch.From a Sentry.User.UserUpdate) => a -> EventUpdate
+modifyUser upd = Update \e -> case e.user of
+  Nothing -> Sentry.Update.run (setUser upd) e
+  Just _ -> Sentry.Update.run (modifyExistingUser upd) e
+
+-- | Modify an existing user. When absent, leave it absent without evaluating the update.
+modifyExistingUser :: (Witch.From a Sentry.User.UserUpdate) => a -> EventUpdate
+modifyExistingUser upd = Update \e -> case e.user of
+  Nothing -> e
+  Just u -> let !u' = Sentry.Update.run upd u in e{Patrol.Event.user = Just u'}
+
+-- | Remove the user. The usual first move when scrubbing PII.
+unsetUser :: EventUpdate
+unsetUser = Update \e -> e{Patrol.Event.user = Nothing}
+
+-- * Integration-populated payloads
+
+-- | Assign the breadcrumb list.
+setBreadcrumbs :: Patrol.Breadcrumbs -> EventUpdate
+setBreadcrumbs !assigned = Update \e -> e{Patrol.Event.breadcrumbs = Just assigned}
+
+-- | Remove every breadcrumb.
+unsetBreadcrumbs :: EventUpdate
+unsetBreadcrumbs = Update \e -> e{Patrol.Event.breadcrumbs = Nothing}
+
+-- | Assign the debug metadata.
+setDebugMeta :: Patrol.DebugMeta -> EventUpdate
+setDebugMeta !assigned = Update \e -> e{Patrol.Event.debugMeta = Just assigned}
+
+-- | Remove the debug metadata.
+unsetDebugMeta :: EventUpdate
+unsetDebugMeta = Update \e -> e{Patrol.Event.debugMeta = Nothing}
+
+-- | Assign the exception chain.
+setException :: Patrol.Exceptions -> EventUpdate
+setException !assigned = Update \e -> e{Patrol.Event.exception = Just assigned}
+
+-- | Remove the exception chain.
+unsetException :: EventUpdate
+unsetException = Update \e -> e{Patrol.Event.exception = Nothing}
+
+-- | Assign the log entry (the message body).
+setLogentry :: Patrol.LogEntry -> EventUpdate
+setLogentry !assigned = Update \e -> e{Patrol.Event.logentry = Just assigned}
+
+-- | Remove the log entry.
+unsetLogentry :: EventUpdate
+unsetLogentry = Update \e -> e{Patrol.Event.logentry = Nothing}
+
+-- | Replace the HTTP request payload from an update, list, or record.
+setRequest :: (Witch.From a Sentry.Request.RequestUpdate) => a -> EventUpdate
+setRequest upd = Update \e -> let !r = Sentry.Update.run upd Sentry.Request.empty in e{Patrol.Event.request = Just r}
+
+-- | Modify the request, starting from empty when absent. The result is forced before storing.
+modifyRequest :: (Witch.From a Sentry.Request.RequestUpdate) => a -> EventUpdate
+modifyRequest upd = Update \e -> case e.request of
+  Nothing -> Sentry.Update.run (setRequest upd) e
+  Just _ -> Sentry.Update.run (modifyExistingRequest upd) e
+
+-- | Modify an existing request. When absent, leave it absent without evaluating the update.
+modifyExistingRequest :: (Witch.From a Sentry.Request.RequestUpdate) => a -> EventUpdate
+modifyExistingRequest upd = Update \e -> case e.request of
+  Nothing -> e
+  Just r -> let !result = Sentry.Update.run upd r in e{Patrol.Event.request = Just result}
+
+-- | Remove the HTTP request payload.
+unsetRequest :: EventUpdate
+unsetRequest = Update \e -> e{Patrol.Event.request = Nothing}
+
+-- | Assign the SDK metadata. Capture fills this in when it is absent.
+setSdk :: Patrol.ClientSdkInfo -> EventUpdate
+setSdk !assigned = Update \e -> e{Patrol.Event.sdk = Just assigned}
+
+-- | Remove the SDK metadata.
+unsetSdk :: EventUpdate
+unsetSdk = Update \e -> e{Patrol.Event.sdk = Nothing}
+
+-- | Assign the thread list.
+setThreads :: Patrol.Threads -> EventUpdate
+setThreads !assigned = Update \e -> e{Patrol.Event.threads = Just assigned}
+
+-- | Remove the thread list.
+unsetThreads :: EventUpdate
+unsetThreads = Update \e -> e{Patrol.Event.threads = Nothing}
+
+-- | Assign the transaction metadata.
+setTransactionInfo :: Patrol.TransactionInfo -> EventUpdate
+setTransactionInfo !assigned = Update \e -> e{Patrol.Event.transactionInfo = Just assigned}
+
+-- | Remove the transaction metadata.
+unsetTransactionInfo :: EventUpdate
+unsetTransactionInfo = Update \e -> e{Patrol.Event.transactionInfo = Nothing}
+
+-- * Whole-event builders
+
+-- | Build a minimal 'Event' from a 'SomeException'. Attaches no
 -- 'Patrol.Type.Mechanism.Mechanism' — use 'fromExceptionWith' for that.
 --
--- Sets 'exception', 'level', and 'type_'; leaves 'eventId', 'timestamp',
--- 'sdk', 'platform', and all option-derived fields ('release', 'environment',
--- 'serverName', 'dist') to sentinel values that
--- 'Sentry.Capture.applyClientDefaults' can match on and fill at capture time.
+-- Sets the exception, level, and type; leaves the event id, timestamp, SDK,
+-- platform, and all option-derived fields (release, environment, server name,
+-- dist) to sentinel values that 'Sentry.Capture.applyClientDefaults' can match
+-- on and fill at capture time.
 --
--- __NOTE__: This replaces 'Patrol.Type.Event.fromSomeException' as the SDK's
--- own exception event builder, ensuring no pre-baked defaults from
--- 'Patrol.Type.Event.initial' can mask configuration values.
-fromException :: SomeException -> Patrol.Event
+-- __NOTE__: This replaces @patrol@'s @fromSomeException@ as the SDK's own
+-- exception event builder, leaving capture to apply configured defaults.
+fromException :: SomeException -> Event
 fromException = fromExceptionWith Nothing
 
 -- | Like 'fromException', but attaches the given
 -- 'Patrol.Type.Mechanism.Mechanism' to the exception.
-fromExceptionWith :: Maybe Patrol.Mechanism.Mechanism -> SomeException -> Patrol.Event
+fromExceptionWith :: Maybe Patrol.Mechanism -> SomeException -> Event
 fromExceptionWith mMechanism e =
   let event =
         Patrol.Event.empty
@@ -127,13 +477,31 @@ fromExceptionWith mMechanism e =
           }
    in maybe event (`attachMechanism` event) mMechanism
 
+-- | Build a minimal 'Event' for a plain text message at the given severity
+-- level.
+--
+-- Sets the log entry and level; leaves the event id, timestamp, SDK, platform,
+-- and all option-derived fields to sentinel values that
+-- 'Sentry.Capture.applyClientDefaults' can match on and fill at capture time.
+fromMessage :: Patrol.Level -> Text -> Event
+fromMessage lvl msg =
+  let logEntry =
+        Patrol.LogEntry.empty
+          { Patrol.LogEntry.formatted = msg,
+            Patrol.LogEntry.message = msg
+          }
+   in Patrol.Event.empty
+        { Patrol.Event.level = Just lvl,
+          Patrol.Event.logentry = Just logEntry
+        }
+
 -- | Attach a 'Patrol.Type.Mechanism.Mechanism' to the /last/ entry in the
 -- event's @exception.values@, which /should/ be the exception that is actually
 -- unhandled.
 --
--- __NOTE__: If 'Patrol.Type.Mechanism.type_' is empty, it is normalized to
+-- __NOTE__: If the mechanism type is empty, it is normalized to
 -- @\"generic\"@.
-attachMechanism :: Patrol.Mechanism.Mechanism -> Patrol.Event -> Patrol.Event
+attachMechanism :: Patrol.Mechanism -> Event -> Event
 attachMechanism mechanism event =
   case event.exception of
     Nothing -> event
@@ -151,20 +519,98 @@ attachMechanism mechanism event =
                     Just exceptions{Patrol.Exceptions.values = rest <> [updated]}
                 }
 
--- | Build a minimal 'Patrol.Event' for a plain text message at the given
--- severity level.
---
--- Sets 'logentry' and 'level'; leaves 'eventId', 'timestamp', 'sdk',
--- 'platform', and all option-derived fields to sentinel values that
--- 'Sentry.Capture.applyClientDefaults' can match on and fill at capture time.
-fromMessage :: Patrol.Level -> Text -> Patrol.Event
-fromMessage lvl msg =
-  let logEntry =
-        Patrol.LogEntry.empty
-          { Patrol.LogEntry.formatted = msg,
-            Patrol.LogEntry.message = msg
-          }
-   in Patrol.Event.empty
-        { Patrol.Event.level = Just lvl,
-          Patrol.Event.logentry = Just logEntry
-        }
+-- | Apply a single builder, a list, or a replacement record to an existing
+-- 'Event'.
+apply :: (Witch.From a EventUpdate) => Event -> a -> Event
+apply = flip Sentry.Update.run
+
+-- | Replace a custom context; later duplicate keys win.
+setContextValues :: Text -> [(Text, Aeson.Value)] -> EventUpdate
+setContextValues k kvs = let !values = Map.fromList kvs in setContext k (Patrol.Context.Other values)
+
+-- | Insert a custom field. Typed contexts are unchanged.
+setContextValue :: Text -> Text -> Aeson.Value -> EventUpdate
+setContextValue k key value = modifyContextValues k (Map.insert key value)
+
+-- | Remove a field from the supplied event, including merged scope metadata.
+-- Does not reveal inherited values or mutate the originating scope. Absent
+-- contexts stay absent; empty custom contexts are retained; typed ones are unchanged.
+removeContextValue :: Text -> Text -> EventUpdate
+removeContextValue k key = Update \e -> let !result = Sentry.Context.Internal.removeValue k key e.contexts in e{Patrol.Event.contexts = result}
+
+-- | Transform a custom payload, starting from empty when absent. Typed contexts
+-- remain unchanged without evaluating the transformation.
+modifyContextValues :: Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> EventUpdate
+modifyContextValues k f = Update \e -> let !result = Sentry.Context.Internal.modifyValues k f e.contexts in e{Patrol.Event.contexts = result}
+
+-- | Replace the entire @"os"@ payload from an update, list, or record.
+setOsContext :: (Witch.From a Sentry.OsContext.OsContextUpdate) => a -> EventUpdate
+setOsContext upd = let !record = Sentry.Update.run upd Sentry.OsContext.empty in setContext "os" (Patrol.Context.Os record)
+
+-- | Replace the entire @"app"@ payload from an update, list, or record.
+setAppContext :: (Witch.From a Sentry.AppContext.AppContextUpdate) => a -> EventUpdate
+setAppContext upd = let !record = Sentry.Update.run upd Sentry.AppContext.empty in setContext "app" (Patrol.Context.App record)
+
+-- | Replace the entire @"runtime"@ payload from an update, list, or record.
+setRuntimeContext :: (Witch.From a Sentry.RuntimeContext.RuntimeContextUpdate) => a -> EventUpdate
+setRuntimeContext upd = let !record = Sentry.Update.run upd Sentry.RuntimeContext.empty in setContext "runtime" (Patrol.Context.Runtime record)
+
+-- | Modify the OS context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyOsContext :: (Witch.From a Sentry.OsContext.OsContextUpdate) => a -> EventUpdate
+modifyOsContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped True "os" Sentry.OsContext.empty project Patrol.Context.Os (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Os record) = Just record
+    project _ = Nothing
+
+-- | Modify the OS context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingOsContext :: (Witch.From a Sentry.OsContext.OsContextUpdate) => a -> EventUpdate
+modifyExistingOsContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped False "os" Sentry.OsContext.empty project Patrol.Context.Os (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Os record) = Just record
+    project _ = Nothing
+
+-- | Modify the app context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyAppContext :: (Witch.From a Sentry.AppContext.AppContextUpdate) => a -> EventUpdate
+modifyAppContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped True "app" Sentry.AppContext.empty project Patrol.Context.App (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.App record) = Just record
+    project _ = Nothing
+
+-- | Modify the app context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingAppContext :: (Witch.From a Sentry.AppContext.AppContextUpdate) => a -> EventUpdate
+modifyExistingAppContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped False "app" Sentry.AppContext.empty project Patrol.Context.App (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.App record) = Just record
+    project _ = Nothing
+
+-- | Modify the runtime context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyRuntimeContext :: (Witch.From a Sentry.RuntimeContext.RuntimeContextUpdate) => a -> EventUpdate
+modifyRuntimeContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped True "runtime" Sentry.RuntimeContext.empty project Patrol.Context.Runtime (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Runtime record) = Just record
+    project _ = Nothing
+
+-- | Modify the runtime context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingRuntimeContext :: (Witch.From a Sentry.RuntimeContext.RuntimeContextUpdate) => a -> EventUpdate
+modifyExistingRuntimeContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped False "runtime" Sentry.RuntimeContext.empty project Patrol.Context.Runtime (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Runtime record) = Just record
+    project _ = Nothing

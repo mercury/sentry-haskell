@@ -5,9 +5,9 @@ import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
 import Control.Exception.Safe qualified as Safe
 import Control.Monad.IO.Unlift (MonadUnliftIO (..))
 import Sentry.Client (Client)
-import Sentry.Scope (Scope, ScopeData)
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.Internal.Bracket qualified as Bracket
+import Sentry.Scope.Operations (Scope, ScopeData)
+import Sentry.Scope.Operations qualified as Scope
 
 -- | Fork the current scope and pass it to the given action to be performed.
 --

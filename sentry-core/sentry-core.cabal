@@ -69,7 +69,6 @@ library workloads
     patrol ^>=1.2,
     sentry-core,
     text,
-    vector,
     witch,
 
 library
@@ -80,15 +79,21 @@ library
 
   -- cabal-gild: discover library
   exposed-modules:
-    Sentry.BreadcrumbType
+    Data.Atomics.Extra
+    Sentry.AppContext
+    Sentry.Breadcrumb
     Sentry.Capture
     Sentry.Client
     Sentry.Client.Options
     Sentry.Client.Options.Dsn
     Sentry.Client.Options.Env
     Sentry.ClientReport
+    Sentry.Context
+    Sentry.Context.Internal
     Sentry.Core
     Sentry.Event
+    Sentry.Event.Captured
+    Sentry.Geo
     Sentry.Init
     Sentry.Integration
     Sentry.Integration.Context
@@ -96,16 +101,22 @@ library
     Sentry.Internal
     Sentry.Level
     Sentry.Mechanism
+    Sentry.OsContext
+    Sentry.Request
+    Sentry.RuntimeContext
     Sentry.Scope
     Sentry.Scope.Internal
     Sentry.Scope.Internal.Bracket
     Sentry.Scope.IO
     Sentry.Scope.Monad
+    Sentry.Scope.Operations
     Sentry.Scope.Update
     Sentry.Sdk
     Sentry.Stacktrace
     Sentry.Test
     Sentry.Transport
+    Sentry.Update
+    Sentry.User
 
   other-modules:
     Paths_sentry_core
@@ -144,6 +155,7 @@ test-suite unit
   -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
   other-modules:
     AmbientBreadcrumbTest
+    AtomicsExtraTest
     BreadcrumbTest
     CaptureDefaultsTest
     CaptureDropTest
@@ -161,10 +173,12 @@ test-suite unit
     ScopeMutationTest
     ScopeTest
     StacktraceTest
+    UpdateTest
 
   build-depends:
     aeson,
     annotated-exception,
+    atomic-primops,
     base,
     containers,
     data-default,
@@ -212,3 +226,20 @@ benchmark space
     base,
     weigh,
     workloads,
+
+-- Retention checks with live scopes and unforced user/custom-context maps.
+test-suite residency
+  import: defaults
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests/residency
+  main-is: Main.hs
+  ghc-options:
+    -rtsopts
+    -with-rtsopts=-T
+
+  build-depends:
+    aeson,
+    base,
+    containers,
+    sentry-core,
+    text,

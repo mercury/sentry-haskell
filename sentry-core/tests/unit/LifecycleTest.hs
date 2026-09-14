@@ -22,8 +22,8 @@ import Patrol.Type.Level qualified as Patrol.Level
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core qualified as Sentry
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.Internal qualified as Internal
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test (withGlobalScope)
 import Sentry.Test qualified as Test
 import Sentry.Transport (FlushResponse (..), SendResponse (..), ShutdownResponse (..), SomeTransport (..), Transport (..))

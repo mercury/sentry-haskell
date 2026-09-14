@@ -15,10 +15,10 @@ import Sentry.Capture qualified as Capture
 import Sentry.Client qualified as Client
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
-import Sentry.Event qualified
+import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Integration (Integration (..), fromIntegration)
-import Sentry.Scope qualified as Scope
 import Sentry.Scope.IO qualified as ScopeIO
+import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Sentry.Transport (SomeTransport (..))
 import Test.Hspec
@@ -33,9 +33,9 @@ instance Integration OptionsEditIntegration where
   setup (OptionsEditIntegration calls edit _) opts = do
     modifyIORef' calls (+ 1)
     pure (edit opts)
-  processEvent (OptionsEditIntegration _ _ seen) event opts = do
+  processEvent (OptionsEditIntegration _ _ seen) ce opts = do
     modifyIORef' seen (opts :)
-    pure (Just event.event)
+    pure (Just ce.event)
 
 type ObserveDisabled :: Type
 newtype ObserveDisabled = ObserveDisabled (IORef [Dsn.DsnSource])

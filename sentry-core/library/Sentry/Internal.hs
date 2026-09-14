@@ -28,7 +28,7 @@ import Network.URI (URI)
 import Patrol qualified
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Sentry.Client.Options.Dsn qualified as Dsn
-import Sentry.Event (CapturedEvent (..))
+import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
 import Witch qualified
@@ -139,7 +139,10 @@ data ClientOptions = ClientOptions
     -- | Callback that is executed before a 'Patrol.Event' is sent.
     --
     -- Receives a 'CapturedEvent' so the callback can inspect contextual
-    -- data such as the originating exception alongside the event itself.
+    -- data such as the originating exception alongside the event itself, and
+    -- returns the resulting event record. 'Nothing' drops the event;
+    -- @Just ce.event@ preserves it. Use 'Sentry.Event.apply' to apply builders
+    -- to the input, or use record updates through "Sentry.Event".
     --
     -- Defaults to @Nothing@.
     --
@@ -148,6 +151,10 @@ data ClientOptions = ClientOptions
     -- | Callback that is executed when a 'Patrol.Breadcrumb' is constructed;
     -- this is somewhat deliberately ambiguous, as "constructed" can refer to
     -- "added to an event" or "added to the active scope".
+    --
+    -- Receives the breadcrumb and returns a
+    -- resulting breadcrumb, or 'Nothing' to drop it. Use
+    -- 'Sentry.Breadcrumb.apply' for builder bundles.
     --
     -- Defaults to @Nothing@.
     --
@@ -263,8 +270,8 @@ class (Typeable t) => Integration t where
   -- The accompanying 'CapturedEvent' carries metadata about the event, most
   -- notably the originating 'Control.Exception.SomeException' when one is
   -- available, so integrations can downcast it to a library-specific
-  -- type (e.g. @HttpException@, @SqlException@) and enrich the event
-  -- accordingly.
+  -- type (e.g. @HttpException@, @SqlException@) and modify the event using
+  -- exception metadata.
   --
   -- Examples include:
   --     * dropping 'Patrol.Type.Event.Event's entirely
@@ -272,9 +279,10 @@ class (Typeable t) => Integration t where
   --     * obfuscating personally identifiable information
   --     * adding information from, or produced by, the 'Integration' itself
   --
-  -- The default implementation is a no-op.
+  -- Returns the resulting event, or 'Nothing' to drop it. The default
+  -- implementation returns the input event unchanged.
   processEvent :: t -> CapturedEvent -> ClientOptions -> IO (Maybe Patrol.Event)
-  processEvent _ ce _ = pure . Just $ ce.event
+  processEvent _ ce _ = pure (Just ce.event)
 
 -- | An opaque wrapper around any type with a valid 'Integration' instance.
 --

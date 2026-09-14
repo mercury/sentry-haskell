@@ -195,10 +195,76 @@ The SDK uses Haskell typeclasses for extensibility, mirroring the trait-based ap
 
 1. **Transport abstraction**: Implement `Transport` typeclass to add new backends
    - Rust parallel: `Transport` trait
-2. **Integration system**: Implement `Integration` typeclass for event processors/enrichers
+2. **Integration system**: Implement `Integration` typeclass for event processors
    - Rust parallel: `Integration` trait
 
 Both use existential types (`SomeTransport`, `SomeIntegration`) for heterogeneous storage.
+
+### Update Composition
+
+Pure metadata changes are values, not actions. `Sentry.Update` defines one type
+for all of them — `newtype Update a = Update (a -> a)`, deriving
+`(Semigroup, Monoid) via Dual (Endo a)` so that `<>` applies the **left** operand
+first and later assignments win. Every record alias (`UserUpdate`, `GeoUpdate`,
+`EventUpdate`, `BreadcrumbUpdate`, `RuntimeContextUpdate`, `RequestUpdate`, `OsContextUpdate`, `AppContextUpdate`, `MechanismUpdate`,
+`ScopeUpdate`) is that one type at a different index. Do not introduce a second
+composition idiom.
+
+Rules worth preserving:
+
+- **One module per record, holding both the record and its builders.**
+  Import the record module qualified to use its builders and record-dot fields.
+  `Sentry.User` re-exports `module Patrol.Type.User` alongside `setId`,
+  `setName`, and the other builders. The `set*`/`unset*`/`modify*`/`add*`/
+  `remove*`/`clear*` prefixes avoid clashes with record field selectors.
+  `Sentry.Event` re-exports explicitly instead of wholesale, which keeps
+  patrol's `fromSomeException`, `new`, `setEventId`, `setTimestamp`, and the
+  deprecated `intoRequest` off the SDK's surface.
+- **Force before storing.** Record-field assignment builders force assigned
+  values to weak head normal form (WHNF). `Sentry.Scope.setUser` and
+  `modifyUser` force the resulting user record before storing it. When no local
+  user exists, `modifyUser` creates one from empty without copying inherited fields.
+  `modifyExistingUser` leaves absent users absent without evaluating its update.
+  These guarantees do not apply to all scope setters or deeply evaluate
+  arbitrary JSON. The strictness tests check that invalid assignments to an
+  new or existing user fail during the edit; the residency suite checks retention.
+- **`witch` for record/update conversion, in four directions.** `From a (Update a)`
+  is the constant update; `From [Update a] (Update a)` is `mconcat`; the two
+  `Empty`-constrained instances run against `empty`. Operations with a
+  `Witch.From a …Update` constraint accept a single update, a list of updates,
+  or a replacement record, including `Event.apply` and `Breadcrumb.apply`.
+  `Empty` and all its instances live in `Sentry.Update` so that neither they
+  nor the `From` instances are orphans. No `UndecidableInstances` is required.
+- **Hooks return records.** `beforeSend`, `beforeBreadcrumb`,
+  `Integration.processEvent`, and `ScopeData.eventProcessor` return `Maybe` of
+  their record. `Nothing` drops; returning the input preserves it. Processors
+  pass resulting events directly to the next processor without update replay.
+  `Event.apply` and `Breadcrumb.apply` take the record first and the update
+  second (`apply record upd`), matching every other scope/event operation,
+  and apply builders to an existing record.
+- **Scope editing is local and atomic.** `Sentry.Scope` exposes pure builders;
+  `Sentry.updateScope` accepts single updates, lists, and composed bundles.
+  Explicit effectful operations live in `Sentry.Scope.Operations`, with
+  convenience setters retained in `Sentry`. Capture merges selected layers;
+  users replace wholesale and contexts replace payloads by name. No parent
+  links or inherited snapshots are stored. Removing a field from an absent
+  local context leaves it absent; deleting its last field retains the context.
+- **Nested builder semantics.** `setX` replaces, `modifyX` creates from empty
+  when absent, and `modifyExistingX` skips absent values without evaluating the
+  update. This applies to users, requests, geos, and typed contexts. Typed-context
+  modifiers preserve mismatched variants without evaluating updates; setters
+  replace them explicitly. Removal never creates a payload.
+- **Request and typed context builders.** Use qualified, unaliased imports such
+  as `Sentry.Request` and `Sentry.AppContext`, with calls like
+  `Sentry.AppContext.setAppName`. Header edits match ASCII case-insensitively;
+  replacement records retain their input. Typed context setters replace whole
+  payloads. `Sentry.Context.Internal` shares custom-context transformations:
+  scope edits are local, while Event edits include merged metadata and never
+  reveal inherited values after removal. Typed payloads ignore field transforms.
+- **Force computed maps before storing them in lazy protocol fields.** Preserve
+  argument strictness without deeply evaluating arbitrary JSON. The isolated
+  `sentry-core:residency` checks measure 200,000 overwrites of one user-data key
+  and one custom-context field while each scope stays live, with a retained-growth ceiling of 1 MiB.
 
 ### Key Design Patterns
 
@@ -275,6 +341,10 @@ Server-side rate limit enforcement per Sentry protocol (compliant with official 
 | `sentry-core/library/Sentry/Integration.hs` | Plugin interface for event processing |
 | `sentry-core/library/Sentry/Transport.hs` | Abstraction for event delivery |
 | `sentry-core/library/Sentry/Client/Options.hs` | Configuration options |
+| `sentry-core/library/Sentry/Update.hs` | The `Update` type, `Empty`, and the four `witch` conversions |
+| `sentry-core/library/Sentry/User.hs` | The user record plus its field builders (same shape: `Geo`, `Breadcrumb`, `Event`, `RuntimeContext`, `Request`, `OsContext`, `AppContext`, `Mechanism`) |
+| `sentry-core/library/Sentry/Event/Captured.hs` | `CapturedEvent`, the in-flight capture wrapper |
+| `sentry-core/library/Sentry/Scope/Update.hs` | Composable atomic scope updates (`ScopeUpdate`) |
 | `sentry/library/Sentry/Transport/Executor/Async.hs` | Async executor with worker threads |
 | `sentry/library/Sentry/Transport/Executor/RateLimiter.hs` | Rate limiting implementation |
 | `cabal.project` | Workspace package list |
@@ -319,6 +389,7 @@ Server-side rate limit enforcement per Sentry protocol (compliant with official 
 - ✅ Test/benchmark infrastructure configured
 - ✅ Plugin system (Transport, Integration) in place
 - ✅ Async transport executor with rate limiting
+- ✅ Scope metadata and Patrol record modification (`Sentry.Update` + `Sentry.<Record>`)
 - ⏳ HTTP transport implementation
 - ⏳ Integration tests for sentry package
 - ⏳ Example integrations (breadcrumbs, contexts)

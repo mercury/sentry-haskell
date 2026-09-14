@@ -15,8 +15,8 @@ import Data.Maybe (isJust)
 import Data.Typeable (cast)
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Sentry.Client (Client)
-import Sentry.Scope (Scope, ScopeData)
-import Sentry.Scope qualified as Scope
+import Sentry.Scope.Operations (Scope, ScopeData)
+import Sentry.Scope.Operations qualified as Scope
 
 -- | Clone the current layer and return its parent together with the child.
 acquireCurrent :: IO (Maybe Scope, Scope)

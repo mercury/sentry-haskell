@@ -16,17 +16,17 @@ import Data.Text qualified as Text
 import Patrol qualified
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Level qualified as Patrol.Level
-import Sentry.Event qualified as Event
+import Sentry.Event qualified
 
 -- | A representative exception event, built the same way
 -- 'Sentry.Capture.captureException' would build one.
 sampleEvent :: Patrol.Event
-sampleEvent = Event.fromException . toException $ userError "boom"
+sampleEvent = Sentry.Event.fromException . toException $ userError "boom"
 
 -- | A message event whose formatted body is @n@ bytes of filler, for stressing
 -- serialization and allocation with larger payloads.
 messageEvent :: Int -> Patrol.Event
-messageEvent n = Event.fromMessage Patrol.Level.Error (Text.replicate n "x")
+messageEvent n = Sentry.Event.fromMessage Patrol.Level.Error (Text.replicate n "x")
 
 -- | A valid 'Patrol.Type.Envelope.Envelope' wrapping 'sampleEvent'.
 sampleEnvelope :: Patrol.Dsn -> Patrol.Envelope
