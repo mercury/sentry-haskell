@@ -89,6 +89,11 @@ module Sentry.Event
     clearModules,
 
     -- * Fingerprint
+    defaultFingerprintComponent,
+    prependFingerprintComponent,
+    ensureDefaultFingerprint,
+    removeDefaultFingerprint,
+    modifyFingerprint,
     setFingerprint,
     appendFingerprintComponent,
     clearFingerprint,
@@ -161,6 +166,8 @@ import Sentry.BrowserContext qualified
 import Sentry.Context.Internal qualified
 import Sentry.DeviceContext qualified
 import Sentry.Exception qualified
+import Sentry.Fingerprint.Internal (defaultFingerprintComponent)
+import Sentry.Fingerprint.Internal qualified as Fingerprint
 import Sentry.OsContext qualified
 import Sentry.Request qualified
 import Sentry.RuntimeContext qualified
@@ -341,13 +348,31 @@ clearModules = Update \e -> e{Patrol.Event.modules = Map.empty}
 setFingerprint :: [Text] -> EventUpdate
 setFingerprint !assigned = Update \e -> e{Patrol.Event.fingerprint = assigned}
 
--- | Append one fingerprint component.
-appendFingerprintComponent :: Text -> EventUpdate
-appendFingerprintComponent !value = Update \e -> let !result = e.fingerprint <> [value] in e{Patrol.Event.fingerprint = result}
+-- | Transform the complete list once, forcing the result to WHNF only.
+modifyFingerprint :: ([Text] -> [Text]) -> EventUpdate
+modifyFingerprint f = Update \e -> let !result = f e.fingerprint in e{Patrol.Event.fingerprint = result}
 
--- | Remove the fingerprint, restoring Sentry's default grouping.
+-- | Append a component, preserving order and duplicates; no default is added.
+appendFingerprintComponent :: Text -> EventUpdate
+appendFingerprintComponent !value = modifyFingerprint (Fingerprint.append value)
+
+-- | Prepend a component, preserving duplicates; no default is added.
+prependFingerprintComponent :: Text -> EventUpdate
+prependFingerprintComponent !value = modifyFingerprint (Fingerprint.prepend value)
+
+-- | Prepend the canonical default token if neither recognized spelling occurs.
+-- Existing tokens keep their position and spelling.
+ensureDefaultFingerprint :: EventUpdate
+ensureDefaultFingerprint = modifyFingerprint Fingerprint.ensureDefault
+
+-- | Remove every @{{ default }}@ and @{{default}}@ token.
+removeDefaultFingerprint :: EventUpdate
+removeDefaultFingerprint = modifyFingerprint Fingerprint.removeDefault
+
+-- | Store an empty fingerprint. Scope grouping can still supply a default at
+-- capture; clear in a processor after merging to force normal grouping.
 clearFingerprint :: EventUpdate
-clearFingerprint = Update \e -> e{Patrol.Event.fingerprint = []}
+clearFingerprint = setFingerprint []
 
 -- * Processing errors
 

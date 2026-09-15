@@ -635,3 +635,20 @@ guarantee, not an unconditional performance improvement.
 Pure `Sentry.Scope` breadcrumb edits affect only local storage and do not run
 hooks, supply timestamps, or enforce retention. Use `Sentry.addBreadcrumb`
 and its effectful variants for those capture policies.
+
+### Fingerprint grouping
+
+Use pure updates to combine normal Sentry grouping with a custom component:
+
+```haskell
+Sentry.updateScope scope
+  [ Sentry.Scope.ensureDefaultFingerprint,
+    Sentry.Scope.appendFingerprintComponent "payment-provider"
+  ]
+```
+
+The same builders are available in `Sentry.Event`. Custom Event fingerprints
+now take precedence over scope fingerprints. Empty or singleton default-token
+Event fingerprints use scope grouping when present. To force normal grouping
+regardless of scope defaults, apply `Sentry.Event.clearFingerprint` in a processor
+after scope merging. See [fingerprint semantics](docs/scopes.md#fingerprints).

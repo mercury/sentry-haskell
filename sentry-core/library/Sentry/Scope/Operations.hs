@@ -167,6 +167,7 @@ import Sentry.Breadcrumb qualified
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Fingerprint.Internal qualified as Fingerprint
 import Sentry.OsContext (OsContextUpdate)
 import Sentry.RuntimeContext (RuntimeContextUpdate)
 import Sentry.Scope.Internal (Scope, ScopeData (..), ScopeType (..))
@@ -422,12 +423,14 @@ unsetEventProcessor scope = Update.apply scope Update.unsetEventProcessor
 --
 -- Field semantics:
 --
--- * Scalar fields ('level', 'fingerprint', 'transaction', 'user'): scope wins
+-- * Scalar fields ('level', 'transaction', 'user'): scope wins
 --   when it carries a value, otherwise the event's value is preserved. Scope
 --   is treated as authoritative because it represents the most-specific
 --   contextual state (whether ambient or attached as an annotation), and
 --   because event constructors like 'Patrol.Type.Event.fromSomeException'
 --   prefill defaults that scope is expected to override.
+-- * 'fingerprint': custom Event values take priority; empty or singleton default-token
+--   Event values defer to a fingerprint present o the scope.
 -- * Collection fields ('tags', 'extras', 'contexts'): unioned, with the
 --   event's keys overriding the scope's on conflicts.
 -- * 'breadcrumbs': the event's own breadcrumbs come first; scope breadcrumbs
@@ -443,7 +446,7 @@ applyToEvent scope ce = scope.eventProcessor ce{event = merged}
     merged =
       event
         { Patrol.Event.level = scope.level <|> event.level,
-          Patrol.Event.fingerprint = fromMaybe event.fingerprint scope.fingerprint,
+          Patrol.Event.fingerprint = Fingerprint.merge scope.fingerprint event.fingerprint,
           Patrol.Event.transaction = fromMaybe event.transaction scope.transaction,
           Patrol.Event.user = scope.user <|> event.user,
           Patrol.Event.tags = Map.union event.tags scope.tags,

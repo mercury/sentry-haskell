@@ -50,8 +50,16 @@ module Sentry.Scope.Update
     unsetUser,
     modifyUser,
     modifyExistingUser,
+    defaultFingerprintComponent,
+    prependFingerprintComponent,
+    ensureDefaultFingerprint,
+    removeDefaultFingerprint,
+    modifyFingerprint,
     setFingerprint,
     unsetFingerprint,
+    appendFingerprintComponent,
+    clearFingerprint,
+    modifyExistingFingerprint,
     setTransaction,
     unsetTransaction,
 
@@ -128,6 +136,8 @@ import Sentry.BrowserContext qualified
 import Sentry.Context.Internal qualified
 import Sentry.DeviceContext qualified
 import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Fingerprint.Internal (defaultFingerprintComponent)
+import Sentry.Fingerprint.Internal qualified as Fingerprint
 import Sentry.OsContext qualified
 import Sentry.RuntimeContext (RuntimeContextUpdate)
 import Sentry.RuntimeContext qualified
@@ -201,13 +211,47 @@ modifyExistingUser upd = edit \s -> case s.user of
   Nothing -> s
   Just u -> let !u' = Sentry.Update.run upd u in s{user = Just u'}
 
--- | Set the fingerprint.
+-- | Replace the local fingerprint, forcing the list to WHNF, not its elements.
 setFingerprint :: [Text] -> ScopeUpdate
-setFingerprint fp = edit \s -> s{fingerprint = Just fp}
+setFingerprint !fp = edit \s -> s{fingerprint = Just fp}
 
--- | Clear the fingerprint.
+-- | Remove the local assignment. Other active layers may supply grouping.
+-- Unsetting a cloned value does not restore the suspended outer current scope.
 unsetFingerprint :: ScopeUpdate
 unsetFingerprint = edit \s -> s{fingerprint = Nothing}
+
+-- | Transform the complete local list once, starting from [] when absent.
+-- Reads stored (including cloned) data only; forces the result to WHNF.
+modifyFingerprint :: ([Text] -> [Text]) -> ScopeUpdate
+modifyFingerprint f = edit \s -> let !result = f (maybe [] id s.fingerprint) in s{fingerprint = Just result}
+
+-- | Skip absent fingerprints without evaluating the function.
+modifyExistingFingerprint :: ([Text] -> [Text]) -> ScopeUpdate
+modifyExistingFingerprint f = edit \s -> case s.fingerprint of
+  Nothing -> s
+  Just fp -> let !result = f fp in s{fingerprint = Just result}
+
+-- | Append locally, creating when absent, preserving order and duplicates.
+appendFingerprintComponent :: Text -> ScopeUpdate
+appendFingerprintComponent !value = modifyFingerprint (Fingerprint.append value)
+
+-- | Prepend locally, creating when absent, preserving duplicates.
+prependFingerprintComponent :: Text -> ScopeUpdate
+prependFingerprintComponent !value = modifyFingerprint (Fingerprint.prepend value)
+
+-- | Ensure a default token locally, creating when absent. Existing tokens
+-- retain their position and spelling; otherwise prepend the canonical token.
+ensureDefaultFingerprint :: ScopeUpdate
+ensureDefaultFingerprint = modifyFingerprint Fingerprint.ensureDefault
+
+-- | Remove all recognized default tokens, skipping absence. Removing the last
+-- component retains a present empty list.
+removeDefaultFingerprint :: ScopeUpdate
+removeDefaultFingerprint = modifyExistingFingerprint Fingerprint.removeDefault
+
+-- | Store Just [], overriding lower scope layers, but not custom Event grouping.
+clearFingerprint :: ScopeUpdate
+clearFingerprint = setFingerprint []
 
 -- | Set the transaction name.
 setTransaction :: Text -> ScopeUpdate

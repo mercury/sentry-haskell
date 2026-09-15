@@ -127,6 +127,7 @@ library
     Sentry.Client.Internal
     Sentry.Client.Options.Defaults
     Sentry.Collection.Internal
+    Sentry.Fingerprint.Internal
 
   autogen-modules: Paths_sentry_core
   build-depends:
@@ -171,6 +172,7 @@ test-suite unit
     ClientReportTest
     ClientResolutionTest
     CollectionBuilderTest
+    FingerprintTest
     IntegrationSetupTest
     LifecycleTest
     OptionsEnvTest

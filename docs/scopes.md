@@ -152,3 +152,31 @@ such as `"request-handler"`; capture uses the annotated metadata.
 Asynchronous exceptions are rethrown without scope annotations, preserving
 their identity and cancellation behavior. Capture them explicitly if they
 should be reported.
+
+## Fingerprints
+
+Scope fingerprints replace lower layers, including when explicitly empty.
+**Behavior change:** scope fingerprints no longer overwrite custom Event
+fingerprints. Only an empty Event fingerprint or a singleton `"{{ default }}"`
+(or `"{{default}}"`) defers to a present scope fingerprint. A default token
+alongside custom components is custom grouping and stays unchanged.
+
+Both `Sentry.Event` and `Sentry.Scope` expose `defaultFingerprintComponent`,
+`setFingerprint`, `appendFingerprintComponent`, `prependFingerprintComponent`,
+`modifyFingerprint`, `ensureDefaultFingerprint`, `removeDefaultFingerprint`,
+and `clearFingerprint`. Append/prepend preserve duplicates without adding a
+default token. Ensure preserves existing token spelling and position, otherwise
+prepending the canonical token. Remove deletes all occurrences of both recognized
+spellings. Modify transforms the complete list once. Assignments and computed
+lists are forced to WHNF only; list elements are not deeply evaluated.
+
+Scope modifications start from `[]` when absent; `modifyExistingFingerprint`
+skips absence without evaluating its function. Append, prepend, and ensure create
+a local assignment; remove skips absence. Clear stores `Just []`, while unset
+stores `Nothing`; removing the last component retains `Just []`.
+
+Builders read only the selected scope's stored data, including cloned values.
+They never materialize other active layers. Unsetting a cloned value does not
+restore the suspended outer current scope's value. To force normal grouping
+despite contextual defaults, clear or replace the fingerprint in an event
+processor after scope merging.
