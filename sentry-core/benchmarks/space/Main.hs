@@ -23,3 +23,6 @@ main = Weigh.mainWith do
     "captureMessage, heavy request scope"
     (Workload.runProfile Workload.discardingClient Workload.heavy)
     ()
+  Weigh.io "disabled metadata, 1000 calls" Workload.disabledMetadata 1000
+  Weigh.io "disabled metadata, 10000 calls" Workload.disabledMetadata 10000
+  Weigh.io "disabled metadata, 100000 calls" Workload.disabledMetadata 100000

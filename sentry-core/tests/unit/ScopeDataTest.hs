@@ -11,9 +11,14 @@ import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
+import Sentry.Capture qualified as Capture
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations (ScopeData (..), ScopeType (..))
+import Sentry.Scope.Operations qualified as Scope
+import Sentry.Test qualified as Test
+import Sentry.User qualified
 import Test.Hspec
 import Witch qualified
 
@@ -171,3 +176,52 @@ testUser2 =
       segment = "",
       username = "bob"
     }
+
+spec_eventPrecedence :: Spec
+spec_eventPrecedence = describe "scope to Event precedence" do
+  it "preserves present Event identity and transaction but uses scope collision keys and level" do
+    let scope =
+          def
+            { user = Just Sentry.User.empty{Sentry.User.id = "scope"},
+              transaction = Just "scope",
+              level = Just Patrol.Level.Warning,
+              tags = Map.singleton "key" "scope",
+              extras = Map.singleton "key" Aeson.Null,
+              contexts = Map.singleton "custom" (Patrol.Context.Other mempty)
+            }
+        event =
+          Patrol.Event.empty
+            { Patrol.Event.user = Just Sentry.User.empty,
+              Patrol.Event.transaction = "event",
+              Patrol.Event.level = Just Patrol.Level.Info,
+              Patrol.Event.tags = Map.singleton "key" "event",
+              Patrol.Event.extra = Map.singleton "key" (Aeson.Bool True),
+              Patrol.Event.contexts = Map.singleton "custom" (Patrol.Context.Other (Map.singleton "old" Aeson.Null))
+            }
+    case Scope.applyToEvent scope (Witch.into @CapturedEvent event) of
+      Nothing -> expectationFailure "unexpected drop"
+      Just result -> do
+        result.user `shouldBe` event.user
+        result.transaction `shouldBe` "event"
+        result.level `shouldBe` scope.level
+        result.tags `shouldBe` scope.tags
+        result.extra `shouldBe` scope.extras
+        result.contexts `shouldBe` scope.contexts
+    let fallback = Scope.applyToEvent scope (Witch.into @CapturedEvent Patrol.Event.empty)
+    fmap (.user) fallback `shouldBe` Just scope.user
+    fmap (.transaction) fallback `shouldBe` Just "scope"
+    let emptyAssignment = scope{transaction = Just ""}
+    fmap (.transaction) (Scope.applyToEvent emptyAssignment (Witch.into @CapturedEvent Patrol.Event.empty)) `shouldBe` Just ""
+
+  it "processors observe merged values and enrich the delivered Event" do
+    (_, transport) <- Test.withClient \_ -> Scope.IO.withScope \scope -> do
+      Scope.setTag scope "collision" "scope"
+      Scope.setEventProcessor scope \ce ->
+        if Map.lookup "collision" ce.event.tags == Just "scope"
+          then Just ce.event{Patrol.Event.tags = Map.insert "processed" "yes" ce.event.tags}
+          else Nothing
+      Capture.captureEvent_ Patrol.Event.empty{Patrol.Event.tags = Map.singleton "collision" "event"}
+      local <- Scope.readScopeRef scope
+      Map.lookup "processed" local.tags `shouldBe` Nothing
+    events <- Test.fetchAndClearEvents transport
+    map (.tags) events `shouldBe` [Map.fromList [("collision", "scope"), ("processed", "yes")]]

@@ -62,7 +62,7 @@ spec_fingerprints = describe "fingerprints" do
           (.fingerprint) <$> S.readScopeRef outer `shouldReturn` Just ["outer"]
           (.fingerprint) <$> S.readScopeRef inner `shouldReturn` Just ["outer", "inner"]
           SU.apply inner S.unsetFingerprint
-          (.fingerprint) <$> S.readAmbientScope `shouldReturn` Just ["isolation"]
+          (.fingerprint) <$> S.readMergedScope `shouldReturn` Just ["isolation"]
         (.fingerprint) <$> S.readScopeRef isolation `shouldReturn` Just ["isolation"]
   it "does not materialize isolation data into an empty current layer" do
     IO.withIsolationScope \isolation -> do

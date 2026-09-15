@@ -41,7 +41,7 @@ data Layers = Layers
 -- | Insert a freshly created, empty 'Scope.Global' scope into the given
 -- 'Context'. Every helper below goes through this rather than leaving the
 -- global layer absent, because 'Sentry.Scope.readScopeAt' (like
--- 'Sentry.Scope.readAmbientScope') falls back to the real process-wide
+-- 'Sentry.Scope.readMergedScope') falls back to the real process-wide
 -- 'Internal.processGlobal' singleton when no override is present on the
 -- 'Context' — a hand-built 'Context.empty' would otherwise silently read
 -- shared, cross-test state.
@@ -176,15 +176,15 @@ spec_addBreadcrumbAt = describe "addBreadcrumbAt" do
 
 spec_setTagAt :: Spec
 spec_setTagAt = describe "setTagAt" do
-  it "lands on current when both current and isolation are present" do
+  it "lands on isolation when both current and isolation are present" do
     layers <- allLayers
     Scope.setTagAt layers.context "env" "prod"
     currentData <- maybe (fail "expected a current scope") Scope.readScopeRef layers.current
     isolationData <- maybe (fail "expected an isolation scope") Scope.readScopeRef layers.isolation
-    currentData.tags `shouldBe` Map.fromList [("env", "prod")]
-    isolationData.tags `shouldBe` mempty
+    isolationData.tags `shouldBe` Map.fromList [("env", "prod")]
+    currentData.tags `shouldBe` mempty
 
-  it "falls back to isolation when only isolation is present" do
+  it "targets isolation when only isolation is present" do
     layers <- isolationOnly
     Scope.setTagAt layers.context "env" "staging"
     isolationData <- maybe (fail "expected an isolation scope") Scope.readScopeRef layers.isolation
@@ -291,7 +291,7 @@ spec_typedContextAt = describe "typed context selection" do
   it "replaces whole local payloads via explicit context operations" do
     layers <- globalOnly
     scope <- Scope.create Scope.Current
-    let ctx = Scope.insertCurrent scope layers.context
+    let ctx = Scope.insertIsolation scope layers.context
     Scope.setContextValues scope "os" [("old", Aeson.Null)]
     Scope.setOsContextAt ctx [Sentry.OsContext.setName "Linux", Sentry.OsContext.setVersion "old"]
     Scope.setOsContextAt ctx (Sentry.OsContext.setName "new")
@@ -299,3 +299,22 @@ spec_typedContextAt = describe "typed context selection" do
     result <- Scope.readScopeRef scope
     Map.lookup "os" result.contexts `shouldBe` Just (Patrol.Context.Os Sentry.OsContext.empty{Sentry.OsContext.name = "new"})
     Map.lookup "app" result.contexts `shouldBe` Just (Patrol.Context.App Sentry.AppContext.empty)
+
+spec_transactionTarget :: Spec
+spec_transactionTarget = describe "context-based transaction targeting" do
+  it "targets current while general metadata ignores a current-only context" do
+    layers <- currentOnly
+    Scope.setTagAt layers.context (error "absent isolation") (error "value")
+    Scope.setOptionalUserAt layers.context (error "optional user")
+    Scope.setTransactionAt layers.context "operation"
+    current <- maybe (fail "missing current") Scope.readScopeRef layers.current
+    current.tags `shouldBe` mempty
+    current.transaction `shouldBe` Just "operation"
+    Scope.unsetTransactionAt layers.context
+    cleared <- Scope.readScopeAt layers.context
+    cleared.transaction `shouldBe` Nothing
+  it "does not fall back to isolation for transactions" do
+    layers <- isolationOnly
+    Scope.setTransactionAt layers.context (error "absent current")
+    result <- Scope.readScopeAt layers.context
+    result.transaction `shouldBe` Nothing

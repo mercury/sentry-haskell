@@ -24,7 +24,7 @@ import Sentry.Scope.Operations qualified as Scope
 -- @MonadMask@\/@MonadIO@ version.
 withScope :: forall m a. (MonadUnliftIO m) => (Scope -> m a) -> m a
 withScope action = withRunInIO \run -> bracket Bracket.acquireCurrent Bracket.releaseCurrent \(_, scope) ->
-  catchAndAnnotate (run (action scope)) Scope.readAmbientScope
+  catchAndAnnotate (run (action scope)) Scope.readMergedScope
 
 -- | Like 'withScope', but operates on the isolation scope layer.
 --
@@ -35,7 +35,7 @@ withScope action = withRunInIO \run -> bracket Bracket.acquireCurrent Bracket.re
 -- @MonadMask@\/@MonadIO@ version.
 withIsolationScope :: forall m a. (MonadUnliftIO m) => (Scope -> m a) -> m a
 withIsolationScope action = withRunInIO \run -> bracket (Bracket.acquireIsolation Nothing) Bracket.releaseIsolation \(_, _, scope) ->
-  catchAndAnnotate (run (action scope)) Scope.readAmbientScope
+  catchAndAnnotate (run (action scope)) Scope.readMergedScope
 
 -- | Run an action with the given 'Client' bound to its isolation scope.
 --

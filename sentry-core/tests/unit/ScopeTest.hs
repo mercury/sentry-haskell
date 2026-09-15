@@ -143,7 +143,7 @@ scopeSpec withCurrent withIsolation withBoundClient = do
             case result of
               Right () -> expectationFailure "expected cancellation"
               Left exn -> fromException @Exception.AsyncException exn `shouldBe` Just ThreadKilled
-            merged <- Scope.readAmbientScope
+            merged <- Scope.readMergedScope
             merged.tags `shouldBe` Map.singleton "parent" "retained"
       )
       [ ("current", \action -> withCurrent (const action)),
@@ -177,7 +177,7 @@ bindingSpec withCurrent withIsolation withBoundClient = do
                     ThreadLocal.adjustContext (Context.insert key ("changed" :: String))
                     if fails then Exception.throwIO (userError "restore") else pure ()
                   either (const fails) (const (not fails)) result `shouldBe` True
-                  merged <- Scope.readAmbientScope
+                  merged <- Scope.readMergedScope
                   merged.tags `shouldBe` Map.fromList [("isolation", "parent"), ("current", "parent")]
                   ctx <- ThreadLocal.getContext
                   Context.lookup key ctx `shouldBe` Just "changed"
@@ -197,7 +197,7 @@ bindingSpec withCurrent withIsolation withBoundClient = do
         Scope.setTag parent "parent" "retained"
         result <- Exception.try @SomeException $ withBoundClient innerClient do
           Scope.addBreadcrumbs [Breadcrumb.empty{Breadcrumb.message = "first"}, Breadcrumb.empty{Breadcrumb.message = "second"}]
-          merged <- Scope.readAmbientScope
+          merged <- Scope.readMergedScope
           map (.message) (toList merged.breadcrumbs) `shouldBe` ["second"]
           merged.tags `shouldBe` Map.singleton "parent" "retained"
           withBoundClient outerClient $ Capture.captureMessage_ Level.Info "nested"
@@ -218,5 +218,5 @@ spec_transformerExit = it "Monad scope restores on ExceptT early exit" $ Test.wi
       Scope.setTag child "child" "discarded"
       throwError ("early" :: String)
     (result :: Either String ()) `shouldBe` Left "early"
-    merged <- Scope.readAmbientScope
+    merged <- Scope.readMergedScope
     merged.tags `shouldBe` Map.singleton "parent" "retained"

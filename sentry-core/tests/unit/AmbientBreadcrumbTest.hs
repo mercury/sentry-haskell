@@ -3,6 +3,7 @@ module AmbientBreadcrumbTest where
 import Control.Exception (bracket)
 import Data.Default (def)
 import Data.Foldable (toList)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing)
 import OpenTelemetry.Context qualified as Context
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
@@ -13,6 +14,7 @@ import Patrol.Type.Level qualified as Level
 import Sentry.Capture qualified as Capture
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
+import Sentry.Core qualified as Sentry
 import Sentry.Init qualified as Init
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations qualified as Scope
@@ -31,7 +33,7 @@ crumb :: String -> Breadcrumb.Breadcrumb
 crumb msg = Breadcrumb.empty{Breadcrumb.message = Witch.from msg}
 
 messages :: IO [String]
-messages = map (Witch.from . (.message)) . toList . (.breadcrumbs) <$> Scope.readAmbientScope
+messages = map (Witch.from . (.message)) . toList . (.breadcrumbs) <$> Scope.readMergedScope
 
 spec_ambientBreadcrumbs :: Spec
 spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
@@ -84,7 +86,7 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
       ctx <- ThreadLocal.getContext
       Context.lookup key ctx `shouldBe` Just True
       currentData <- Scope.readScopeRef current
-      merged <- Scope.readAmbientScope
+      merged <- Scope.readMergedScope
       merged.tags `shouldBe` currentData.tags
     messages >>= (`shouldBe` ["parent"])
     Scope.IO.withIsolationScope \_ -> do
@@ -97,7 +99,7 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
     resolved <- Scope.lookupClient
     isNothing resolved `shouldBe` True
 
-  it "keeps explicit contexts independent and existing non-recording scopes usable" $ freshContext do
+  it "keeps explicit contexts independent and skips disabled ambient writes" $ freshContext do
     explicitContext <- ThreadLocal.getContext
     transport <- Test.new
     global <- Scope.getGlobal
@@ -110,4 +112,75 @@ spec_ambientBreadcrumbs = describe "lazy ambient breadcrumbs" do
     messages >>= (`shouldBe` ["ambient"])
     Scope.bindClient Nothing global
     Scope.addBreadcrumb (crumb "existing")
-    messages >>= (`shouldBe` ["ambient", "existing"])
+    messages >>= (`shouldBe` ["ambient"])
+
+spec_ambientMetadata :: Spec
+spec_ambientMetadata = describe "ambient metadata targeting" do
+  it "skips invalid arguments and creates no scopes while disabled" $ freshContext do
+    Sentry.setUser (error "user" :: Sentry.UserUpdate)
+    Sentry.setTag (error "key") (error "value")
+    Sentry.setTransaction (error "transaction")
+    Sentry.addBreadcrumb (error "crumb" :: Sentry.BreadcrumbUpdate)
+    Sentry.addBreadcrumbs (error "crumbs")
+    Sentry.clearBreadcrumbs
+    _ <- Sentry.readMergedScope
+    ctx <- ThreadLocal.getContext
+    isNothing (Scope.lookupIsolation ctx) `shouldBe` True
+    isNothing (Scope.lookupCurrent ctx) `shouldBe` True
+
+  it "getters preserve unrelated keys and disabled writes preserve explicit metadata" $ freshContext do
+    key <- Context.newKey "unrelated"
+    ThreadLocal.adjustContext (Context.insert key (42 :: Int))
+    isolation <- Sentry.getIsolationScope
+    current <- Sentry.getCurrentScope
+    Scope.setTag isolation "explicit" "kept"
+    Scope.setTransaction current "kept"
+    Sentry.clearTags
+    Sentry.unsetTransaction
+    Sentry.modifyUser (error "update" :: Sentry.UserUpdate)
+    Sentry.setOptionalUser (error "optional user")
+    again <- Sentry.getIsolationScope
+    result <- Sentry.readScopeRef again
+    result.tags `shouldBe` Map.singleton "explicit" "kept"
+    result.user `shouldBe` Nothing
+    local <- Sentry.readScopeRef current
+    local.transaction `shouldBe` Just "kept"
+    ctx <- ThreadLocal.getContext
+    Context.lookup key ctx `shouldBe` Just 42
+
+  it "retains isolation writes across current exits and restores nested isolation" $ freshContext do
+    transport <- Test.new
+    client <- Test.mkClient transport
+    global <- Scope.getGlobal
+    Scope.bindClient (Just client) global
+    Sentry.withScope \_ -> do
+      Sentry.setTag "request" "outer"
+      Sentry.setTransaction "local"
+      current <- Sentry.getCurrentScope >>= Sentry.readScopeRef
+      current.transaction `shouldBe` Just "local"
+      current.tags `shouldBe` mempty
+    outer <- Sentry.readMergedScope
+    outer.tags `shouldBe` Map.singleton "request" "outer"
+    outer.transaction `shouldBe` Nothing
+    Sentry.withIsolationScope \_ -> do
+      Sentry.setTag "request" "inner"
+      Sentry.withIsolationScope \_ -> Sentry.setTag "request" "nested"
+      inner <- Sentry.readMergedScope
+      inner.tags `shouldBe` Map.singleton "request" "inner"
+    restored <- Sentry.readMergedScope
+    restored.tags `shouldBe` outer.tags
+    current <- Sentry.getCurrentScope
+    Scope.bindClient (Just Sentry.NON_RECORDING_CLIENT) current
+    Sentry.setTag "request" "disabled"
+    Sentry.addBreadcrumbs (error "shadowed")
+    final <- Sentry.readMergedScope
+    final.tags `shouldBe` outer.tags
+
+  it "skips breadcrumb hooks on a non-recording client with an existing scope" $ freshContext do
+    let opts = def{dsn = Dsn.Disabled, beforeBreadcrumb = Just (error "disabled hook")}
+    Init.withSentry opts \_ -> do
+      isolation <- Sentry.getIsolationScope
+      Sentry.addBreadcrumb (crumb "ignored")
+      Sentry.addBreadcrumbs [crumb "ignored"]
+      result <- Sentry.readScopeRef isolation
+      result.breadcrumbs `shouldBe` mempty

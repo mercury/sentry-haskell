@@ -5,7 +5,7 @@
 -- import Sentry.Level qualified as Level
 --
 -- Sentry.captureMessage Level.Error \"boom\"
--- Sentry.setLevel scope Level.Warning
+-- Sentry.setLevel Level.Warning
 -- @
 module Sentry.Level (module Patrol.Type.Level) where
 

@@ -73,7 +73,7 @@ import Witch qualified
 -- guarantee delivery: asynchronous failures can occur after capture returns.
 captureEvent :: (MonadIO m) => Patrol.Event -> m (Maybe Patrol.EventId)
 captureEvent event = do
-  scope <- Scope.readAmbientScope
+  scope <- Scope.readMergedScope
   let client = fromMaybe NON_RECORDING_CLIENT (Scope.client scope)
       captured = Witch.from event
   prepared <- prepareCapture client scope captured
@@ -112,7 +112,7 @@ instance Default CaptureOverrides where
 --    'ScopeData' annotation (attached by 'Sentry.Scope.IO.withScope' when the
 --    exception escaped a scope boundary), that 'ScopeData' is /authoritative/.
 -- 2. Otherwise, the ambient thread-local scope at the call site
---    ('Sentry.Scope.readAmbientScope') is read and applied.
+--    ('Sentry.Scope.readMergedScope') is read and applied.
 --
 -- The scope is then used to construct the event that gets handed off to the
 -- internal pipeline for transport to the appropriate backend.
@@ -167,7 +167,7 @@ captureExceptionImpl cs overrides (toException -> orig) = do
   --
   -- The annotation carries throw-site scope data, but the client is always
   -- resolved from the call site.
-  ambient <- Scope.readAmbientScope
+  ambient <- Scope.readMergedScope
   let client = fromMaybe NON_RECORDING_CLIENT (Scope.client ambient)
       (anns, inner) = case fromException @(AnnotatedException SomeException) orig of
         Just (AnnotatedException as i) -> (as, i)
@@ -201,7 +201,7 @@ applyLevelOverride overrides event =
 captureMessage :: (HasCallStack, MonadIO m) => Patrol.Level -> Text -> m (Maybe Patrol.EventId)
 captureMessage lvl msg = do
   -- One ambient read supplies both the client and the scope to apply.
-  scope <- Scope.readAmbientScope
+  scope <- Scope.readMergedScope
   let client = fromMaybe NON_RECORDING_CLIENT (Scope.client scope)
       captured =
         (Witch.from (Sentry.Event.fromMessage lvl msg))

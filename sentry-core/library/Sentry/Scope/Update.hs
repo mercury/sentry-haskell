@@ -47,6 +47,7 @@ module Sentry.Scope.Update
     setLevel,
     unsetLevel,
     setUser,
+    setOptionalUser,
     unsetUser,
     modifyUser,
     modifyExistingUser,
@@ -195,6 +196,12 @@ unsetLevel = edit \s -> s{level = Nothing}
 setUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
 setUser upd =
   edit \s -> let !u = Sentry.Update.run upd Sentry.User.empty in s{user = Just u}
+
+-- | This update replaces the local user with a supplied record, or removes the
+-- assignment when given 'Nothing'. Removing it allows an inherited user to
+-- appear in captures; 'Just' an empty user retains a local override.
+setOptionalUser :: Maybe Sentry.User.User -> ScopeUpdate
+setOptionalUser = maybe unsetUser setUser
 
 -- | Remove the local user override.
 unsetUser :: ScopeUpdate

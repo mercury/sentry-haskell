@@ -429,3 +429,76 @@ This project adapts sentry-rust's proven architecture to Haskell:
 - **Haddock**: Build docs with `cabal haddock sentry-core`
 - **Source code**: Well-documented modules in `sentry-core/library/Sentry/`
 - **sentry-rust reference**: https://github.com/getsentry/sentry-rust for architectural inspiration
+
+## Ambient metadata targeting
+
+### Metadata targeting
+
+Top-level metadata operations no longer take a `Scope` argument. `Sentry.setUser`,
+`setTag`, and operations that modify, remove, or clear metadata target isolation.
+`setTransaction` and `unsetTransaction` target current. Use `updateScope scope` with pure
+`Sentry.Scope` builders, or `Sentry.Scope.Operations`, for explicit local edits.
+Context-based `*At` operations target isolation only, except transactions target
+current; absent targets are no-ops.
+
+### Disabled-client behavior
+
+Ambient operations, including breadcrumbs, skip argument evaluation, hooks,
+scope creation, and existing metadata mutation without a recording client.
+A disabled current client shadows recording parent clients. Explicit operations
+and `getIsolationScope` / `getCurrentScope` remain usable without initialization.
+
+### Scope inspection
+
+Getters return an existing scope or install an empty missing layer, preserving
+other context keys. They never copy inherited metadata or bind a client.
+`readScopeRef` reads local metadata; `readMergedScope` merges layers without
+creating scopes or running processors.
+
+### Capture precedence
+
+Scope layers combine in global, isolation, current order. Users replace
+wholesale, and present-empty assignments are significant. Layer composition
+and bracket lifetimes remain unchanged.
+
+At capture, a user assigned directly to the event wins, even when empty, and a
+nonempty event transaction wins. Scope level and colliding tag, extra, and
+context keys win; named context payloads replace wholesale. Custom event
+fingerprints win; empty or singleton `{{ default }}` or `{{default}}` fingerprints
+defer to a present scope fingerprint. The event's breadcrumbs precede scope
+breadcrumbs.
+
+The scope's `eventProcessor` receives the merged event inside its
+`CapturedEvent`. Processors may enrich the delivered event beyond what scope
+inspection shows.
+
+## Writing for a technical audience
+
+Apply the with the following repository-specific refinements.
+
+- Lead with concrete behavior, use consistent terminology, and define unfamiliar
+  terms where needed.
+- Explain non-obvious choices and consequences without inventing design rationale.
+- Present the common case before advanced details. Use focused, realistic examples
+  with relevant failure handling and state their prerequisites.
+- Use complete sentences with clear subjects in comments and Haddock. Avoid terse
+  labels, fragments, and choppy sequences of short sentences.
+- Separate significant, distinct points with blank comment lines. Combine closely
+  related details when that reads naturally; normal line wrapping is not a
+  paragraph break.
+- Keep public descriptions focused on useful behavior. Discuss evaluation mechanics
+  only where they help explain implementation or strictness requirements.
+- Remove filler, marketing language, and repeated explanations while preserving
+  necessary caveats.
+- Use sentence-case headings and terminal punctuation in prose comments.
+- Allow natural contractions and conversational wording without forcing personality
+  or personal anecdotes.
+
+For example:
+
+```haskell
+-- | This operation modifies the isolation scope's user, starting from an empty
+-- user when none exists locally.
+--
+-- It leaves the scope unchanged when there is no recording client.
+```

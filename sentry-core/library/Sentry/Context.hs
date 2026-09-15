@@ -4,7 +4,7 @@
 -- @
 -- import Sentry.Context qualified as Context
 --
--- Sentry.setContext scope \"runtime\" (Context.Runtime RuntimeContext.empty)
+-- Sentry.setContext \"runtime\" (Context.Runtime RuntimeContext.empty)
 -- @
 module Sentry.Context (module Patrol.Type.Context) where
 

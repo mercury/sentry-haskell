@@ -17,8 +17,10 @@ module Sentry.Scope
     -- * Construction and reading
     create,
     clone,
+    getIsolationScope,
+    getCurrentScope,
     readScopeRef,
-    readAmbientScope,
+    readMergedScope,
     readScopeAt,
 
     -- * Client binding and resolution
@@ -50,6 +52,7 @@ module Sentry.Scope
     setLevel,
     unsetLevel,
     setUser,
+    setOptionalUser,
     unsetUser,
     modifyUser,
     modifyExistingUser,
@@ -124,5 +127,5 @@ module Sentry.Scope
   )
 where
 
-import Sentry.Scope.Operations (Scope, ScopeData (..), ScopeType (..), applyToEvent, bindClient, clone, configureGlobal, create, getGlobal, insertCurrent, insertIsolation, lookupClient, lookupClientAt, lookupCurrent, lookupIsolation, readAmbientScope, readScopeAt, readScopeRef, removeCurrent, removeIsolation, resolveBreadcrumbScope, resolveClient, resolveClientAt, resolveMutationScope)
+import Sentry.Scope.Operations (Scope, ScopeData (..), ScopeType (..), applyToEvent, bindClient, clone, configureGlobal, create, getCurrentScope, getGlobal, getIsolationScope, insertCurrent, insertIsolation, lookupClient, lookupClientAt, lookupCurrent, lookupIsolation, readMergedScope, readScopeAt, readScopeRef, removeCurrent, removeIsolation, resolveBreadcrumbScope, resolveClient, resolveClientAt, resolveMutationScope)
 import Sentry.Scope.Update hiding (apply)

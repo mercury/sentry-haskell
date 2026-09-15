@@ -25,6 +25,7 @@ import Sentry.Request qualified
 import Sentry.RuntimeContext qualified
 import Sentry.Scope qualified as Builders
 import Sentry.Scope.Operations qualified as Scope
+import Sentry.Scope.Operations qualified as ScopeOperations
 import Sentry.Scope.Update qualified as Update
 import Sentry.Test qualified as Test
 import Sentry.TraceContext qualified
@@ -250,6 +251,18 @@ spec_scopeOperations = describe "Scope user operations" do
     userAfter (seeded <> Update.setUser (Sentry.User.setEmail "new"))
       `shouldBe` Just Sentry.User.empty{Sentry.User.email = "new"}
 
+  it "optional users replace whole records, remove assignments, or retain empty overrides" do
+    let replacement = Sentry.User.empty{Sentry.User.name = "replacement"}
+    userAfter (seeded <> Update.setOptionalUser (Just replacement)) `shouldBe` Just replacement
+    userAfter (seeded <> Update.setOptionalUser Nothing) `shouldBe` Nothing
+    userAfter (seeded <> Update.setOptionalUser (Just Sentry.User.empty)) `shouldBe` Just Sentry.User.empty
+    userAfter (seeded <> Update.setOptionalUser Nothing <> Update.modifyUser (Sentry.User.setEmail "new"))
+      `shouldBe` Just Sentry.User.empty{Sentry.User.email = "new"}
+
+  it "forces an optional user's record before storing it" do
+    scope <- Scope.create Scope.Current
+    ScopeOperations.setOptionalUser scope (Just (error "user")) `shouldThrow` anyErrorCall
+
   it "modifyUser creates a local user when absent" do
     userAfter (Update.modifyUser (Sentry.User.setId "123")) `shouldBe` Just Sentry.User.empty{Sentry.User.id = "123"}
     userAfter (Update.modifyUser noChange) `shouldBe` Just Sentry.User.empty
@@ -261,7 +274,7 @@ spec_scopeOperations = describe "Scope user operations" do
 
   it "never applies the update for an absent user, even a diverging one" do
     scope <- Scope.create Scope.Current
-    Sentry.modifyExistingUser scope (error "must not run" :: Sentry.UserUpdate)
+    ScopeOperations.modifyExistingUser scope (error "must not run" :: Sentry.UserUpdate)
     result <- Scope.readScopeRef scope
     result.user `shouldBe` Nothing
 
@@ -269,13 +282,13 @@ spec_strictness :: Spec
 spec_strictness = describe "Update strictness" do
   it "raises at the call site rather than storing a bottom in the scope" do
     scope <- Scope.create Scope.Current
-    Sentry.setUser scope (Sentry.User.setId "present")
+    ScopeOperations.setUser scope (Sentry.User.setId "present")
     -- A diverging update as a whole.
-    Sentry.modifyUser scope (error "whole update" :: Sentry.UserUpdate) `shouldThrow` anyErrorCall
+    ScopeOperations.modifyUser scope (error "whole update" :: Sentry.UserUpdate) `shouldThrow` anyErrorCall
     -- A diverging value inside a field setter: patrol's User fields are lazy,
     -- so this only surfaces here because the setters are strict too.
-    Sentry.modifyUser scope (Sentry.User.setName (error "field value")) `shouldThrow` anyErrorCall
-    Sentry.modifyUser scope (Sentry.User.setData "k" (error "data value")) `shouldThrow` anyErrorCall
+    ScopeOperations.modifyUser scope (Sentry.User.setName (error "field value")) `shouldThrow` anyErrorCall
+    ScopeOperations.modifyUser scope (Sentry.User.setData "k" (error "data value")) `shouldThrow` anyErrorCall
     -- The scope survives each failed attempt with its original user intact.
     result <- Scope.readScopeRef scope
     fmap (.id) result.user `shouldBe` Just "present"
@@ -288,11 +301,11 @@ spec_inheritance = describe "Inheritance" do
   it "a local user shadows an inherited one and unsetUser reveals it" do
     (_, transport) <- Test.withClient \_ ->
       Sentry.withIsolationScope \outer -> do
-        Sentry.setUser outer (Sentry.User.setId "inherited")
+        ScopeOperations.setUser outer (Sentry.User.setId "inherited")
         Sentry.withScope \inner -> do
-          Sentry.setUser inner (Sentry.User.setName "local")
+          ScopeOperations.setUser inner (Sentry.User.setName "local")
           Sentry.captureMessage_ Sentry.Info "local"
-          Sentry.unsetUser inner
+          ScopeOperations.unsetUser inner
           Sentry.captureMessage_ Sentry.Info "inherited"
     events <- Test.fetchAndClearEvents transport
     fmap (.user) events
@@ -303,9 +316,9 @@ spec_inheritance = describe "Inheritance" do
   it "an explicitly empty local user masks an inherited one and sends no user" do
     (_, transport) <- Test.withClient \_ ->
       Sentry.withIsolationScope \outer -> do
-        Sentry.setUser outer (Sentry.User.setId "inherited")
+        ScopeOperations.setUser outer (Sentry.User.setId "inherited")
         Sentry.withScope \inner -> do
-          Sentry.setUser inner Sentry.User.empty
+          ScopeOperations.setUser inner Sentry.User.empty
           Sentry.captureMessage_ Sentry.Info "masked"
     events <- Test.fetchAndClearEvents transport
     -- The empty user wins the merge, and then serializes away entirely: the
@@ -317,11 +330,11 @@ spec_inheritance = describe "Inheritance" do
   it "cleanup-only updates preserve an inherited identity" do
     (_, transport) <- Test.withClient \_ ->
       Sentry.withIsolationScope \outer -> do
-        Sentry.setUser outer (Sentry.User.setId "inherited")
+        ScopeOperations.setUser outer (Sentry.User.setId "inherited")
         Sentry.withScope \inner -> do
-          Sentry.modifyExistingUser inner noChange
+          ScopeOperations.modifyExistingUser inner noChange
           Sentry.captureMessage_ Sentry.Info "noop"
-          Sentry.modifyExistingUser inner [Sentry.User.unsetGeo, Sentry.User.clearData]
+          ScopeOperations.modifyExistingUser inner [Sentry.User.unsetGeo, Sentry.User.clearData]
           Sentry.captureMessage_ Sentry.Info "cleanup"
     events <- Test.fetchAndClearEvents transport
     fmap (.user) events
@@ -371,7 +384,7 @@ spec_hooks = describe "Hooks returning records" do
             }
     (_, transport) <- Test.withCustomClient opts \_ ->
       Sentry.withIsolationScope \scope -> do
-        Sentry.setUser scope (Sentry.User.setId "42")
+        ScopeOperations.setUser scope (Sentry.User.setId "42")
         Sentry.captureMessage_ Sentry.Info "hooked"
     events <- Test.fetchAndClearEvents transport
     fmap (.tags) events `shouldBe` [Map.singleton "kind" "message"]
@@ -427,7 +440,7 @@ spec_concurrency :: Spec
 spec_concurrency = describe "Concurrent scope updates" do
   it "preserves distinct fields written from separate threads" do
     scope <- Scope.create Scope.Current
-    Sentry.setUser scope noChange
+    ScopeOperations.setUser scope noChange
     concurrentlyBounded
       [ Sentry.updateScope scope (Builders.modifyUser (Sentry.User.setId "123")),
         Sentry.updateScope scope (Builders.modifyUser (Sentry.User.setEmail "alice@example.com"))
@@ -442,7 +455,7 @@ spec_concurrency = describe "Concurrent scope updates" do
     -- loop, so a 'Sentry.User.with' read and the assignment that depends on it
     -- land in the same atomic update and a losing thread re-runs the whole thing.
     scope <- Scope.create Scope.Current
-    Sentry.setUser scope (Sentry.User.setData "count" (Aeson.Number 0))
+    ScopeOperations.setUser scope (Sentry.User.setData "count" (Aeson.Number 0))
     let increment = Sentry.updateScope scope . Builders.modifyUser $ Sentry.User.with \u ->
           case Map.lookup "count" u.data_ of
             Just (Aeson.Number n) -> Sentry.User.setData "count" (Aeson.Number (n + 1))
@@ -589,7 +602,7 @@ spec_modifyCreation = describe "optional record modification" do
     evaluate (asUser (Sentry.User.modifyGeo (Sentry.Geo.setCity undefined))) `shouldThrow` anyErrorCall
   it "forces a newly created scope user and leaves failed edits atomic" do
     scope <- Scope.create Scope.Current
-    Sentry.modifyUser scope (Sentry.User.setId undefined) `shouldThrow` anyErrorCall
+    ScopeOperations.modifyUser scope (Sentry.User.setId undefined) `shouldThrow` anyErrorCall
     result <- Scope.readScopeRef scope
     result.user `shouldBe` Nothing
   it "modifies existing nested records while preserving other fields" do

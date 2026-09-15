@@ -104,12 +104,12 @@ spec_breadcrumbs = do
         [c] -> c.message `shouldBe` "modified"
         cs -> expectationFailure $ "expected 1 crumb, got " <> show (length cs)
 
-    it "still writes to the scope for NON_RECORDING_CLIENT (transport is irrelevant at add-time)" do
+    it "skips existing scopes for NON_RECORDING_CLIENT" do
       scopeData <- Scope.IO.withClient NON_RECORDING_CLIENT $
         Scope.IO.withIsolationScope \scope -> do
           Scope.addBreadcrumb (crumb "present")
           liftIO $ Scope.readScopeRef scope
-      map (.message) (toList scopeData.breadcrumbs) `shouldBe` ["present"]
+      map (.message) (toList scopeData.breadcrumbs) `shouldBe` []
 
   describe "addBreadcrumbs" do
     it "adds multiple crumbs in order" do

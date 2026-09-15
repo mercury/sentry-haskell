@@ -23,6 +23,7 @@ import Sentry.OsContext qualified
 import Sentry.Request qualified
 import Sentry.RuntimeContext qualified
 import Sentry.Scope qualified
+import Sentry.Scope.Operations qualified as ScopeOperations
 import Sentry.Test qualified as Test
 import Sentry.User qualified
 import Test.Hspec
@@ -44,7 +45,7 @@ setCheckoutMetadata scope = do
         ],
       Sentry.Scope.setTag "feature" "checkout"
     ]
-  Sentry.modifyUser scope $ Sentry.User.with \user ->
+  ScopeOperations.modifyUser scope $ Sentry.User.with \user ->
     [ Sentry.User.setData "display_name" (Aeson.String user.name),
       betaCohort,
       Sentry.User.modifyGeo $ Sentry.Geo.with \geo ->
@@ -89,7 +90,7 @@ spec_beforeSendFacade = describe "beforeSend returning an Event" do
     (_, transport) <- Test.withCustomClient def{Sentry.beforeSend = Just scrub} \_ ->
       Sentry.withIsolationScope \scope -> do
         setCheckoutMetadata scope
-        Sentry.setExtra scope "authorization" (Aeson.String "Bearer hunter2")
+        ScopeOperations.setExtra scope "authorization" (Aeson.String "Bearer hunter2")
         Sentry.captureMessage_ Sentry.Info "checkout submitted"
     events <- Test.fetchAndClearEvents transport
     case events of
@@ -187,8 +188,8 @@ spec_nestedRecords :: Spec
 spec_nestedRecords = describe "nested public record builders" do
   it "sets typed scopes and reads nested requests without Patrol imports" do
     scope <- Sentry.Scope.create Sentry.Scope.Current
-    Sentry.setOsContext scope (Sentry.OsContext.setName "Linux")
-    Sentry.setAppContext scope [Sentry.AppContext.setAppName "checkout"]
+    ScopeOperations.setOsContext scope (Sentry.OsContext.setName "Linux")
+    ScopeOperations.setAppContext scope [Sentry.AppContext.setAppName "checkout"]
     snapshot <- Sentry.Scope.readScopeRef scope
     Map.lookup "os" snapshot.contexts `shouldBe` Just (Sentry.Context.Os Sentry.OsContext.empty{Sentry.OsContext.name = "Linux"})
     Map.lookup "app" snapshot.contexts `shouldBe` Just (Sentry.Context.App Sentry.AppContext.empty{Sentry.AppContext.appName = "checkout"})

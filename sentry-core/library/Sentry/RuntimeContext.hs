@@ -4,7 +4,7 @@
 -- import Sentry qualified
 -- import Sentry.RuntimeContext qualified
 --
--- Sentry.setRuntimeContext scope
+-- Sentry.setRuntimeContext
 --   [ Sentry.RuntimeContext.setName \"ghc\",
 --     Sentry.RuntimeContext.setVersion \"9.10.3\"
 --   ]

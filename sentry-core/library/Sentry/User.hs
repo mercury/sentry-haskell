@@ -5,7 +5,7 @@
 -- import Sentry.Geo qualified
 -- import Sentry.User qualified
 --
--- Sentry.setUser scope
+-- Sentry.setUser
 --   [ Sentry.User.setId \"user-42\",
 --     Sentry.User.setName \"Alice\",
 --     Sentry.User.setGeo [Sentry.Geo.setCity \"Detroit\", Sentry.Geo.setCountryCode \"US\"]

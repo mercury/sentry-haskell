@@ -180,3 +180,11 @@ runProfile mkClient p () = do
       Scope.setFingerprint cur ["benchmark", "sample"]
       modifyUserRepeatedly cur p.userEdits
       captureN
+
+-- | Repeated disabled ambient writes, including invalid arguments that must stay lazy.
+disabledMetadata :: Int -> IO ()
+disabledMetadata count = Test.withGlobalScope $
+  replicateM_ count do
+    Sentry.setTag (error "disabled key") (error "disabled value")
+    Sentry.setTransaction (error "disabled transaction")
+    Sentry.addBreadcrumbs (error "disabled breadcrumbs")

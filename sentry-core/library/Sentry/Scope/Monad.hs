@@ -25,7 +25,7 @@ import Sentry.Scope.Operations qualified as Scope
 -- @MonadUnliftIO@ version.
 withScope :: forall m a. (MonadMask m, MonadIO m) => (Scope -> m a) -> m a
 withScope action = MonadMask.bracket (liftIO Bracket.acquireCurrent) (liftIO . Bracket.releaseCurrent) \(_, scope) ->
-  catchAndAnnotate (action scope) Scope.readAmbientScope
+  catchAndAnnotate (action scope) Scope.readMergedScope
 
 -- | Like 'withScope', but operates on the isolation scope layer. Use this at
 -- request or task boundaries (e.g. one isolation scope per incoming HTTP
@@ -35,7 +35,7 @@ withScope action = MonadMask.bracket (liftIO Bracket.acquireCurrent) (liftIO . B
 -- @MonadUnliftIO@ version.
 withIsolationScope :: forall m a. (MonadMask m, MonadIO m) => (Scope -> m a) -> m a
 withIsolationScope action = MonadMask.bracket (liftIO $ Bracket.acquireIsolation Nothing) (liftIO . Bracket.releaseIsolation) \(_, _, scope) ->
-  catchAndAnnotate (action scope) Scope.readAmbientScope
+  catchAndAnnotate (action scope) Scope.readMergedScope
 
 -- | Run an action with the given 'Client' bound for its dynamic extent.
 --

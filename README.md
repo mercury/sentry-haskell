@@ -264,8 +264,21 @@ reportTrouble = do
 
 ### Working with Metadata
 
-Metadata builders describe pure changes; they can be applied with
-`Sentry.updateScope` to change several fields on a scope atomically:
+With a recording client, `Sentry.setUser` and `Sentry.setTag` select the isolation
+scope automatically, attaching request-wide metadata without a scope handle:
+
+```haskell
+Sentry.setUser [Sentry.User.setId "42"]
+Sentry.setTag "request_id" "req-123"
+```
+
+These automatic calls are called ambient operations. `Sentry.setTransaction`
+selects the current scope to name the current operation. Without a recording
+client, ambient operations leave metadata unchanged.
+
+Explicit scope edits remain available before initialization. Metadata builders
+describe pure changes; apply them with `Sentry.updateScope` to change several
+fields on a scope atomically:
 
 ```haskell
 import Sentry qualified
@@ -310,7 +323,7 @@ Use `Sentry.User.with` to compute an update from the user's existing fields:
 ```haskell
 fillMissingUserName :: Sentry.Scope -> IO ()
 fillMissingUserName scope =
-  Sentry.modifyUser scope $
+  Sentry.updateScope scope . Sentry.Scope.modifyUser $
     Sentry.User.with \user ->
       Sentry.User.setName
         (if user.name == "" then user.username else user.name)
@@ -324,7 +337,7 @@ follow the same pattern.
 > `Sentry.setUser` builds a replacement user, while `Sentry.modifyUser` updates
 > user metadata on either an existing or empty user value depending on what is
 > present in the scope, while `Sentry.modifyExistingUser` skips modifications
-> is no user exists on the scope being edited.
+> if no user exists on the scope being edited.
 >
 > All builders should follow this rough pattern of `set*`, `modify*`,
 > `modifyExisting*`.

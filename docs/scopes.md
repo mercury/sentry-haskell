@@ -7,10 +7,13 @@ Use the [README example](../README.md#scopes) to get started.
 ## Contents
 
 - [Which scope should I use?](#which-scope-should-i-use)
-- [How does metadata combine?](#how-does-metadata-combine)
+- [How are these layers merged?](#how-are-these-layers-merged)
+- [How does scope metadata apply to an event?](#how-does-scope-metadata-apply-to-an-event)
 - [What do setting, modifying, and removing do?](#what-do-setting-modifying-and-removing-do)
 - [How do I remove metadata before sending?](#how-do-i-remove-metadata-before-sending)
 - [What happens when an exception escapes?](#what-happens-when-an-exception-escapes)
+- [Fingerprints](#fingerprints)
+- [Defaults without overwriting](#defaults-without-overwriting)
 
 ## Which scope should I use?
 
@@ -21,7 +24,18 @@ Use the [README example](../README.md#scopes) to get started.
 | Current | Details about one operation | Enclosed action |
 
 Use `Sentry.configureGlobal` for process-wide metadata, `withIsolationScope`
-at request or task boundaries, and `withScope` for narrower operations:
+at request or task boundaries, and `withScope` for narrower operations.
+
+Use `Sentry.setTag` and `Sentry.setUser` to attach request-wide metadata without
+a scope handle. They select the isolation scope automatically.
+`Sentry.setTransaction` selects the current scope to name an operation.
+
+These automatic operations leave metadata unchanged without a recording client.
+Explicit edits through `Sentry.updateScope` remain available before initialization.
+
+The examples assume GHC2024 with `BlockArguments`, `OverloadedStrings`, and
+`OverloadedRecordDot` enabled. Run capture examples with a recording client,
+such as inside `Sentry.withSentry` with a configured DSN.
 
 ```haskell
 import Sentry qualified
@@ -30,42 +44,46 @@ import Sentry.User qualified
 
 handleRequest :: IO ()
 handleRequest =
-  Sentry.withIsolationScope \requestScope -> do
-    Sentry.updateScope requestScope
-      [ Sentry.Scope.setUser [Sentry.User.setId "42"],
-        Sentry.Scope.setTag "request_id" "req-123"
-      ]
-    Sentry.withScope \operationScope -> do
-      Sentry.setTag operationScope "operation" "charge-card"
+  Sentry.withIsolationScope \_ -> do
+    Sentry.setUser [Sentry.User.setId "42"]
+    Sentry.setTag "request_id" "req-123"
+    Sentry.withScope \scope -> do
+      Sentry.updateScope scope (Sentry.Scope.setTag "operation" "charge-card")
       Sentry.captureMessage_ Sentry.Info "Charging card"
     Sentry.captureMessage_ Sentry.Info "Request completed"
 ```
 
-Both capture calls include the request user and ID, however only the first
-includes the `operation` tag.
+The automatic setters attach request-wide metadata to the isolation scope, so
+both captures include the request user and ID.
 
-Leaving a bracketed `with{Isolation}Scope` restores the previous scope bindings:
-- `withScope` clones the current layer, or creates it if absent
-- `withIsolationScope` clones both the isolation and current layers and gives
-  the action a handle to the isolation layer
+The explicit `updateScope scope` call sets the `operation` tag for any events
+captured within `withScope`.
 
-Capture calls reference the active thread-local context, so forked threads do
-not automatically inherit the metadata attached to the thread-local context
-variable and must be attached manually using a helper function.
+Leaving `withScope` or `withIsolationScope` restores the previous scope bindings:
 
-## How does metadata combine?
+- `withScope` clones the `Current` scope, or creates it if absent.
+- `withIsolationScope` clones both the `Isolation` and `Current` scopes, or
+  creates them if either (or both) are absent.
 
-Capturing a message or an exception combines the scope layer in order from
-global -> isolation -> current, with later layers overriding previously set
-values on collision.
+> [!WARNING]
+> Scope metadata is stored on a thread-local context variable, so threads do
+> not automatically inherit scope metadata unless they have been forked by a
+> helper function that propagates thread-local context.
+
+## How are these layers merged?
+
+The `captureException`, `captureMessage`, and `captureEvent` functions combine
+scopes in order from `Global` -> `Isolation` -> `Current`, using these rules:
 
 | Metadata | Combination rule |
 | --- | --- |
-| Tags and extras | Combine by key; later values win |
-| User | A later user replaces the earlier user as a whole |
-| Contexts | Combine by context name; a later payload replaces the earlier payload at that name |
-| Level, fingerprint, transaction | Use the latest assigned value |
-| Breadcrumbs | Append in layer order |
+| Tags and extras | Combine by key; on collision, the later scope's value wins. |
+| User | The last assigned user replaces earlier users as a whole. |
+| Contexts | Combine by name; the later scope's payload replaces the entire earlier payload. |
+| Level, fingerprint, transaction | Use the last assigned value; absent values preserve earlier assignments. |
+| Breadcrumbs | Append in scope order: `Global`, `Isolation`, `Current`. |
+
+An explicitly empty user or fingerprint still counts as an assignment.
 
 For example, a user assigned on the current scope replaces the isolation user:
 
@@ -73,39 +91,101 @@ For example, a user assigned on the current scope replaces the isolation user:
 Isolation user: { id: "42", email: "alice@example.com" }
 Current user:   { name: "Alice" }
 
-Captured user:  { name: "Alice" }
+Merged user:    { name: "Alice" }
 ```
 
 The same replacement rule applies to a named context: assigning an `app`
 context on the current scope replaces the isolation scope's `app` payload.
 
+## How does scope metadata apply to an event?
+
+After combining the scope layers, capture functions apply the merged `ScopeData`
+to an event according to the following rules:
+
+| Metadata | Precedence |
+| --- | --- |
+| User | A user assigned directly to the event wins, including an empty user record; otherwise, use the scope's user. |
+| Transaction | A nonempty name on the event wins; an empty name defers to a transaction from the scope. |
+| Level | A level present on the scope overrides the level already present on an event. |
+| Tags and extras | Combine by key; on collision, the value present on the scope replaces the one on the event. |
+| Contexts | Combine by name; a scope payload replaces the entire event payload at that name. |
+| Fingerprint | A custom event fingerprint wins, while an empty list or a singleton `{{ default }}`/`{{default}}` value defers to a fingerprint present on the scope. |
+| Breadcrumbs | The event's breadcrumbs precede the scope's breadcrumbs. |
+
+The scope's event processor receives the merged event inside a `CapturedEvent`,
+which also contains the original exception when available.
+
+Integration processors and `beforeSend` hooks run after the scope's event
+processor, and can also modify or drop the event.
+
+The delivered event can therefore contain metadata that isn't shown by
+`readMergedScope`, which merges scope layers without running any of these
+event processors.
+
+Use `Sentry.Test` to assert which metadata reaches the transport in a unit test.
+
 ## What do setting, modifying, and removing do?
 
-`Sentry.updateScope scope ...` edits metadata stored on that scope, with the
-edit bundle applied atomically, in order, and not overriding any assignments
-that come after it.
+`Sentry.updateScope scope [ .. ]` atomically applies the edits specified in
+its argument list to the scope handle, in list order.
 
-- `setUser` builds a user from empty, or accepts a replacement record, and
-  replaces the local user
-- `modifyUser` edits an existing local user; if none exists, it does nothing
-- `unsetUser` removes the local user override, potentially revealing a user
-  from another layer
+### Setting and modifying users
 
-Suppose the isolation scope holds Alice, including her email, and the current
-scope has no user:
+The `Sentry.Scope` user builders edit only the selected scope's local user:
+
+- `setUser` replaces the user with a supplied record or a user built from empty.
+- `setOptionalUser` replaces the local user with `Just user`, or removes the
+  assignment with `Nothing`, allowing an inherited user to appear in captures.
+- `modifyUser` edits the user, starting from an empty record when none exists.
+- `modifyExistingUser` edits the user only when one already exists locally.
+- `unsetUser` removes the local assignment, allowing an inherited user to appear.
+
+Suppose the isolation scope contains Alice's ID and name, and the current
+scope has no user set on it:
 
 ```haskell
 Sentry.withScope \scope -> do
-  Sentry.modifyUser scope (Sentry.User.setEmail "")
+  Sentry.updateScope scope $
+    Sentry.Scope.modifyUser
+      [Sentry.User.setEmail "alice@example.com"]
   Sentry.captureMessage_ Sentry.Info "Example"
 ```
 
-The modification does nothing because the current scope has no local user.
-The capture still includes Alice's email from the isolation scope.
+`modifyUser` creates a local user containing only Alice's email address. That
+user replaces the isolation user at capture, so the event has no user ID or name.
+
+To preserve Alice's ID and name, copy the merged user into the current scope
+before editing it:
+
+```haskell
+do
+  metadata <- Sentry.readMergedScope
+  Sentry.withScope \scope -> do
+    Sentry.updateScope scope
+      [ Sentry.Scope.setOptionalUser metadata.user,
+        Sentry.Scope.modifyExistingUser
+          [Sentry.User.setEmail "alice@example.com"]
+      ]
+    Sentry.captureMessage_ Sentry.Info "Example"
+```
+
+This update copies the merged user into the current scope, then sets its email
+address. The captured event includes Alice's original ID and name alongside the
+new email. If the merged scopes have no user, `setOptionalUser Nothing` removes
+any local assignment and `modifyExistingUser` leaves it absent. Use `modifyUser`
+instead if you want to create a user containing the email in that case.
+
+The copy is a snapshot: subsequent changes to the isolation scope's user won't
+affect this scope's user.
+
+Scope edits do not modify inherited users. To remove user information from the
+final event regardless of its source, use `Sentry.Event.unsetUser` in
+[`beforeSend`](#how-do-i-remove-metadata-before-sending).
+
+### Modifying contexts
 
 Custom context edits are local too: `removeContext` removes the local scope's
-override, which means a captured report may contain metadata from the layer
-above it if any is set there.
+override, allowing a context from an earlier layer to appear in captures.
 
 `removeContextValue` leaves an absent local context absent; removing its last
 field retains an empty context, which continues to override a context of the
@@ -116,8 +196,8 @@ replace those payloads.
 
 ## How do I remove metadata before sending?
 
-Use `beforeSend` to edit the merged event that will be delivered, its input is
-a `CapturedEvent`. containing the event and capture metadata.
+Use `beforeSend` to edit the merged event before delivery. Its input is a
+`CapturedEvent` containing the event and capture metadata.
 
 Return `Just event` to keep the resulting record or `Nothing` to drop it.
 
@@ -156,8 +236,8 @@ should be reported.
 ## Fingerprints
 
 Scope fingerprints replace lower layers, including when explicitly empty.
-**Behavior change:** scope fingerprints no longer overwrite custom Event
-fingerprints. Only an empty Event fingerprint or a singleton `"{{ default }}"`
+Custom event fingerprints take priority over scope fingerprints. Only an empty
+event fingerprint or a singleton `"{{ default }}"`
 (or `"{{default}}"`) defers to a present scope fingerprint. A default token
 alongside custom components is custom grouping and stays unchanged.
 
@@ -167,11 +247,10 @@ Both `Sentry.Event` and `Sentry.Scope` expose `defaultFingerprintComponent`,
 and `clearFingerprint`. Append/prepend preserve duplicates without adding a
 default token. Ensure preserves existing token spelling and position, otherwise
 prepending the canonical token. Remove deletes all occurrences of both recognized
-spellings. Modify transforms the complete list once. Assignments and computed
-lists are forced to WHNF only; list elements are not deeply evaluated.
+spellings. Modify transforms the complete list once.
 
 Scope modifications start from `[]` when absent; `modifyExistingFingerprint`
-skips absence without evaluating its function. Append, prepend, and ensure create
+leaves absent fingerprints unchanged. Append, prepend, and ensure create
 a local assignment; remove skips absence. Clear stores `Just []`, while unset
 stores `Nothing`; removing the last component retains `Just []`.
 
@@ -185,7 +264,6 @@ processor after scope merging.
 
 `Sentry.Event.setTagIfAbsent` and `setContextIfAbsent` insert only when the key
 is missing. Existing values, including empty tags or context payloads, win.
-Unused proposed values are not evaluated; inserted values are forced to WHNF.
 
 The matching `Sentry.Scope` builders check only the selected scope's stored
 metadata (including cloned values). They do not check other active layers, so a
