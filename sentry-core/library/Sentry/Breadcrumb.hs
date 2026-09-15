@@ -3,7 +3,20 @@
 -- See "Sentry.Update" for the composition rules every builder module shares.
 module Sentry.Breadcrumb
   ( -- * Record
-    module Patrol.Type.Breadcrumb,
+    Breadcrumb (..),
+    empty,
+    Breadcrumbs (..),
+    BreadcrumbsUpdate,
+    emptyCollection,
+    withCollection,
+    singleton,
+    setValues,
+    clearValues,
+    appendBreadcrumb,
+    prependBreadcrumb,
+    firstBreadcrumb,
+    lastBreadcrumb,
+    eachBreadcrumb,
     BreadcrumbType (..),
 
     -- * Updates
@@ -36,9 +49,11 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime)
 import Patrol qualified
-import Patrol.Type.Breadcrumb
+import Patrol.Type.Breadcrumb (Breadcrumb (..), empty)
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType (BreadcrumbType (..))
+import Patrol.Type.Breadcrumbs (Breadcrumbs (..))
+import Sentry.Collection.Internal (mapWHNF)
 import Sentry.Update (Update (..))
 import Sentry.Update qualified
 import Witch qualified
@@ -108,3 +123,60 @@ clearData = Update \c -> c{Patrol.Breadcrumb.data_ = Map.empty}
 -- 'Breadcrumb'.
 apply :: (Witch.From a BreadcrumbUpdate) => Breadcrumb -> a -> Breadcrumb
 apply = flip Sentry.Update.run
+
+-- | Updates to the collection; lists of child updates describe one child.
+type BreadcrumbsUpdate :: Type
+type BreadcrumbsUpdate = Update Breadcrumbs
+
+-- | An empty collection wrapper.
+emptyCollection :: Breadcrumbs
+emptyCollection = Breadcrumbs []
+
+-- | Inspect the collection after preceding edits.
+withCollection :: (Witch.From a BreadcrumbsUpdate) => (Breadcrumbs -> a) -> BreadcrumbsUpdate
+withCollection = Sentry.Update.with
+
+-- | Construct one child from an update, update list, or record.
+singleton :: (Witch.From a BreadcrumbUpdate) => a -> Breadcrumbs
+singleton upd = let !child = Sentry.Update.run upd empty in Breadcrumbs [child]
+
+-- | Replace the values, constructing and forcing every child to WHNF.
+setValues :: (Witch.From a BreadcrumbUpdate) => [a] -> BreadcrumbsUpdate
+setValues upds = Update \_ ->
+  let !result = mapWHNF (\upd -> Sentry.Update.run upd empty) upds
+   in Breadcrumbs result
+
+-- | Empty the wrapper without removing it from its parent.
+clearValues :: BreadcrumbsUpdate
+clearValues = Update (const emptyCollection)
+
+-- | Append a child constructed from empty.
+appendBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
+appendBreadcrumb upd = Update \(Breadcrumbs xs) ->
+  let !child = Sentry.Update.run upd empty in Breadcrumbs (xs <> [child])
+
+-- | Prepend a child constructed from empty.
+prependBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
+prependBreadcrumb upd = Update \(Breadcrumbs xs) ->
+  let !child = Sentry.Update.run upd empty in Breadcrumbs (child : xs)
+
+-- | Edit the first entry; an empty selection skips the update.
+firstBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
+firstBreadcrumb upd = Update \collection@(Breadcrumbs xs) -> case xs of
+  [] -> collection
+  x : rest -> let !child = Sentry.Update.run upd x in Breadcrumbs (child : rest)
+
+-- | Edit the last entry without forcing unselected records.
+lastBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
+lastBreadcrumb upd = Update \(Breadcrumbs xs) -> let !result = go xs in Breadcrumbs result
+  where
+    go [] = []
+    go [x] = let !child = Sentry.Update.run upd x in [child]
+    go (x : xs) = let !rest = go xs in x : rest
+
+-- | Edit every entry independently, forcing all results to WHNF.
+-- Empty selections skip the update. Cardinality and order are preserved.
+eachBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
+eachBreadcrumb upd = Update \(Breadcrumbs xs) ->
+  let !result = mapWHNF (Sentry.Update.run upd) xs
+   in Breadcrumbs result

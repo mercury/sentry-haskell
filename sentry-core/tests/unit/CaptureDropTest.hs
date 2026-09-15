@@ -60,7 +60,7 @@ spec_captureDrop = describe "drop-site instrumentation" do
         Scope.IO.withScope \scope -> do
           Scope.setTag scope "scope-tag" "present"
           Scope.setUser scope testUser
-          Scope.Update.apply scope (Scope.Update.addBreadcrumb scopeCrumb)
+          Scope.Update.apply scope (Scope.Update.appendBreadcrumb scopeCrumb)
           Scope.setEventProcessor scope process
           captureEvent Patrol.Event.empty
       result `shouldSatisfy` (/= Nothing)

@@ -64,7 +64,7 @@ scrub ce =
         Sentry.Event.removeExtra "authorization",
         Sentry.Event.modifyUser (Sentry.User.setEmail ""),
         Sentry.Event.with \event ->
-          Sentry.Event.addFingerprint (if Map.member "kind" event.tags then "tagged" else "bare")
+          Sentry.Event.appendFingerprintComponent (if Map.member "kind" event.tags then "tagged" else "bare")
       ]
 
 spec_scopeMetadata :: Spec
@@ -156,7 +156,7 @@ spec_breadcrumbFacade = describe "record-returning breadcrumb hooks" do
   it "keeps pure breadcrumb edits free of ambient policy" do
     (snapshot, _) <- Test.withCustomClient def{Sentry.beforeBreadcrumb = Just (const Nothing), Sentry.maxBreadcrumbs = 0} \_ ->
       Sentry.withIsolationScope \scope -> do
-        Sentry.updateScope scope (Sentry.Scope.addBreadcrumb (Sentry.Breadcrumb.setMessage "raw"))
+        Sentry.updateScope scope (Sentry.Scope.appendBreadcrumb (Sentry.Breadcrumb.setMessage "raw"))
         Sentry.Scope.readScopeRef scope
     fmap (.timestamp) (toList snapshot.breadcrumbs) `shouldBe` [Nothing]
 

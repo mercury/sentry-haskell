@@ -235,7 +235,7 @@ spec_reading = describe "with" do
     asEvent
       ( Sentry.Event.setTag "env" "prod"
           <> Sentry.Event.with \e ->
-            Sentry.Event.addFingerprint (if Map.member "env" e.tags then "tagged" else "bare")
+            Sentry.Event.appendFingerprintComponent (if Map.member "env" e.tags then "tagged" else "bare")
       )
       `shouldBe` Sentry.Event.empty
         { Sentry.Event.tags = Map.singleton "env" "prod",

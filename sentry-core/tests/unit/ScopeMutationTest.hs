@@ -232,19 +232,19 @@ spec_scopeUpdateCoverage = describe "Sentry.Scope.Update extended coverage" do
     let crumb m = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = m}
 
     it "addBreadcrumb appends in order" do
-      let d = runUpdate (Update.addBreadcrumb (crumb "a") <> Update.addBreadcrumb (crumb "b")) mempty
+      let d = runUpdate (Update.appendBreadcrumb (crumb "a") <> Update.appendBreadcrumb (crumb "b")) mempty
       map (.message) (toList d.breadcrumbs) `shouldBe` ["a", "b"]
 
     it "addBreadcrumbs appends a batch in order" do
-      let d = runUpdate (Update.addBreadcrumbs [crumb "a", crumb "b", crumb "c"]) mempty
+      let d = runUpdate (Update.appendBreadcrumbs [crumb "a", crumb "b", crumb "c"]) mempty
       map (.message) (toList d.breadcrumbs) `shouldBe` ["a", "b", "c"]
 
     it "clearBreadcrumbs empties the sequence" do
-      let d = runUpdate (Update.addBreadcrumbs [crumb "a", crumb "b"] <> Update.clearBreadcrumbs) mempty
+      let d = runUpdate (Update.appendBreadcrumbs [crumb "a", crumb "b"] <> Update.clearBreadcrumbs) mempty
       toList d.breadcrumbs `shouldBe` []
 
     it "trimBreadcrumbs keeps the most recent n" do
-      let d = runUpdate (Update.addBreadcrumbs [crumb "a", crumb "b", crumb "c"] <> Update.trimBreadcrumbs 2) mempty
+      let d = runUpdate (Update.appendBreadcrumbs [crumb "a", crumb "b", crumb "c"] <> Update.trimBreadcrumbs 2) mempty
       map (.message) (toList d.breadcrumbs) `shouldBe` ["b", "c"]
 
   describe "event processors" do

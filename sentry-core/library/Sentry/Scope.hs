@@ -94,8 +94,14 @@ module Sentry.Scope
     clearContexts,
 
     -- ** Breadcrumbs (without policy)
-    addBreadcrumb,
-    addBreadcrumbs,
+    appendBreadcrumb,
+    appendBreadcrumbs,
+    prependBreadcrumb,
+    firstBreadcrumb,
+    lastBreadcrumb,
+    eachBreadcrumb,
+    setBreadcrumbs,
+    modifyBreadcrumbs,
     clearBreadcrumbs,
     trimBreadcrumbs,
 

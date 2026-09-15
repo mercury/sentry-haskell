@@ -75,7 +75,7 @@ breadcrumbResidency = do
   forM_ [1 .. 200_000 :: Int] \n ->
     Sentry.updateScope
       scope
-      (Scope.addBreadcrumb (Breadcrumb.setMessage (tshow n)) <> Scope.trimBreadcrumbs breadcrumbCap)
+      (Scope.appendBreadcrumb (Breadcrumb.setMessage (tshow n)) <> Scope.trimBreadcrumbs breadcrumbCap)
   performGC
   after <- gcdetails_live_bytes . gc <$> getRTSStats
   snapshot <- Scope.readScopeRef scope

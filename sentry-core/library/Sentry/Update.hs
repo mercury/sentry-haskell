@@ -19,8 +19,9 @@
 -- Existing-only builders skip absent values without evaluating the update.
 -- Typed-context modifiers also skip mismatched variants; setters replace them.
 --
--- Every record with builders gets its own qualified module, each of which
--- re-exports the record itself alongside @set@ \/ @unset@ \/ @modify@ \/ @add@
+-- Each domain concept, including closely associated collection wrappers, gets
+-- its own qualified module, which
+-- re-exports the record itself alongside @set@ \/ @unset@ \/ @modify@ \/ @append@
 -- \/ @remove@ \/ @clear@ builders for its fields.
 --
 -- 'run', 'Sentry.updateScope', 'Sentry.Event.apply', 'Sentry.Breadcrumb.apply',
@@ -56,9 +57,12 @@ import Data.Monoid (Dual (..), Endo (..))
 import Patrol qualified
 import Patrol.Type.AppContext qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
+import Patrol.Type.Breadcrumbs qualified
 import Patrol.Type.BrowserContext qualified
 import Patrol.Type.DeviceContext qualified
 import Patrol.Type.Event qualified as Patrol.Event
+import Patrol.Type.Exception qualified
+import Patrol.Type.Exceptions qualified
 import Patrol.Type.Geo qualified as Patrol.Geo
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Patrol.Type.OsContext qualified
@@ -162,3 +166,12 @@ instance Empty Patrol.DeviceContext where
 
 instance Empty Patrol.TraceContext where
   empty = Patrol.Type.TraceContext.empty
+
+instance Empty Patrol.Type.Exception.Exception where
+  empty = Patrol.Type.Exception.empty
+
+instance Empty Patrol.Type.Exceptions.Exceptions where
+  empty = Patrol.Type.Exceptions.empty
+
+instance Empty Patrol.Type.Breadcrumbs.Breadcrumbs where
+  empty = Patrol.Type.Breadcrumbs.empty

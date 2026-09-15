@@ -580,3 +580,58 @@ the thread-local context machinery the scope system is built on.
 
 [`sentry-rust`]: https://github.com/getsentry/sentry-rust
 [`patrol`]: https://github.com/tfausak/patrol
+
+### Sequence, nest, inspect, select
+
+Builder modules follow domain concepts: `Sentry.Exception` contains both an
+exception and its chain; `Sentry.Breadcrumb` contains a breadcrumb and its
+collection. Sequence edits with `<>` or lists, nest through ordinary builder
+functions, inspect the current record with `with`, and select existing entries
+with `firstException` / `lastException` / `eachException` (or their breadcrumb
+counterparts).
+
+```haskell
+import Sentry.Event qualified
+import Sentry.Exception qualified
+
+scrub event = Sentry.Event.apply event $
+  Sentry.Event.modifyExistingExceptionChain $
+    Sentry.Exception.lastException
+      [ Sentry.Exception.setType "HttpExceptionRequest"
+      , Sentry.Exception.setValue "Request failed"
+      ]
+```
+
+```haskell
+import Sentry.Event qualified
+import Sentry.Breadcrumb qualified
+
+label event = Sentry.Event.apply event $
+  Sentry.Event.modifyBreadcrumbs
+    [ Sentry.Breadcrumb.appendBreadcrumb
+        [ Sentry.Breadcrumb.setMessage "Request completed"
+        , Sentry.Breadcrumb.setCategory "http"
+        ]
+    , Sentry.Breadcrumb.eachBreadcrumb $
+        Sentry.Breadcrumb.with $ \crumb ->
+          Sentry.Breadcrumb.setMessage (crumb.category <> ": " <> crumb.message)
+    ]
+```
+
+An update list describes one record; `setValues` introduces multiple records.
+`singleton`, append, prepend, and `setValues` construct children from empty.
+Selectors preserve order and cardinality, skip updates for empty selections,
+and apply `with` independently to each selected entry. Replacement records
+replace wholesale without copying metadata. Ordinary exception edits preserve
+untouched mechanism and stacktrace fields.
+
+`setX` replaces, `modifyX` creates from empty when absent, and
+`modifyExistingX` skips absence. `clearValues` retains an empty wrapper;
+`unsetExceptionChain` and `unsetBreadcrumbs` remove the Event wrapper.
+Constructed and selected child results are forced to WHNF during application;
+their contents are not deeply evaluated. This is an evaluation and retention
+guarantee, not an unconditional performance improvement.
+
+Pure `Sentry.Scope` breadcrumb edits affect only local storage and do not run
+hooks, supply timestamps, or enforce retention. Use `Sentry.addBreadcrumb`
+and its effectful variants for those capture policies.

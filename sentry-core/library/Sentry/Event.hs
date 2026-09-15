@@ -90,12 +90,12 @@ module Sentry.Event
 
     -- * Fingerprint
     setFingerprint,
-    addFingerprint,
+    appendFingerprintComponent,
     clearFingerprint,
 
     -- * Processing errors
     setErrors,
-    addError,
+    appendError,
     clearErrors,
 
     -- * User
@@ -106,11 +106,15 @@ module Sentry.Event
 
     -- * Integration-populated payloads
     setBreadcrumbs,
+    modifyBreadcrumbs,
+    modifyExistingBreadcrumbs,
     unsetBreadcrumbs,
     setDebugMeta,
     unsetDebugMeta,
-    setException,
-    unsetException,
+    setExceptionChain,
+    modifyExceptionChain,
+    modifyExistingExceptionChain,
+    unsetExceptionChain,
     setLogentry,
     unsetLogentry,
     setRequest,
@@ -152,9 +156,11 @@ import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.LogEntry qualified as Patrol.LogEntry
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.AppContext qualified
+import Sentry.Breadcrumb qualified
 import Sentry.BrowserContext qualified
 import Sentry.Context.Internal qualified
 import Sentry.DeviceContext qualified
+import Sentry.Exception qualified
 import Sentry.OsContext qualified
 import Sentry.Request qualified
 import Sentry.RuntimeContext qualified
@@ -336,8 +342,8 @@ setFingerprint :: [Text] -> EventUpdate
 setFingerprint !assigned = Update \e -> e{Patrol.Event.fingerprint = assigned}
 
 -- | Append one fingerprint component.
-addFingerprint :: Text -> EventUpdate
-addFingerprint !value = Update \e -> let !result = e.fingerprint <> [value] in e{Patrol.Event.fingerprint = result}
+appendFingerprintComponent :: Text -> EventUpdate
+appendFingerprintComponent !value = Update \e -> let !result = e.fingerprint <> [value] in e{Patrol.Event.fingerprint = result}
 
 -- | Remove the fingerprint, restoring Sentry's default grouping.
 clearFingerprint :: EventUpdate
@@ -350,8 +356,8 @@ setErrors :: [Patrol.EventProcessingError] -> EventUpdate
 setErrors !assigned = Update \e -> e{Patrol.Event.errors = assigned}
 
 -- | Append one processing error.
-addError :: Patrol.EventProcessingError -> EventUpdate
-addError !value = Update \e -> let !result = e.errors <> [value] in e{Patrol.Event.errors = result}
+appendError :: Patrol.EventProcessingError -> EventUpdate
+appendError !value = Update \e -> let !result = e.errors <> [value] in e{Patrol.Event.errors = result}
 
 -- | Remove every processing error.
 clearErrors :: EventUpdate
@@ -386,11 +392,23 @@ unsetUser = Update \e -> e{Patrol.Event.user = Nothing}
 
 -- * Integration-populated payloads
 
--- | Assign the breadcrumb list.
-setBreadcrumbs :: Patrol.Breadcrumbs -> EventUpdate
-setBreadcrumbs !assigned = Update \e -> e{Patrol.Event.breadcrumbs = Just assigned}
+-- | Replace breadcrumbs from a collection update, list of updates, or record.
+setBreadcrumbs :: (Witch.From a Sentry.Breadcrumb.BreadcrumbsUpdate) => a -> EventUpdate
+setBreadcrumbs upd = Update \e -> let !child = Sentry.Update.run upd Sentry.Breadcrumb.emptyCollection in e{Patrol.Event.breadcrumbs = Just child}
 
--- | Remove every breadcrumb.
+-- | Modify the payload, creating from empty when absent.
+modifyBreadcrumbs :: (Witch.From a Sentry.Breadcrumb.BreadcrumbsUpdate) => a -> EventUpdate
+modifyBreadcrumbs upd = Update \e -> case e.breadcrumbs of
+  Nothing -> Sentry.Update.run (setBreadcrumbs upd) e
+  Just _ -> Sentry.Update.run (modifyExistingBreadcrumbs upd) e
+
+-- | Modify a present payload; absence skips the update.
+modifyExistingBreadcrumbs :: (Witch.From a Sentry.Breadcrumb.BreadcrumbsUpdate) => a -> EventUpdate
+modifyExistingBreadcrumbs upd = Update \e -> case e.breadcrumbs of
+  Nothing -> e
+  Just old -> let !child = Sentry.Update.run upd old in e{Patrol.Event.breadcrumbs = Just child}
+
+-- | Remove the optional payload.
 unsetBreadcrumbs :: EventUpdate
 unsetBreadcrumbs = Update \e -> e{Patrol.Event.breadcrumbs = Nothing}
 
@@ -402,13 +420,25 @@ setDebugMeta !assigned = Update \e -> e{Patrol.Event.debugMeta = Just assigned}
 unsetDebugMeta :: EventUpdate
 unsetDebugMeta = Update \e -> e{Patrol.Event.debugMeta = Nothing}
 
--- | Assign the exception chain.
-setException :: Patrol.Exceptions -> EventUpdate
-setException !assigned = Update \e -> e{Patrol.Event.exception = Just assigned}
+-- | Replace the exception chain from an update, list of updates, or record.
+setExceptionChain :: (Witch.From a Sentry.Exception.ExceptionsUpdate) => a -> EventUpdate
+setExceptionChain upd = Update \e -> let !child = Sentry.Update.run upd Sentry.Exception.emptyChain in e{Patrol.Event.exception = Just child}
 
--- | Remove the exception chain.
-unsetException :: EventUpdate
-unsetException = Update \e -> e{Patrol.Event.exception = Nothing}
+-- | Modify the payload, creating from empty when absent.
+modifyExceptionChain :: (Witch.From a Sentry.Exception.ExceptionsUpdate) => a -> EventUpdate
+modifyExceptionChain upd = Update \e -> case e.exception of
+  Nothing -> Sentry.Update.run (setExceptionChain upd) e
+  Just _ -> Sentry.Update.run (modifyExistingExceptionChain upd) e
+
+-- | Modify a present payload; absence skips the update.
+modifyExistingExceptionChain :: (Witch.From a Sentry.Exception.ExceptionsUpdate) => a -> EventUpdate
+modifyExistingExceptionChain upd = Update \e -> case e.exception of
+  Nothing -> e
+  Just old -> let !child = Sentry.Update.run upd old in e{Patrol.Event.exception = Just child}
+
+-- | Remove the optional payload.
+unsetExceptionChain :: EventUpdate
+unsetExceptionChain = Update \e -> e{Patrol.Event.exception = Nothing}
 
 -- | Assign the log entry (the message body).
 setLogentry :: Patrol.LogEntry -> EventUpdate

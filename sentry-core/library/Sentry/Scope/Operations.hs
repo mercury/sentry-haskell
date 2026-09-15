@@ -739,7 +739,7 @@ addBreadcrumbToScope opts scope crumb0 = liftIO do
   case maybe (Just crumb2) ($ crumb2) opts.beforeBreadcrumb of
     Nothing -> pure ()
     Just !crumb3 ->
-      Update.apply scope (Update.addBreadcrumb crumb3 <> Update.trimBreadcrumbs maxN)
+      Update.apply scope (Update.appendBreadcrumb crumb3 <> Update.trimBreadcrumbs maxN)
 
 -- | Replace the local typed context. See 'Update.setOsContext'.
 setOsContext :: (MonadIO m, Witch.From a OsContextUpdate) => Scope -> a -> m ()

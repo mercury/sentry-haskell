@@ -212,10 +212,10 @@ composition idiom.
 
 Rules worth preserving:
 
-- **One module per record, holding both the record and its builders.**
+- **One module per domain concept, including closely associated collection wrappers.**
   Import the record module qualified to use its builders and record-dot fields.
   `Sentry.User` re-exports `module Patrol.Type.User` alongside `setId`,
-  `setName`, and the other builders. The `set*`/`unset*`/`modify*`/`add*`/
+  `setName`, and the other builders. The `set*`/`unset*`/`modify*`/`append*`/
   `remove*`/`clear*` prefixes avoid clashes with record field selectors.
   `Sentry.Event` re-exports explicitly instead of wholesale, which keeps
   patrol's `fromSomeException`, `new`, `setEventId`, `setTimestamp`, and the

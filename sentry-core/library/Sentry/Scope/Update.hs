@@ -93,8 +93,14 @@ module Sentry.Scope.Update
     clearContexts,
 
     -- ** Breadcrumbs
-    addBreadcrumb,
-    addBreadcrumbs,
+    appendBreadcrumb,
+    appendBreadcrumbs,
+    prependBreadcrumb,
+    firstBreadcrumb,
+    lastBreadcrumb,
+    eachBreadcrumb,
+    setBreadcrumbs,
+    modifyBreadcrumbs,
     clearBreadcrumbs,
     trimBreadcrumbs,
 
@@ -315,15 +321,15 @@ clearContexts = edit \s -> s{contexts = Map.empty}
 -- 'Sentry.Client.Options.ClientOptions.maxBreadcrumbs'. Use
 -- 'Sentry.addBreadcrumb' for the policy-applying, timestamp-defaulting
 -- entry point.
-addBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
-addBreadcrumb upd = edit \s ->
+appendBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
+appendBreadcrumb upd = edit \s ->
   let !crumb = Sentry.Update.run upd Sentry.Breadcrumb.empty
    in s{breadcrumbs = s.breadcrumbs Seq.|> crumb}
 
 -- | Append several 'Sentry.Breadcrumb.Breadcrumb's verbatim, in order. See
--- 'addBreadcrumb' for the caveats around policy and defaulting.
-addBreadcrumbs :: (Foldable f) => f Patrol.Breadcrumb -> ScopeUpdate
-addBreadcrumbs crumbs = edit \s -> s{breadcrumbs = s.breadcrumbs <> Seq.fromList (toList crumbs)}
+-- 'appendBreadcrumb' for the caveats around policy and defaulting.
+appendBreadcrumbs :: (Foldable f) => f Patrol.Breadcrumb -> ScopeUpdate
+appendBreadcrumbs crumbs = edit \s -> s{breadcrumbs = s.breadcrumbs <> Seq.fromList (toList crumbs)}
 
 -- | Clear all breadcrumbs.
 clearBreadcrumbs :: ScopeUpdate
@@ -502,3 +508,33 @@ modifyExistingTraceContext upd = edit \s ->
   where
     project (Patrol.Context.Trace record) = Just record
     project _ = Nothing
+
+-- | Replace local breadcrumbs. Does not run capture policies.
+setBreadcrumbs :: (Witch.From a Sentry.Breadcrumb.BreadcrumbsUpdate) => a -> ScopeUpdate
+setBreadcrumbs upd = edit \s ->
+  let !collection = Sentry.Update.run upd Sentry.Breadcrumb.emptyCollection
+      !result = Seq.fromList collection.values
+   in s{breadcrumbs = result}
+
+-- | Edit only local breadcrumbs, without hooks, timestamps, or retention.
+modifyBreadcrumbs :: (Witch.From a Sentry.Breadcrumb.BreadcrumbsUpdate) => a -> ScopeUpdate
+modifyBreadcrumbs upd = edit \s ->
+  let !collection = Sentry.Update.run upd (Sentry.Breadcrumb.Breadcrumbs (toList s.breadcrumbs))
+      !result = Seq.fromList collection.values
+   in s{breadcrumbs = result}
+
+-- | Prepend local breadcrumb edit; no capture policies are run.
+prependBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
+prependBreadcrumb = modifyBreadcrumbs . Sentry.Breadcrumb.prependBreadcrumb
+
+-- | First local breadcrumb edit; no capture policies are run.
+firstBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
+firstBreadcrumb = modifyBreadcrumbs . Sentry.Breadcrumb.firstBreadcrumb
+
+-- | Last local breadcrumb edit; no capture policies are run.
+lastBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
+lastBreadcrumb = modifyBreadcrumbs . Sentry.Breadcrumb.lastBreadcrumb
+
+-- | Each local breadcrumb edit; no capture policies are run.
+eachBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
+eachBreadcrumb = modifyBreadcrumbs . Sentry.Breadcrumb.eachBreadcrumb

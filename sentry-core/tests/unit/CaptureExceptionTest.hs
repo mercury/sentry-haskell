@@ -15,6 +15,7 @@ import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.Capture (captureException)
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Exception qualified
 import Sentry.Mechanism qualified as Mechanism
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations (ScopeData (..))
@@ -24,6 +25,23 @@ import Test.Hspec
 
 spec_captureException :: Spec
 spec_captureException = describe "captureException" do
+  it "delivers processor exception edits without reconversion" do
+    (_, transport) <- Test.withClient \_ ->
+      Scope.IO.withScope \scope -> do
+        Scope.setEventProcessor scope \ce ->
+          Just $
+            Sentry.Event.apply ce.event $
+              Sentry.Event.modifyExistingExceptionChain $
+                Sentry.Exception.lastException [Sentry.Exception.setType "Scrubbed", Sentry.Exception.setValue "safe"]
+        captureException (userError "secret")
+    events <- Test.fetchAndClearEvents transport
+    case events of
+      [event] -> do
+        fmap (map (.type_) . (.values)) event.exception `shouldBe` Just ["Scrubbed"]
+        fmap (map (.value) . (.values)) event.exception `shouldBe` Just ["safe"]
+        lastMechanism event `shouldBe` Just Mechanism.generic
+      _ -> expectationFailure "expected one event"
+
   it "captures a plain exception with no annotation as an event" do
     (_, transport) <- Test.withClient \_ ->
       captureException (userError "boom")

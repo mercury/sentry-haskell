@@ -95,6 +95,7 @@ library
     Sentry.DeviceContext
     Sentry.Event
     Sentry.Event.Captured
+    Sentry.Exception
     Sentry.Geo
     Sentry.Init
     Sentry.Integration
@@ -125,6 +126,7 @@ library
     Paths_sentry_core
     Sentry.Client.Internal
     Sentry.Client.Options.Defaults
+    Sentry.Collection.Internal
 
   autogen-modules: Paths_sentry_core
   build-depends:
@@ -168,6 +170,7 @@ test-suite unit
     ClientConstructionTest
     ClientReportTest
     ClientResolutionTest
+    CollectionBuilderTest
     IntegrationSetupTest
     LifecycleTest
     OptionsEnvTest
