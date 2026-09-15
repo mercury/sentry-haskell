@@ -1,9 +1,11 @@
--- | Pure builders for local scope metadata. Apply a single builder, a list,
--- or a composed bundle atomically with 'Sentry.updateScope'. Layers are merged
--- at capture time; removing a local override may reveal inherited metadata.
+-- | Pure builders for local scope metadata.
+--
+-- Apply a single builder, a list, or a composed bundle atomically with
+-- 'Sentry.updateScope'.
 --
 -- Breadcrumb builders are low-level: they do not default timestamps, filter,
--- or enforce retention. Use 'Sentry.addBreadcrumb' for those policies.
+-- or enforce retention; prefer 'Sentry.addBreadcrumb'.
+--
 -- Explicit effectful setters and context-first operations live in
 -- "Sentry.Scope.Operations".
 module Sentry.Scope
@@ -66,6 +68,7 @@ module Sentry.Scope
 
     -- ** Tags
     setTag,
+    setTagIfAbsent,
     removeTag,
     clearTags,
 
@@ -76,6 +79,7 @@ module Sentry.Scope
 
     -- ** Contexts
     setContext,
+    setContextIfAbsent,
     setBrowserContext,
     modifyBrowserContext,
     modifyExistingBrowserContext,

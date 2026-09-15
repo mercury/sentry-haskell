@@ -230,8 +230,7 @@ import Prelude hiding (init)
 --
 -- Each scope operation applies one atomic update. 'modifyUser' starts from empty
 -- when the scope has no user of its own, and never reaches through to a user
--- inherited from another scope. 'unsetUser' drops this scope's user, which can
--- reveal an inherited one.
+-- inherited from another scope.
 
 -- | Apply a single scope builder, a list, or a composed bundle atomically,
 -- from left to right. Later assignments win. Builders modify only local

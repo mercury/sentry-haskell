@@ -140,7 +140,7 @@ withCollection = Sentry.Update.with
 singleton :: (Witch.From a BreadcrumbUpdate) => a -> Breadcrumbs
 singleton upd = let !child = Sentry.Update.run upd empty in Breadcrumbs [child]
 
--- | Replace the values, constructing and forcing every child to WHNF.
+-- | Replace the values.
 setValues :: (Witch.From a BreadcrumbUpdate) => [a] -> BreadcrumbsUpdate
 setValues upds = Update \_ ->
   let !result = mapWHNF (\upd -> Sentry.Update.run upd empty) upds
@@ -174,8 +174,7 @@ lastBreadcrumb upd = Update \(Breadcrumbs xs) -> let !result = go xs in Breadcru
     go [x] = let !child = Sentry.Update.run upd x in [child]
     go (x : xs) = let !rest = go xs in x : rest
 
--- | Edit every entry independently, forcing all results to WHNF.
--- Empty selections skip the update. Cardinality and order are preserved.
+-- | Edit every entry independently.
 eachBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
 eachBreadcrumb upd = Update \(Breadcrumbs xs) ->
   let !result = mapWHNF (Sentry.Update.run upd) xs

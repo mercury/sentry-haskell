@@ -65,6 +65,7 @@ module Sentry.Scope.Update
 
     -- ** Tags
     setTag,
+    setTagIfAbsent,
     removeTag,
     clearTags,
 
@@ -75,6 +76,7 @@ module Sentry.Scope.Update
 
     -- ** Contexts
     setContext,
+    setContextIfAbsent,
     setBrowserContext,
     modifyBrowserContext,
     modifyExistingBrowserContext,
@@ -194,34 +196,31 @@ setUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
 setUser upd =
   edit \s -> let !u = Sentry.Update.run upd Sentry.User.empty in s{user = Just u}
 
--- | Remove the local user override, potentially revealing an inherited user.
+-- | Remove the local user override.
 unsetUser :: ScopeUpdate
 unsetUser = edit \s -> s{user = Nothing}
 
--- | Modify the user, starting from empty when absent. The result is forced before storing.
--- Only the local user is read; inherited users are never copied.
+-- | Modify the user, starting from empty when absent.
 modifyUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
 modifyUser upd = edit \s -> case s.user of
   Nothing -> Sentry.Update.run (setUser upd) s
   Just _ -> Sentry.Update.run (modifyExistingUser upd) s
 
--- | Modify an existing user. When absent, leave it absent without evaluating the update.
+-- | Modify an existing user.
 modifyExistingUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
 modifyExistingUser upd = edit \s -> case s.user of
   Nothing -> s
   Just u -> let !u' = Sentry.Update.run upd u in s{user = Just u'}
 
--- | Replace the local fingerprint, forcing the list to WHNF, not its elements.
+-- | Replace the local fingerprint.
 setFingerprint :: [Text] -> ScopeUpdate
 setFingerprint !fp = edit \s -> s{fingerprint = Just fp}
 
--- | Remove the local assignment. Other active layers may supply grouping.
--- Unsetting a cloned value does not restore the suspended outer current scope.
+-- | Remove the local assignment.
 unsetFingerprint :: ScopeUpdate
 unsetFingerprint = edit \s -> s{fingerprint = Nothing}
 
 -- | Transform the complete local list once, starting from [] when absent.
--- Reads stored (including cloned) data only; forces the result to WHNF.
 modifyFingerprint :: ([Text] -> [Text]) -> ScopeUpdate
 modifyFingerprint f = edit \s -> let !result = f (maybe [] id s.fingerprint) in s{fingerprint = Just result}
 
@@ -267,6 +266,13 @@ unsetTransaction = edit \s -> s{transaction = Nothing}
 setTag :: Text -> Text -> ScopeUpdate
 setTag k v = edit \s -> s{tags = Map.insert k v s.tags}
 
+-- | Insert a tag only when its key is absent.
+setTagIfAbsent :: Text -> Text -> ScopeUpdate
+setTagIfAbsent !key value = edit \s ->
+  if Map.member key s.tags
+    then s
+    else let !result = Map.insert key value s.tags in s{tags = result}
+
 -- | Remove the tag at the given key, if present.
 removeTag :: Text -> ScopeUpdate
 removeTag k = edit \s -> s{tags = Map.delete k s.tags}
@@ -294,6 +300,13 @@ clearExtras = edit \s -> s{extras = Map.empty}
 -- | Insert (or overwrite) a context at the given key.
 setContext :: Text -> Patrol.Context -> ScopeUpdate
 setContext k v = edit \s -> s{contexts = Map.insert k v s.contexts}
+
+-- | Insert a context only when its key is absent.
+setContextIfAbsent :: Text -> Patrol.Context -> ScopeUpdate
+setContextIfAbsent !key value = edit \s ->
+  if Map.member key s.contexts
+    then s
+    else let !result = Map.insert key value s.contexts in s{contexts = result}
 
 -- | Replace the context at @\"runtime\"@ with a runtime context, including
 -- any custom context previously stored at that key.
@@ -343,7 +356,7 @@ removeContextValue k key = edit \s -> let !result = Sentry.Context.Internal.remo
 modifyContextValues :: Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> ScopeUpdate
 modifyContextValues k f = edit \s -> let !result = Sentry.Context.Internal.modifyValues k f s.contexts in s{contexts = result}
 
--- | Remove the local context override, potentially revealing an inherited payload.
+-- | Remove the local context override.
 removeContext :: Text -> ScopeUpdate
 removeContext k = edit \s -> s{contexts = Map.delete k s.contexts}
 

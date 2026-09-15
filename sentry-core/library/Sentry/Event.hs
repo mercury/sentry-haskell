@@ -45,6 +45,7 @@ module Sentry.Event
     -- * Tags
     setTags,
     setTag,
+    setTagIfAbsent,
     removeTag,
     clearTags,
 
@@ -57,6 +58,7 @@ module Sentry.Event
     -- * Contexts
     setContexts,
     setContext,
+    setContextIfAbsent,
     setBrowserContext,
     modifyBrowserContext,
     modifyExistingBrowserContext,
@@ -278,6 +280,13 @@ setTags !assigned = Update \e -> e{Patrol.Event.tags = assigned}
 setTag :: Text -> Text -> EventUpdate
 setTag !key !value = Update \e -> let !result = Map.insert key value e.tags in e{Patrol.Event.tags = result}
 
+-- | Insert a tag only when its key is absent.
+setTagIfAbsent :: Text -> Text -> EventUpdate
+setTagIfAbsent !key value = Update \e ->
+  if Map.member key e.tags
+    then e
+    else let !result = Map.insert key value e.tags in e{Patrol.Event.tags = result}
+
 -- | Remove one tag; absent keys are ignored.
 removeTag :: Text -> EventUpdate
 removeTag !key = Update \e -> let !result = Map.delete key e.tags in e{Patrol.Event.tags = result}
@@ -315,8 +324,14 @@ setContexts !assigned = Update \e -> e{Patrol.Event.contexts = assigned}
 setContext :: Text -> Patrol.Context -> EventUpdate
 setContext !key !value = Update \e -> let !result = Map.insert key value e.contexts in e{Patrol.Event.contexts = result}
 
+-- | Insert a context only when its key is absent.
+setContextIfAbsent :: Text -> Patrol.Context -> EventUpdate
+setContextIfAbsent !key value = Update \e ->
+  if Map.member key e.contexts
+    then e
+    else let !result = Map.insert key value e.contexts in e{Patrol.Event.contexts = result}
+
 -- | Remove the context from the supplied event, including merged scope metadata.
--- Absent keys are ignored. Removal does not reveal inherited values.
 removeContext :: Text -> EventUpdate
 removeContext !key = Update \e -> let !result = Map.delete key e.contexts in e{Patrol.Event.contexts = result}
 
@@ -348,7 +363,7 @@ clearModules = Update \e -> e{Patrol.Event.modules = Map.empty}
 setFingerprint :: [Text] -> EventUpdate
 setFingerprint !assigned = Update \e -> e{Patrol.Event.fingerprint = assigned}
 
--- | Transform the complete list once, forcing the result to WHNF only.
+-- | Transform the complete list once.
 modifyFingerprint :: ([Text] -> [Text]) -> EventUpdate
 modifyFingerprint f = Update \e -> let !result = f e.fingerprint in e{Patrol.Event.fingerprint = result}
 
@@ -600,8 +615,6 @@ setContextValue :: Text -> Text -> Aeson.Value -> EventUpdate
 setContextValue k key value = modifyContextValues k (Map.insert key value)
 
 -- | Remove a field from the supplied event, including merged scope metadata.
--- Does not reveal inherited values or mutate the originating scope. Absent
--- contexts stay absent; empty custom contexts are retained; typed ones are unchanged.
 removeContextValue :: Text -> Text -> EventUpdate
 removeContextValue k key = Update \e -> let !result = Sentry.Context.Internal.removeValue k key e.contexts in e{Patrol.Event.contexts = result}
 

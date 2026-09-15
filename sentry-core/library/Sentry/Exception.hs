@@ -108,7 +108,7 @@ withChain = Sentry.Update.with
 singleton :: (Witch.From a ExceptionUpdate) => a -> Exceptions
 singleton upd = let !child = Sentry.Update.run upd empty in Exceptions [child]
 
--- | Replace the values, constructing and forcing every child to WHNF.
+-- | Replace the values.
 setValues :: (Witch.From a ExceptionUpdate) => [a] -> ExceptionsUpdate
 setValues upds = Update \_ ->
   let !result = mapWHNF (\upd -> Sentry.Update.run upd empty) upds
@@ -142,8 +142,7 @@ lastException upd = Update \(Exceptions xs) -> let !result = go xs in Exceptions
     go [x] = let !child = Sentry.Update.run upd x in [child]
     go (x : xs) = let !rest = go xs in x : rest
 
--- | Edit every entry independently, forcing all results to WHNF.
--- Empty selections skip the update. Cardinality and order are preserved.
+-- | Edit every entry independently.
 eachException :: (Witch.From a ExceptionUpdate) => a -> ExceptionsUpdate
 eachException upd = Update \(Exceptions xs) ->
   let !result = mapWHNF (Sentry.Update.run upd) xs

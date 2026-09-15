@@ -2,11 +2,15 @@ module CollectionBuilderTest where
 
 import Control.Exception (evaluate)
 import Data.Foldable (toList)
+import Data.Map.Strict qualified as Map
+import Patrol.Type.Context qualified as Context
 import Patrol.Type.Stacktrace qualified as Stacktrace
 import Sentry.Breadcrumb qualified as B
+import Sentry.BrowserContext qualified as Browser
 import Sentry.Event qualified as E
 import Sentry.Exception qualified as X
 import Sentry.Mechanism qualified as M
+import Sentry.Scope qualified as Scope
 import Sentry.Scope.Internal (ScopeData (..))
 import Sentry.Scope.Update qualified as S
 import Sentry.Update qualified as U
@@ -87,3 +91,47 @@ spec_collections = describe "collection builders" do
     evaluate (E.apply E.empty (E.setBreadcrumbs (B.eachBreadcrumb invalid <> B.clearValues))) `shouldReturn` E.apply E.empty (E.setBreadcrumbs B.emptyCollection)
     evaluate (U.run (B.eachBreadcrumb invalid) collection) `shouldThrow` anyErrorCall
     evaluate (U.run (S.setBreadcrumbs collection <> S.eachBreadcrumb invalid) (mempty :: ScopeData)) `shouldThrow` anyErrorCall
+
+spec_insertIfAbsent :: Spec
+spec_insertIfAbsent = describe "insert-if-absent builders" do
+  it "inserts missing tags and keeps the first default; setters still overwrite" do
+    let event = E.apply E.empty [E.setTagIfAbsent "key" "first", E.setTagIfAbsent "key" "second", E.setTagIfAbsent "other" "value"]
+        scope = U.run [Scope.setTagIfAbsent "key" "first", Scope.setTagIfAbsent "key" "second", Scope.setTagIfAbsent "other" "value"] (U.empty :: ScopeData)
+    event.tags `shouldBe` Map.fromList [("key", "first"), ("other", "value")]
+    scope.tags `shouldBe` event.tags
+    (E.apply event (E.setTag "key" "last")).tags Map.! "key" `shouldBe` "last"
+    (U.run (Scope.setTag "key" "last") scope).tags Map.! "key" `shouldBe` "last"
+  it "preserves empty tags and contexts without evaluating unused values" do
+    let payload = Context.Other Map.empty
+        event = E.apply E.empty [E.setTag "key" "", E.setContext "custom" payload]
+        scope = U.run [Scope.setTag "key" "", Scope.setContext "custom" payload] (U.empty :: ScopeData)
+        event' = E.apply event [E.setTagIfAbsent "key" (error "unused"), E.setContextIfAbsent "custom" (error "unused")]
+        scope' = U.run [Scope.setTagIfAbsent "key" (error "unused"), Scope.setContextIfAbsent "custom" (error "unused")] scope
+    event'.tags `shouldBe` event.tags
+    event'.contexts `shouldBe` event.contexts
+    scope'.tags `shouldBe` scope.tags
+    scope'.contexts `shouldBe` scope.contexts
+  it "inserts contexts, preserves typed variants, and composes with removal" do
+    let typed = Context.Browser Browser.empty
+        custom = Context.Other Map.empty
+        event = E.apply E.empty (E.setContextIfAbsent "browser" typed <> E.setContextIfAbsent "browser" custom)
+        scope = U.run (Scope.setContextIfAbsent "browser" typed <> Scope.setContextIfAbsent "browser" custom) (U.empty :: ScopeData)
+    event.contexts `shouldBe` Map.singleton "browser" typed
+    scope.contexts `shouldBe` event.contexts
+    (E.apply event [E.removeContext "browser", E.setContextIfAbsent "browser" custom]).contexts `shouldBe` Map.singleton "browser" custom
+    (U.run [Scope.removeContext "browser", Scope.setContextIfAbsent "browser" custom] scope).contexts `shouldBe` Map.singleton "browser" custom
+  it "forces inserted values and keys but leaves nested JSON lazy" do
+    mapM_
+      (\upd -> evaluate (E.apply E.empty upd) `shouldThrow` anyErrorCall)
+      [E.setTagIfAbsent "key" (error "value"), E.setContextIfAbsent "key" (error "value"), E.setTagIfAbsent (error "key") "value", E.setContextIfAbsent (error "key") (Context.Other Map.empty)]
+    mapM_
+      (\upd -> evaluate (U.run upd (U.empty :: ScopeData)) `shouldThrow` anyErrorCall)
+      [Scope.setTagIfAbsent "key" (error "value"), Scope.setContextIfAbsent "key" (error "value"), Scope.setTagIfAbsent (error "key") "value", Scope.setContextIfAbsent (error "key") (Context.Other Map.empty)]
+    let payload = Context.Other (Map.singleton "lazy" (error "JSON"))
+    evaluate (Map.size (E.apply E.empty (E.setContextIfAbsent "custom" payload)).contexts) `shouldReturn` 1
+    evaluate (Map.size (U.run (Scope.setContextIfAbsent "custom" payload) (U.empty :: ScopeData)).contexts) `shouldReturn` 1
+  it "checks scope defaults locally even when a lower layer has the key" do
+    let lower = U.run [Scope.setTag "key" "lower", Scope.setContext "custom" (Context.Other Map.empty)] (U.empty :: ScopeData)
+        local = U.run [Scope.setTagIfAbsent "key" "local", Scope.setContextIfAbsent "custom" (Context.Browser Browser.empty)] (U.empty :: ScopeData)
+    (lower <> local).tags Map.! "key" `shouldBe` "local"
+    (lower <> local).contexts `shouldBe` local.contexts

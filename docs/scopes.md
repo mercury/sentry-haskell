@@ -180,3 +180,21 @@ They never materialize other active layers. Unsetting a cloned value does not
 restore the suspended outer current scope's value. To force normal grouping
 despite contextual defaults, clear or replace the fingerprint in an event
 processor after scope merging.
+
+## Defaults without overwriting
+
+`Sentry.Event.setTagIfAbsent` and `setContextIfAbsent` insert only when the key
+is missing. Existing values, including empty tags or context payloads, win.
+Unused proposed values are not evaluated; inserted values are forced to WHNF.
+
+The matching `Sentry.Scope` builders check only the selected scope's stored
+metadata (including cloned values). They do not check other active layers, so a
+local default can override a lower-layer value at capture. To supply defaults
+only when the merged event lacks a key, use the Event builders in a processor.
+
+```haskell
+Sentry.updateScope scope
+  [ Sentry.Scope.setTagIfAbsent "alert_route" "default",
+    Sentry.Scope.setTagIfAbsent "owner" "platform"
+  ]
+```
