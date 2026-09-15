@@ -57,6 +57,15 @@ module Sentry.Event
     -- * Contexts
     setContexts,
     setContext,
+    setBrowserContext,
+    modifyBrowserContext,
+    modifyExistingBrowserContext,
+    setDeviceContext,
+    modifyDeviceContext,
+    modifyExistingDeviceContext,
+    setTraceContext,
+    modifyTraceContext,
+    modifyExistingTraceContext,
     setOsContext,
     modifyOsContext,
     modifyExistingOsContext,
@@ -143,10 +152,13 @@ import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.LogEntry qualified as Patrol.LogEntry
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.AppContext qualified
+import Sentry.BrowserContext qualified
 import Sentry.Context.Internal qualified
+import Sentry.DeviceContext qualified
 import Sentry.OsContext qualified
 import Sentry.Request qualified
 import Sentry.RuntimeContext qualified
+import Sentry.TraceContext qualified
 import Sentry.Update (Update (..))
 import Sentry.Update qualified
 import Sentry.User qualified
@@ -613,4 +625,76 @@ modifyExistingRuntimeContext upd = Update \e ->
    in e{Patrol.Event.contexts = result}
   where
     project (Patrol.Context.Runtime record) = Just record
+    project _ = Nothing
+
+-- | Replace the entire @"browser"@ payload from an update, list, or record.
+setBrowserContext :: (Witch.From a Sentry.BrowserContext.BrowserContextUpdate) => a -> EventUpdate
+setBrowserContext upd = let !record = Sentry.Update.run upd Sentry.BrowserContext.empty in setContext "browser" (Patrol.Context.Browser record)
+
+-- | Modify the browser context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyBrowserContext :: (Witch.From a Sentry.BrowserContext.BrowserContextUpdate) => a -> EventUpdate
+modifyBrowserContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped True "browser" Sentry.BrowserContext.empty project Patrol.Context.Browser (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Browser record) = Just record
+    project _ = Nothing
+
+-- | Modify the browser context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingBrowserContext :: (Witch.From a Sentry.BrowserContext.BrowserContextUpdate) => a -> EventUpdate
+modifyExistingBrowserContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped False "browser" Sentry.BrowserContext.empty project Patrol.Context.Browser (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Browser record) = Just record
+    project _ = Nothing
+
+-- | Replace the entire @"device"@ payload from an update, list, or record.
+setDeviceContext :: (Witch.From a Sentry.DeviceContext.DeviceContextUpdate) => a -> EventUpdate
+setDeviceContext upd = let !record = Sentry.Update.run upd Sentry.DeviceContext.empty in setContext "device" (Patrol.Context.Device record)
+
+-- | Modify the device context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyDeviceContext :: (Witch.From a Sentry.DeviceContext.DeviceContextUpdate) => a -> EventUpdate
+modifyDeviceContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped True "device" Sentry.DeviceContext.empty project Patrol.Context.Device (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Device record) = Just record
+    project _ = Nothing
+
+-- | Modify the device context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingDeviceContext :: (Witch.From a Sentry.DeviceContext.DeviceContextUpdate) => a -> EventUpdate
+modifyExistingDeviceContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped False "device" Sentry.DeviceContext.empty project Patrol.Context.Device (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Device record) = Just record
+    project _ = Nothing
+
+-- | Replace the entire @"trace"@ payload from an update, list, or record.
+setTraceContext :: (Witch.From a Sentry.TraceContext.TraceContextUpdate) => a -> EventUpdate
+setTraceContext upd = let !record = Sentry.Update.run upd Sentry.TraceContext.empty in setContext "trace" (Patrol.Context.Trace record)
+
+-- | Modify the trace context, starting from empty when absent.
+-- Other context variants are unchanged without evaluating the update.
+modifyTraceContext :: (Witch.From a Sentry.TraceContext.TraceContextUpdate) => a -> EventUpdate
+modifyTraceContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped True "trace" Sentry.TraceContext.empty project Patrol.Context.Trace (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Trace record) = Just record
+    project _ = Nothing
+
+-- | Modify the trace context only when present; absent contexts skip the update.
+-- Other context variants are unchanged without evaluating the update.
+modifyExistingTraceContext :: (Witch.From a Sentry.TraceContext.TraceContextUpdate) => a -> EventUpdate
+modifyExistingTraceContext upd = Update \e ->
+  let !result = Sentry.Context.Internal.modifyTyped False "trace" Sentry.TraceContext.empty project Patrol.Context.Trace (Sentry.Update.run upd) e.contexts
+   in e{Patrol.Event.contexts = result}
+  where
+    project (Patrol.Context.Trace record) = Just record
     project _ = Nothing

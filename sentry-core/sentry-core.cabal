@@ -82,6 +82,7 @@ library
     Data.Atomics.Extra
     Sentry.AppContext
     Sentry.Breadcrumb
+    Sentry.BrowserContext
     Sentry.Capture
     Sentry.Client
     Sentry.Client.Options
@@ -91,6 +92,7 @@ library
     Sentry.Context
     Sentry.Context.Internal
     Sentry.Core
+    Sentry.DeviceContext
     Sentry.Event
     Sentry.Event.Captured
     Sentry.Geo
@@ -114,6 +116,7 @@ library
     Sentry.Sdk
     Sentry.Stacktrace
     Sentry.Test
+    Sentry.TraceContext
     Sentry.Transport
     Sentry.Update
     Sentry.User

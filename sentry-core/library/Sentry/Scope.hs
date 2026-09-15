@@ -68,6 +68,15 @@ module Sentry.Scope
 
     -- ** Contexts
     setContext,
+    setBrowserContext,
+    modifyBrowserContext,
+    modifyExistingBrowserContext,
+    setDeviceContext,
+    modifyDeviceContext,
+    modifyExistingDeviceContext,
+    setTraceContext,
+    modifyTraceContext,
+    modifyExistingTraceContext,
     setOsContext,
     modifyOsContext,
     modifyExistingOsContext,

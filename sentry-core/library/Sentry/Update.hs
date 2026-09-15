@@ -56,12 +56,15 @@ import Data.Monoid (Dual (..), Endo (..))
 import Patrol qualified
 import Patrol.Type.AppContext qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
+import Patrol.Type.BrowserContext qualified
+import Patrol.Type.DeviceContext qualified
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Geo qualified as Patrol.Geo
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Patrol.Type.OsContext qualified
 import Patrol.Type.Request qualified
 import Patrol.Type.RuntimeContext qualified as Patrol.RuntimeContext
+import Patrol.Type.TraceContext qualified
 import Patrol.Type.User qualified as Patrol.User
 import Witch qualified
 
@@ -150,3 +153,12 @@ run upd = runUpdate (Witch.from upd)
 -- inference easier.
 with :: (Witch.From b (Update a)) => (a -> b) -> Update a
 with k = Update \x -> run (k x) x
+
+instance Empty Patrol.BrowserContext where
+  empty = Patrol.Type.BrowserContext.empty
+
+instance Empty Patrol.DeviceContext where
+  empty = Patrol.Type.DeviceContext.empty
+
+instance Empty Patrol.TraceContext where
+  empty = Patrol.Type.TraceContext.empty

@@ -12,9 +12,11 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Time.Clock (UTCTime)
 import Sentry.AppContext qualified
+import Sentry.BrowserContext qualified
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Context qualified
 import Sentry.Core qualified as Sentry
+import Sentry.DeviceContext qualified
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Geo qualified
@@ -25,6 +27,7 @@ import Sentry.Scope qualified as Builders
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Scope.Update qualified as Update
 import Sentry.Test qualified as Test
+import Sentry.TraceContext qualified
 import Sentry.Update qualified
 import Sentry.User qualified
 import System.Timeout (timeout)
@@ -691,3 +694,108 @@ spec_typedContextModification = describe "typed context modification" do
       evaluate (run (original <> modify [Sentry.RuntimeContext.setName undefined])) `shouldThrow` anyErrorCall
     (run (existing (undefined :: Sentry.RuntimeContext.RuntimeContextUpdate))).contexts `shouldBe` Map.empty
     evaluate (run (create (Sentry.RuntimeContext.setName undefined))) `shouldThrow` anyErrorCall
+
+  it "Event browser: creates, preserves, composes, skips mismatches, and forces edits" do
+    let run = asEvent
+        create upd = Sentry.Event.modifyBrowserContext upd
+        existing upd = Sentry.Event.modifyExistingBrowserContext upd
+        original = Sentry.Event.setBrowserContext (Sentry.BrowserContext.setVersion "keep")
+        expected = Sentry.Context.Browser Sentry.BrowserContext.empty{Sentry.BrowserContext.name = "new", Sentry.BrowserContext.version = "keep"}
+    Map.lookup "browser" (run (create (Sentry.BrowserContext.setName "new"))).contexts `shouldBe` Just (Sentry.Context.Browser Sentry.BrowserContext.empty{Sentry.BrowserContext.name = "new"})
+    for_ [create, existing] \modify -> do
+      Map.lookup "browser" (run (original <> modify [Sentry.BrowserContext.setName "old", Sentry.BrowserContext.setName "new"])).contexts `shouldBe` Just expected
+      let mismatch = Sentry.Event.setContextValues "browser" [("keep", Aeson.Null)]
+      (run (mismatch <> modify (undefined :: [Sentry.BrowserContext.BrowserContextUpdate]))).contexts `shouldBe` (run mismatch).contexts
+      evaluate (run (original <> modify [Sentry.BrowserContext.setName undefined])) `shouldThrow` anyErrorCall
+    (run (existing (undefined :: Sentry.BrowserContext.BrowserContextUpdate))).contexts `shouldBe` Map.empty
+    evaluate (run (create (Sentry.BrowserContext.setName undefined))) `shouldThrow` anyErrorCall
+  it "Scope browser: creates, preserves, composes, skips mismatches, and forces edits" do
+    let run upd = Sentry.Update.run upd (mempty :: Sentry.ScopeData)
+        create upd = Builders.modifyBrowserContext upd
+        existing upd = Builders.modifyExistingBrowserContext upd
+        original = Builders.setBrowserContext (Sentry.BrowserContext.setVersion "keep")
+        expected = Sentry.Context.Browser Sentry.BrowserContext.empty{Sentry.BrowserContext.name = "new", Sentry.BrowserContext.version = "keep"}
+    Map.lookup "browser" (run (create (Sentry.BrowserContext.setName "new"))).contexts `shouldBe` Just (Sentry.Context.Browser Sentry.BrowserContext.empty{Sentry.BrowserContext.name = "new"})
+    for_ [create, existing] \modify -> do
+      Map.lookup "browser" (run (original <> modify [Sentry.BrowserContext.setName "old", Sentry.BrowserContext.setName "new"])).contexts `shouldBe` Just expected
+      let mismatch = Builders.setContextValues "browser" [("keep", Aeson.Null)]
+      (run (mismatch <> modify (undefined :: [Sentry.BrowserContext.BrowserContextUpdate]))).contexts `shouldBe` (run mismatch).contexts
+      evaluate (run (original <> modify [Sentry.BrowserContext.setName undefined])) `shouldThrow` anyErrorCall
+    (run (existing (undefined :: Sentry.BrowserContext.BrowserContextUpdate))).contexts `shouldBe` Map.empty
+    evaluate (run (create (Sentry.BrowserContext.setName undefined))) `shouldThrow` anyErrorCall
+  it "browser setters accept records and replace mismatched variants" do
+    let record = Witch.from [Sentry.BrowserContext.setName "new"] :: Sentry.BrowserContext.BrowserContext
+        replacement = Witch.from record :: Sentry.BrowserContext.BrowserContextUpdate
+        expected = Just (Sentry.Context.Browser record)
+    Map.lookup "browser" (asEvent (Sentry.Event.setContextValues "browser" [] <> Sentry.Event.setBrowserContext replacement)).contexts `shouldBe` expected
+    Map.lookup "browser" (Sentry.Update.run (Builders.setContextValues "browser" [] <> Builders.setBrowserContext record) (mempty :: Sentry.ScopeData)).contexts `shouldBe` expected
+
+  it "Event device: creates, preserves, composes, skips mismatches, and forces edits" do
+    let run = asEvent
+        create upd = Sentry.Event.modifyDeviceContext upd
+        existing upd = Sentry.Event.modifyExistingDeviceContext upd
+        original = Sentry.Event.setDeviceContext (Sentry.DeviceContext.setName "keep")
+        expected = Sentry.Context.Device Sentry.DeviceContext.empty{Sentry.DeviceContext.model = "new", Sentry.DeviceContext.name = "keep"}
+    Map.lookup "device" (run (create (Sentry.DeviceContext.setModel "new"))).contexts `shouldBe` Just (Sentry.Context.Device Sentry.DeviceContext.empty{Sentry.DeviceContext.model = "new"})
+    for_ [create, existing] \modify -> do
+      Map.lookup "device" (run (original <> modify [Sentry.DeviceContext.setModel "old", Sentry.DeviceContext.setModel "new"])).contexts `shouldBe` Just expected
+      let mismatch = Sentry.Event.setContextValues "device" [("keep", Aeson.Null)]
+      (run (mismatch <> modify (undefined :: [Sentry.DeviceContext.DeviceContextUpdate]))).contexts `shouldBe` (run mismatch).contexts
+      evaluate (run (original <> modify [Sentry.DeviceContext.setModel undefined])) `shouldThrow` anyErrorCall
+    (run (existing (undefined :: Sentry.DeviceContext.DeviceContextUpdate))).contexts `shouldBe` Map.empty
+    evaluate (run (create (Sentry.DeviceContext.setModel undefined))) `shouldThrow` anyErrorCall
+  it "Scope device: creates, preserves, composes, skips mismatches, and forces edits" do
+    let run upd = Sentry.Update.run upd (mempty :: Sentry.ScopeData)
+        create upd = Builders.modifyDeviceContext upd
+        existing upd = Builders.modifyExistingDeviceContext upd
+        original = Builders.setDeviceContext (Sentry.DeviceContext.setName "keep")
+        expected = Sentry.Context.Device Sentry.DeviceContext.empty{Sentry.DeviceContext.model = "new", Sentry.DeviceContext.name = "keep"}
+    Map.lookup "device" (run (create (Sentry.DeviceContext.setModel "new"))).contexts `shouldBe` Just (Sentry.Context.Device Sentry.DeviceContext.empty{Sentry.DeviceContext.model = "new"})
+    for_ [create, existing] \modify -> do
+      Map.lookup "device" (run (original <> modify [Sentry.DeviceContext.setModel "old", Sentry.DeviceContext.setModel "new"])).contexts `shouldBe` Just expected
+      let mismatch = Builders.setContextValues "device" [("keep", Aeson.Null)]
+      (run (mismatch <> modify (undefined :: [Sentry.DeviceContext.DeviceContextUpdate]))).contexts `shouldBe` (run mismatch).contexts
+      evaluate (run (original <> modify [Sentry.DeviceContext.setModel undefined])) `shouldThrow` anyErrorCall
+    (run (existing (undefined :: Sentry.DeviceContext.DeviceContextUpdate))).contexts `shouldBe` Map.empty
+    evaluate (run (create (Sentry.DeviceContext.setModel undefined))) `shouldThrow` anyErrorCall
+  it "device setters accept records and replace mismatched variants" do
+    let record = Witch.from [Sentry.DeviceContext.setModel "new"] :: Sentry.DeviceContext.DeviceContext
+        replacement = Witch.from record :: Sentry.DeviceContext.DeviceContextUpdate
+        expected = Just (Sentry.Context.Device record)
+    Map.lookup "device" (asEvent (Sentry.Event.setContextValues "device" [] <> Sentry.Event.setDeviceContext replacement)).contexts `shouldBe` expected
+    Map.lookup "device" (Sentry.Update.run (Builders.setContextValues "device" [] <> Builders.setDeviceContext record) (mempty :: Sentry.ScopeData)).contexts `shouldBe` expected
+
+  it "Event trace: creates, preserves, composes, skips mismatches, and forces edits" do
+    let run = asEvent
+        create upd = Sentry.Event.modifyTraceContext upd
+        existing upd = Sentry.Event.modifyExistingTraceContext upd
+        original = Sentry.Event.setTraceContext (Sentry.TraceContext.setTraceId "keep")
+        expected = Sentry.Context.Trace Sentry.TraceContext.empty{Sentry.TraceContext.spanId = "new", Sentry.TraceContext.traceId = "keep"}
+    Map.lookup "trace" (run (create (Sentry.TraceContext.setSpanId "new"))).contexts `shouldBe` Just (Sentry.Context.Trace Sentry.TraceContext.empty{Sentry.TraceContext.spanId = "new"})
+    for_ [create, existing] \modify -> do
+      Map.lookup "trace" (run (original <> modify [Sentry.TraceContext.setSpanId "old", Sentry.TraceContext.setSpanId "new"])).contexts `shouldBe` Just expected
+      let mismatch = Sentry.Event.setContextValues "trace" [("keep", Aeson.Null)]
+      (run (mismatch <> modify (undefined :: [Sentry.TraceContext.TraceContextUpdate]))).contexts `shouldBe` (run mismatch).contexts
+      evaluate (run (original <> modify [Sentry.TraceContext.setSpanId undefined])) `shouldThrow` anyErrorCall
+    (run (existing (undefined :: Sentry.TraceContext.TraceContextUpdate))).contexts `shouldBe` Map.empty
+    evaluate (run (create (Sentry.TraceContext.setSpanId undefined))) `shouldThrow` anyErrorCall
+  it "Scope trace: creates, preserves, composes, skips mismatches, and forces edits" do
+    let run upd = Sentry.Update.run upd (mempty :: Sentry.ScopeData)
+        create upd = Builders.modifyTraceContext upd
+        existing upd = Builders.modifyExistingTraceContext upd
+        original = Builders.setTraceContext (Sentry.TraceContext.setTraceId "keep")
+        expected = Sentry.Context.Trace Sentry.TraceContext.empty{Sentry.TraceContext.spanId = "new", Sentry.TraceContext.traceId = "keep"}
+    Map.lookup "trace" (run (create (Sentry.TraceContext.setSpanId "new"))).contexts `shouldBe` Just (Sentry.Context.Trace Sentry.TraceContext.empty{Sentry.TraceContext.spanId = "new"})
+    for_ [create, existing] \modify -> do
+      Map.lookup "trace" (run (original <> modify [Sentry.TraceContext.setSpanId "old", Sentry.TraceContext.setSpanId "new"])).contexts `shouldBe` Just expected
+      let mismatch = Builders.setContextValues "trace" [("keep", Aeson.Null)]
+      (run (mismatch <> modify (undefined :: [Sentry.TraceContext.TraceContextUpdate]))).contexts `shouldBe` (run mismatch).contexts
+      evaluate (run (original <> modify [Sentry.TraceContext.setSpanId undefined])) `shouldThrow` anyErrorCall
+    (run (existing (undefined :: Sentry.TraceContext.TraceContextUpdate))).contexts `shouldBe` Map.empty
+    evaluate (run (create (Sentry.TraceContext.setSpanId undefined))) `shouldThrow` anyErrorCall
+  it "trace setters accept records and replace mismatched variants" do
+    let record = Witch.from [Sentry.TraceContext.setSpanId "new"] :: Sentry.TraceContext.TraceContext
+        replacement = Witch.from record :: Sentry.TraceContext.TraceContextUpdate
+        expected = Just (Sentry.Context.Trace record)
+    Map.lookup "trace" (asEvent (Sentry.Event.setContextValues "trace" [] <> Sentry.Event.setTraceContext replacement)).contexts `shouldBe` expected
+    Map.lookup "trace" (Sentry.Update.run (Builders.setContextValues "trace" [] <> Builders.setTraceContext record) (mempty :: Sentry.ScopeData)).contexts `shouldBe` expected
