@@ -14,6 +14,7 @@ Use the [README example](../README.md#scopes) to get started.
 - [What happens when an exception escapes?](#what-happens-when-an-exception-escapes)
 - [Fingerprints](#fingerprints)
 - [Defaults without overwriting](#defaults-without-overwriting)
+- [Optional assignments](#optional-assignments)
 
 ## Which scope should I use?
 
@@ -27,15 +28,20 @@ Use `Sentry.configureGlobal` for process-wide metadata, `withIsolationScope`
 at request or task boundaries, and `withScope` for narrower operations.
 
 Use `Sentry.setTag` and `Sentry.setUser` to attach request-wide metadata without
-a scope handle. They select the isolation scope automatically.
-`Sentry.setTransaction` selects the current scope to name an operation.
+a scope handle; they select the isolation scope automatically.
 
-These automatic operations leave metadata unchanged without a recording client.
-Explicit edits through `Sentry.updateScope` remain available before initialization.
+Leaving `withScope` or `withIsolationScope` restores the previous scope bindings:
 
-The examples assume GHC2024 with `BlockArguments`, `OverloadedStrings`, and
-`OverloadedRecordDot` enabled. Run capture examples with a recording client,
-such as inside `Sentry.withSentry` with a configured DSN.
+- `withScope` clones the `Current` scope, or creates it if absent.
+- `withIsolationScope` clones both the `Isolation` and `Current` scopes, or
+  creates them if either (or both) are absent.
+
+> [!WARNING]
+> Scope metadata is stored on a thread-local context variable, so threads do
+> not automatically inherit scope metadata unless they have been forked by a
+> helper function that propagates thread-local context.
+
+Using the following snippet as an example:
 
 ```haskell
 import Sentry qualified
@@ -48,27 +54,16 @@ handleRequest =
     Sentry.setUser [Sentry.User.setId "42"]
     Sentry.setTag "request_id" "req-123"
     Sentry.withScope \scope -> do
-      Sentry.updateScope scope (Sentry.Scope.setTag "operation" "charge-card")
+      Sentry.updateScope scope $ Sentry.Scope.setTag "operation" "charge-card"
       Sentry.captureMessage_ Sentry.Info "Charging card"
     Sentry.captureMessage_ Sentry.Info "Request completed"
 ```
 
 The automatic setters attach request-wide metadata to the isolation scope, so
-both captures include the request user and ID.
+both `captureMessage_` calls include the request user and ID.
 
-The explicit `updateScope scope` call sets the `operation` tag for any events
-captured within `withScope`.
-
-Leaving `withScope` or `withIsolationScope` restores the previous scope bindings:
-
-- `withScope` clones the `Current` scope, or creates it if absent.
-- `withIsolationScope` clones both the `Isolation` and `Current` scopes, or
-  creates them if either (or both) are absent.
-
-> [!WARNING]
-> Scope metadata is stored on a thread-local context variable, so threads do
-> not automatically inherit scope metadata unless they have been forked by a
-> helper function that propagates thread-local context.
+The explicit `updateScope scope` call, however, only sets the `operation` tag
+for the `"Charging card"` message.
 
 ## How are these layers merged?
 
@@ -126,19 +121,39 @@ Use `Sentry.Test` to assert which metadata reaches the transport in a unit test.
 
 ## What do setting, modifying, and removing do?
 
-`Sentry.updateScope scope [ .. ]` atomically applies the edits specified in
+`Sentry.updateScope scope [ .. ]` atomically applies the updates specified in
 its argument list to the scope handle, in list order.
+
+### Transforming a local value
+
+Use `Sentry.Scope.with` when an update depends on a value already stored on the
+scope.
+
+For example, consider an update that sets a `"region"` tag composed with an
+update that capitalizes all `"region"` tags:
+
+```haskell
+Sentry.updateScope scope
+  [ Sentry.Scope.setTag "region" "eu",
+    Sentry.Scope.with \local ->
+      Sentry.Scope.setOptionalTag "region"
+        (fmap Text.toUpper (Sentry.Scope.lookupTag "region" local))
+  ]
+```
+
+The callback sees the preceding assignment of `"eu"`, so the final local tag is
+`"EU"`.
 
 ### Setting and modifying users
 
-The `Sentry.Scope` user builders edit only the selected scope's local user:
+The `Sentry.Scope` user builders update only the selected scope's local user:
 
 - `setUser` replaces the user with a supplied record or a user built from empty.
 - `setOptionalUser` replaces the local user with `Just user`, or removes the
-  assignment with `Nothing`, allowing an inherited user to appear in captures.
-- `modifyUser` edits the user, starting from an empty record when none exists.
-- `modifyExistingUser` edits the user only when one already exists locally.
-- `unsetUser` removes the local assignment, allowing an inherited user to appear.
+  assignment with `Nothing`.
+- `modifyUser` updates the user, starting from an empty record when none exists.
+- `modifyExistingUser` updates the user only when one already exists locally.
+- `unsetUser` removes the local assignment.
 
 Suppose the isolation scope contains Alice's ID and name, and the current
 scope has no user set on it:
@@ -155,7 +170,7 @@ Sentry.withScope \scope -> do
 user replaces the isolation user at capture, so the event has no user ID or name.
 
 To preserve Alice's ID and name, copy the merged user into the current scope
-before editing it:
+before updating it:
 
 ```haskell
 do
@@ -178,28 +193,47 @@ instead if you want to create a user containing the email in that case.
 The copy is a snapshot: subsequent changes to the isolation scope's user won't
 affect this scope's user.
 
-Scope edits do not modify inherited users. To remove user information from the
-final event regardless of its source, use `Sentry.Event.unsetUser` in
+Updating one scope does not modify users stored on other scopes. To remove user
+information from the final event regardless of its source, use `Sentry.Event.unsetUser` in
 [`beforeSend`](#how-do-i-remove-metadata-before-sending).
+
+The user builders also provide `with`, for example if you needed to strip
+text around a user's name:
+
+```haskell
+Sentry.updateScope scope $
+  Sentry.Scope.modifyExistingUser $
+    Sentry.User.with \user ->
+      Sentry.User.setName (Text.strip user.name)
+```
 
 ### Modifying contexts
 
-Custom context edits are local too: `removeContext` removes the local scope's
-override, allowing a context from an earlier layer to appear in captures.
+`removeContext` removes the named context from the scope being updated.
 
-`removeContextValue` leaves an absent local context absent; removing its last
-field retains an empty context, which continues to override a context of the
-same name in an earlier layer.
+`removeContextValue` removes a field from a custom context on the scope being
+updated, leaving an empty context when its last field is removed. If the context
+is absent, the scope is unchanged.
 
-Custom field edits leave typed contexts unchanged; use the typed setters to
-replace those payloads.
+Use `lookupContextValue` to read a custom field, `modifyExistingContextValue`
+to transform one that is present, or `alterContextValue` to insert, replace, or
+remove it.
+
+Typed contexts have their own helpers; for example, remove a local app context
+if it has no version:
+
+```haskell
+Sentry.updateScope scope $
+  Sentry.Scope.alterAppContext \existing ->
+    case existing of
+      Just app | Text.null app.appVersion -> Nothing
+      _ -> existing
+```
 
 ## How do I remove metadata before sending?
 
-Use `beforeSend` to edit the merged event before delivery. Its input is a
-`CapturedEvent` containing the event and capture metadata.
-
-Return `Just event` to keep the resulting record or `Nothing` to drop it.
+Use `beforeSend` to update the merged event before delivery, return `Just event`
+to keep the resulting record or `Nothing` to drop it:
 
 ```haskell
 import Data.Default (def)
@@ -295,10 +329,26 @@ Sentry.updateScope scope
   ]
 ```
 
-Removing an assignment affects only local metadata and may reveal inherited
-metadata. Assigning an empty user, empty fingerprint, or empty custom context
-retains a present local value. `setOptionalContextValues key (Just [])` therefore
-differs from `setOptionalContextValues key Nothing`.
+To transform a present value, combine `with`, an optional setter, and `fmap`, as
+in the [region example](#transforming-a-local-value).
+
+For example, this trims a local region tag and removes it if it becomes blank:
+
+```haskell
+Sentry.updateScope scope $
+  Sentry.Scope.with \local ->
+    Sentry.Scope.setOptionalTag "region" $
+      case Text.strip <$> Sentry.Scope.lookupTag "region" local of
+        Just "" -> Nothing
+        region -> region
+```
+
+This example also uses `Data.Text` qualified as `Text`.
+
+Assigning an empty user, empty fingerprint, or empty custom context keeps that
+assignment on the scope being updated. For example, `setOptionalContextValues
+key (Just [])` assigns an empty custom context, while `setOptionalContextValues
+key Nothing` removes it.
 
 Optional typed-context setters replace the canonical entry with `Just record`
 and remove it with `Nothing`, regardless of its previous variant. Optional

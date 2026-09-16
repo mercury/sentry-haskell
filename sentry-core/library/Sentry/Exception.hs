@@ -28,8 +28,11 @@ module Sentry.Exception
     firstException,
     lastException,
     eachException,
+    findException,
+    filterExceptions,
   ) where
 
+import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
 import Data.Text (Text)
 import Patrol qualified
@@ -157,3 +160,12 @@ setOptionalStacktrace = maybe unsetStacktrace setStacktrace
 -- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
 setOptionalMechanism :: Maybe Sentry.Mechanism.Mechanism -> ExceptionUpdate
 setOptionalMechanism = maybe unsetMechanism setMechanism
+
+-- | Return the first matching entry.
+findException :: (Exception -> Bool) -> Exceptions -> Maybe Exception
+findException predicate collection = Foldable.find predicate collection.values
+
+-- | Keep matching entries in order, preserving duplicates.
+filterExceptions :: (Exception -> Bool) -> ExceptionsUpdate
+filterExceptions predicate = Update \collection ->
+  let !result = filter predicate collection.values in Exceptions result

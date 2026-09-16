@@ -45,6 +45,7 @@ module Sentry.Mechanism
     setOptionalData,
     removeData,
     clearData,
+    lookupData,
   )
 where
 
@@ -142,3 +143,7 @@ setOptionalMeta = maybe unsetMeta setMeta
 -- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
 setOptionalData :: Text -> Maybe Aeson.Value -> MechanismUpdate
 setOptionalData key = maybe (removeData key) (setData key)
+
+-- | Look up a stored entry by key.
+lookupData :: Text -> Mechanism -> Maybe Aeson.Value
+lookupData key record = Map.lookup key record.data_

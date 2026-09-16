@@ -20,6 +20,7 @@ main = do
   unless enabled $ fail "RTS statistics are required (-T)"
   userResidency
   contextResidency
+  contextTransformationResidency
   breadcrumbResidency
 
 userResidency :: IO ()
@@ -61,6 +62,26 @@ contextResidency = do
     _ -> fail "custom context was lost"
   let growth = toInteger after - toInteger before
   putStrLn ("Custom context: retained-memory growth after 200,000 overwrites: " <> show growth <> " bytes")
+  unless (growth < 1_048_576) $ fail "keyed custom-context updates retained at least 1 MiB"
+
+contextTransformationResidency :: IO ()
+contextTransformationResidency = do
+  scope <- Scope.create Scope.Current
+  Sentry.updateScope scope (Scope.setContextValues "custom" [])
+  performGC
+  before <- gcdetails_live_bytes . gc <$> getRTSStats
+  forM_ [1 .. 200_000 :: Int] \n ->
+    Sentry.updateScope scope (Scope.alterContextValue "custom" "key" (const (Just (Aeson.toJSON n))))
+  performGC
+  after <- gcdetails_live_bytes . gc <$> getRTSStats
+  snapshot <- Scope.readScopeRef scope
+  case Map.lookup "custom" snapshot.contexts of
+    Just (Context.Other values) ->
+      unless (Map.lookup "key" values == Just (Aeson.toJSON (200_000 :: Int))) $
+        fail "final custom-context value was lost"
+    _ -> fail "custom context was lost"
+  let growth = toInteger after - toInteger before
+  putStrLn ("Custom context transformation: retained-memory growth after 200,000 overwrites: " <> show growth <> " bytes")
   unless (growth < 1_048_576) $ fail "keyed custom-context updates retained at least 1 MiB"
 
 -- | The breadcrumb trail is the highest-churn scope path: unlike the keyed

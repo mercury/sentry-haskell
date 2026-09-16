@@ -163,6 +163,7 @@ test-suite unit
     AmbientBreadcrumbTest
     AtomicsExtraTest
     BreadcrumbTest
+    BuilderHelperTest
     CaptureDefaultsTest
     CaptureDropTest
     CaptureExceptionTest

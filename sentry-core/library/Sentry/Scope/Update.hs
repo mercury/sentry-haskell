@@ -137,12 +137,36 @@ module Sentry.Scope.Update
     setEventProcessor,
     addEventProcessor,
     unsetEventProcessor,
+    lookupTag,
+    lookupExtra,
+    lookupContext,
+    with,
+    lookupAppContext,
+    alterAppContext,
+    lookupOsContext,
+    alterOsContext,
+    lookupRuntimeContext,
+    alterRuntimeContext,
+    lookupBrowserContext,
+    alterBrowserContext,
+    lookupDeviceContext,
+    alterDeviceContext,
+    lookupTraceContext,
+    alterTraceContext,
+    lookupContextValue,
+    modifyExistingContextValue,
+    alterContextValue,
+    findFingerprintComponent,
+    filterFingerprint,
+    findBreadcrumb,
+    filterBreadcrumbs,
   )
 where
 
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson qualified as Aeson
 import Data.Foldable (toList)
+import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -684,3 +708,160 @@ setOptionalDeviceContext = maybe (removeContext "device") setDeviceContext
 -- entry with 'Nothing', regardless of its previous variant.
 setOptionalTraceContext :: Maybe Sentry.TraceContext.TraceContext -> ScopeUpdate
 setOptionalTraceContext = maybe (removeContext "trace") setTraceContext
+
+-- | Look up a stored entry by key.
+lookupTag :: Text -> ScopeData -> Maybe Text
+lookupTag key record = Map.lookup key record.tags
+
+-- | Look up a stored entry by key.
+lookupExtra :: Text -> ScopeData -> Maybe Aeson.Value
+lookupExtra key record = Map.lookup key record.extras
+
+-- | Look up a stored entry by key.
+lookupContext :: Text -> ScopeData -> Maybe Patrol.Context
+lookupContext key record = Map.lookup key record.contexts
+
+-- | Observe preceding edits to local metadata within the same atomic update.
+-- Inherited metadata is not included. Use an optional setter to transform a
+-- keyed assignment, including insertion or removal:
+--
+-- @
+-- Sentry.Scope.with \\local ->
+--   Sentry.Scope.setOptionalTag "region"
+--     (fmap Text.toUpper (Sentry.Scope.lookupTag "region" local))
+-- @
+--
+-- This example assumes qualified imports of @Sentry.Scope@ and @Data.Text as Text@.
+-- Replacing @fmap Text.toUpper@ with a @Maybe Text -> Maybe Text@ function
+-- also allows insertion and removal. Removing a local assignment may reveal
+-- inherited metadata when the layers are merged.
+with :: (Witch.From a ScopeUpdate) => (ScopeData -> a) -> ScopeUpdate
+with = Sentry.Update.with
+
+-- | Return the canonical typed context, or 'Nothing' for absence or a mismatch.
+lookupAppContext :: ScopeData -> Maybe Sentry.AppContext.AppContext
+lookupAppContext record = case Map.lookup "app" record.contexts of
+  Just (Patrol.Context.App value) -> Just value
+  _ -> Nothing
+
+-- | Alter an absent or matching context. Mismatches skip the callback;
+-- use an explicit setter to replace a different variant.
+alterAppContext :: (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> ScopeUpdate
+alterAppContext f = Update \record ->
+  let !result = Sentry.Context.Internal.alterTyped "app" project Patrol.Context.App f record.contexts
+   in record{contexts = result}
+  where
+    project (Patrol.Context.App value) = Just value
+    project _ = Nothing
+
+-- | Return the canonical typed context, or 'Nothing' for absence or a mismatch.
+lookupOsContext :: ScopeData -> Maybe Sentry.OsContext.OsContext
+lookupOsContext record = case Map.lookup "os" record.contexts of
+  Just (Patrol.Context.Os value) -> Just value
+  _ -> Nothing
+
+-- | Alter an absent or matching context. Mismatches skip the callback;
+-- use an explicit setter to replace a different variant.
+alterOsContext :: (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> ScopeUpdate
+alterOsContext f = Update \record ->
+  let !result = Sentry.Context.Internal.alterTyped "os" project Patrol.Context.Os f record.contexts
+   in record{contexts = result}
+  where
+    project (Patrol.Context.Os value) = Just value
+    project _ = Nothing
+
+-- | Return the canonical typed context, or 'Nothing' for absence or a mismatch.
+lookupRuntimeContext :: ScopeData -> Maybe Sentry.RuntimeContext.RuntimeContext
+lookupRuntimeContext record = case Map.lookup "runtime" record.contexts of
+  Just (Patrol.Context.Runtime value) -> Just value
+  _ -> Nothing
+
+-- | Alter an absent or matching context. Mismatches skip the callback;
+-- use an explicit setter to replace a different variant.
+alterRuntimeContext :: (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> ScopeUpdate
+alterRuntimeContext f = Update \record ->
+  let !result = Sentry.Context.Internal.alterTyped "runtime" project Patrol.Context.Runtime f record.contexts
+   in record{contexts = result}
+  where
+    project (Patrol.Context.Runtime value) = Just value
+    project _ = Nothing
+
+-- | Return the canonical typed context, or 'Nothing' for absence or a mismatch.
+lookupBrowserContext :: ScopeData -> Maybe Sentry.BrowserContext.BrowserContext
+lookupBrowserContext record = case Map.lookup "browser" record.contexts of
+  Just (Patrol.Context.Browser value) -> Just value
+  _ -> Nothing
+
+-- | Alter an absent or matching context. Mismatches skip the callback;
+-- use an explicit setter to replace a different variant.
+alterBrowserContext :: (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> ScopeUpdate
+alterBrowserContext f = Update \record ->
+  let !result = Sentry.Context.Internal.alterTyped "browser" project Patrol.Context.Browser f record.contexts
+   in record{contexts = result}
+  where
+    project (Patrol.Context.Browser value) = Just value
+    project _ = Nothing
+
+-- | Return the canonical typed context, or 'Nothing' for absence or a mismatch.
+lookupDeviceContext :: ScopeData -> Maybe Sentry.DeviceContext.DeviceContext
+lookupDeviceContext record = case Map.lookup "device" record.contexts of
+  Just (Patrol.Context.Device value) -> Just value
+  _ -> Nothing
+
+-- | Alter an absent or matching context. Mismatches skip the callback;
+-- use an explicit setter to replace a different variant.
+alterDeviceContext :: (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> ScopeUpdate
+alterDeviceContext f = Update \record ->
+  let !result = Sentry.Context.Internal.alterTyped "device" project Patrol.Context.Device f record.contexts
+   in record{contexts = result}
+  where
+    project (Patrol.Context.Device value) = Just value
+    project _ = Nothing
+
+-- | Return the canonical typed context, or 'Nothing' for absence or a mismatch.
+lookupTraceContext :: ScopeData -> Maybe Sentry.TraceContext.TraceContext
+lookupTraceContext record = case Map.lookup "trace" record.contexts of
+  Just (Patrol.Context.Trace value) -> Just value
+  _ -> Nothing
+
+-- | Alter an absent or matching context. Mismatches skip the callback;
+-- use an explicit setter to replace a different variant.
+alterTraceContext :: (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> ScopeUpdate
+alterTraceContext f = Update \record ->
+  let !result = Sentry.Context.Internal.alterTyped "trace" project Patrol.Context.Trace f record.contexts
+   in record{contexts = result}
+  where
+    project (Patrol.Context.Trace value) = Just value
+    project _ = Nothing
+
+-- | Look up a custom field; typed payloads have no custom fields.
+lookupContextValue :: Text -> Text -> ScopeData -> Maybe Aeson.Value
+lookupContextValue key field record = Sentry.Context.Internal.lookupValue key field record.contexts
+
+-- | Transform a present custom field. Missing fields and typed payloads skip the callback.
+modifyExistingContextValue :: Text -> Text -> (Aeson.Value -> Aeson.Value) -> ScopeUpdate
+modifyExistingContextValue key field f = alterContextValue key field (fmap f)
+
+-- | Insert, replace, or remove a custom field. Typed payloads skip the callback.
+-- Removing the final field retains an empty context; absent removals create nothing.
+alterContextValue :: Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> ScopeUpdate
+alterContextValue key field f = Update \record ->
+  let !result = Sentry.Context.Internal.alterValue key field f record.contexts
+   in record{contexts = result}
+
+-- | Return the first matching fingerprint component.
+findFingerprintComponent :: (Text -> Bool) -> ScopeData -> Maybe Text
+findFingerprintComponent predicate record = record.fingerprint >>= Foldable.find predicate
+
+-- | Keep matching components in order, preserving duplicates and optional presence.
+filterFingerprint :: (Text -> Bool) -> ScopeUpdate
+filterFingerprint predicate = modifyExistingFingerprint (filter predicate)
+
+-- | Return the first matching local breadcrumb.
+findBreadcrumb :: (Patrol.Breadcrumb -> Bool) -> ScopeData -> Maybe Patrol.Breadcrumb
+findBreadcrumb predicate record = Foldable.find predicate record.breadcrumbs
+
+-- | Keep matching local breadcrumbs in order, preserving duplicates.
+-- This operation runs no capture policies.
+filterBreadcrumbs :: (Patrol.Breadcrumb -> Bool) -> ScopeUpdate
+filterBreadcrumbs predicate = modifyBreadcrumbs (Sentry.Breadcrumb.filterBreadcrumbs predicate)

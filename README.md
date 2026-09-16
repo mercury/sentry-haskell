@@ -69,7 +69,15 @@ edition.
 
 ## Quick Start
 
-Initialize the SDK, attach metadata for a request or task, and capture an event:
+`withSentry` reads configuration variables from the environment, uses the
+default asynchronous HTTP/1.1 transport, and attempts to drain enqueued
+messages on application shutdown.
+
+> [!TIP]
+> Set the `SENTRY_DSN` environment variable to your project's DSN; without a
+> DSN, the SDK will drop all outgoing events.
+
+This example attaches metadata to a request and captures a message:
 
 ```haskell
 {-# LANGUAGE BlockArguments #-}
@@ -101,13 +109,8 @@ main =
       Sentry.captureMessage_ Sentry.Info "Checkout completed"
 ```
 
-`withSentry` reads the environment, uses the default asynchronous HTTP/1.1
-transport, and drains it when the application exits. Remember  to set `SENTRY_DSN`
-to your project's DSN before running the application; without a DSN the client
-won't record any events.
-
-The captured message includes the scope's user and tag, along with the
-breadcrumb.
+The captured `"Checkout completed"` message includes Alice's ID and name, the
+`"feature"` tag, and the `"Payment submitted"` breadcrumb.
 
 See [Working with scopes](#scopes) and [Initializing the SDK](#initializing-the-sdk)
 for more examples and configuration.
@@ -116,19 +119,17 @@ for more examples and configuration.
 
 ### Import Conventions
 
-Import `Sentry` for lifecycle, capture, and scope operations; import `Sentry.Scope`
-for pure scope builders, and the corresponding record modules like
-as `Sentry.User` and `Sentry.Event` for record fields and builders.
-
-Use qualified, unaliased imports for these scope & type fields:
+Import `Sentry` for lifecycle, capture, and scope operations, `Sentry.Scope` for
+pure scope builders, and record modules such as `Sentry.User` for their fields
+and builders:
 
 ```haskell
-import Sentry                qualified
-import Sentry.Scope          qualified
-import Sentry.Level          qualified
+import Sentry       qualified
+import Sentry.Scope qualified
+import Sentry.Level qualified
 ```
 
-...as well as for the record modifiers:
+Import any builder modules you use in the same way:
 
 ```haskell
 import Sentry.Breadcrumb     qualified
@@ -148,38 +149,35 @@ import Sentry.User           qualified
 > modules.
 > 
 > Explicit DSN parsing currently uses `Patrol.Type.Dsn.fromText`; constructing
-> lower-level payloads such like the thread interface or debug metadata also
+> lower-level payloads such as thread data or debug metadata also
 > requires Patrol imports.
 
 ### Environment Variables
 
-`Sentry.Client.new` resolves the standard Sentry environment variables to
-field values that are set on `ClientOptions`; any options set directly in
-code override values sourced from the environment.
+`Sentry.Client.new` uses the standard Sentry environment variables to fill unset
+`ClientOptions` fields, options supplied directly in code take precedence over
+values supplied by the environment.
 
-| Variable                       | `ClientOptions` field  | Terminal default if unset by both code and env     |
-| ------------------------------ | ---------------------- | -------------------------------------------------- |
-| `SENTRY_DSN`                   | `dsn`                  | `Sentry.Client.Options.Dsn.Disabled` (non-recording client)              |
-| `SENTRY_RELEASE`               | `release`              | `Nothing`                                          |
-| `SENTRY_ENVIRONMENT`           | `environment`          | `"production"`                                     |
-| `SENTRY_DEBUG`                 | `debug`                | `False`                                            |
-| `SENTRY_SAMPLE_RATE`           | `sampleRate`           | `1.0`                                              |
+| Variable                       | `ClientOptions` field  | Default when unset in code and environment |
+| ------------------------------ | ---------------------- | -------------------------------------------|
+| `SENTRY_DSN`                   | `dsn`                  | `Sentry.Client.Options.Dsn.Disabled`       |
+| `SENTRY_RELEASE`               | `release`              | `Nothing`                                  |
+| `SENTRY_ENVIRONMENT`           | `environment`          | `"production"`                             |
+| `SENTRY_DEBUG`                 | `debug`                | `False`                                    |
+| `SENTRY_SAMPLE_RATE`           | `sampleRate`           | `1.0`                                      |
 
-Booleans (`SENTRY_DEBUG`) accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`,
+Booleans accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`,
 case-insensitively; anything else is treated as unset.
 
 Sample rates parse as floats and are clamped to `[0, 1]`.
 
-A variable that's set but fails to parse is ignored and will only log a
-message if the final debug setting is enabled.
-
-Explicit code settings suppress diagnostics for the environment values they
-override.
+Invalid environment values are ignored and logged only when debug logging is
+enabled.
 
 ### Initializing the SDK
 
-Wrap your application in `withSentry` to set the process-wide client and drain
-its transport when the application exits:
+Wrap your application in `withSentry` to set the process-wide client and attempt
+to drain enqueued messages when the application exits:
 
 ```haskell
 import Data.Default (def)
@@ -200,15 +198,14 @@ use `dsn = Sentry.Client.Options.Dsn.Explicit value` to override the environment
 Disabled clients still run integration setup but do not create a default
 transport worker.
 
-The `ClientOptions` record can be modified, which will override any values
-pulled from the environment, as follows:
+Pass a `ClientOptions` record to override environment settings. This example
+supplies a DSN and environment while keeping the default transport:
 
 ```haskell
 import Data.Default (def)
 import Patrol.Type.Dsn qualified
 import Sentry.Client.Options.Dsn qualified
 import Sentry qualified
-import Sentry.Transport.HTTP2.Async qualified
 
 main :: IO ()
 main = do
@@ -217,8 +214,7 @@ main = do
   let clientOptions =
         def
           { Sentry.dsn = Sentry.Client.Options.Dsn.Explicit dsn,
-            Sentry.environment = Just "production",
-            Sentry.transport = Just (Sentry.Transport.HTTP2.Async.new def 1000)
+            Sentry.environment = Just "production"
           }
   Sentry.withSentry clientOptions \_client ->
     runApplication
@@ -235,21 +231,24 @@ Sentry.withScopedClient opts do
   handleRequest request
 ```
 
-The action keeps the surrounding scope metadata and uses the new client for
-captures. On exit, the previous scopes are restored and the new client is
-closed. Other threads keep their existing clients.
+The `"Processing request"` message and events captured by `handleRequest` use
+the new client with the surrounding scope metadata.
 
-`close` returns a `ShutdownResponse`, and is safe to call repeatedly.
+On exit, the previous scopes are restored and the new client is closed; other
+threads keep their existing clients.
+
+`close` returns a `ShutdownResponse` and is safe to call repeatedly.
 
 See [Sentry.Init](sentry-core/library/Sentry/Init.hs) for detailed shutdown and
 exception behavior.
 
 ### Capturing Messages and Exceptions
 
-Once a client is bound to the global scope, the capture functions can be called
-from anywhere:
+The following example demonstrates how both string messages and structured
+Haskell exceptions can be captured and reported to Sentry:
 
 ```haskell
+import Control.Exception.Safe (SomeException, try)
 import Sentry.Level qualified
 import Sentry qualified
 
@@ -272,13 +271,10 @@ Sentry.setUser [Sentry.User.setId "42"]
 Sentry.setTag "request_id" "req-123"
 ```
 
-These automatic calls are called ambient operations. `Sentry.setTransaction`
-selects the current scope to name the current operation. Without a recording
-client, ambient operations leave metadata unchanged.
+`Sentry.setTransaction` selects the current scope to name the current operation.
 
-Explicit scope edits remain available before initialization. Metadata builders
-describe pure changes; apply them with `Sentry.updateScope` to change several
-fields on a scope atomically:
+To update a specific scope, pass its handle to `Sentry.updateScope`; this
+function applies pure builder updates atomically and in list order
 
 ```haskell
 import Sentry qualified
@@ -296,11 +292,11 @@ setCheckoutMetadata scope =
     ]
 ```
 
-`Sentry.User` builds changes to a user object, while `Sentry.Scope` builds
-changes to scope metadata.
+This replaces the selected scope's user with Alice's ID and name and sets its
+`"feature"` tag to `"checkout"`.
 
-The same pattern applies to breadcrumbs, events, requests, and typed contexts
-through their respective `Sentry.*` modules.
+Breadcrumbs, events, requests, and typed contexts have corresponding builder
+modules that follow the same composition rules.
 
 Updates can be factored out into named fragments and composed with `<>`:
 
@@ -318,33 +314,47 @@ setCheckoutTeam scope =
     ]
 ```
 
+In `setCheckoutTeam`, the second update replaces the `"team"` tag's value of
+`"payments"` with `"checkout-platform"`.
+
 Use `Sentry.User.with` to compute an update from the user's existing fields:
 
 ```haskell
 fillMissingUserName :: Sentry.Scope -> IO ()
 fillMissingUserName scope =
-  Sentry.updateScope scope . Sentry.Scope.modifyUser $
-    Sentry.User.with \user ->
-      Sentry.User.setName
-        (if user.name == "" then user.username else user.name)
+  Sentry.updateScope scope $
+    Sentry.Scope.modifyExistingUser $
+      Sentry.User.with \user ->
+        Sentry.User.setName
+          (if user.name == "" then user.username else user.name)
 ```
 
+This uses the username when the name is empty, leaving an existing name
+unchanged; if the scope has no user, `modifyExistingUser` does nothing.
+
 `with` reads the record at that point in the update sequence, including earlier
-changes; `Sentry.Request.with`, `Sentry.Event.with`, and the other record helpers
+updates; `Sentry.Request.with`, `Sentry.Event.with`, and the other record helpers
 follow the same pattern.
 
-> [!NOTE]
-> `Sentry.setUser` builds a replacement user, while `Sentry.modifyUser` updates
-> user metadata on either an existing or empty user value depending on what is
-> present in the scope, while `Sentry.modifyExistingUser` skips modifications
-> if no user exists on the scope being edited.
->
-> All builders should follow this rough pattern of `set*`, `modify*`,
-> `modifyExisting*`.
->
-> See [Scopes](#scopes) for how metadata from different scope layers is combined.
+See [Setting and modifying users](docs/scopes.md#setting-and-modifying-users)
+for more examples.
 
 ### Scopes
+
+The global scope holds process-wide metadata, the isolation scope holds metadata
+for a request or task, and the current scope holds metadata for arbitrary
+operations where a caller may want to temporarily supply additional metadata.
+
+Use `withIsolationScope` to group metadata for a request or asynchronous job
+processing task; it clones the isolation and current scopes, creating either
+if absent, and restores the previous scope bindings when the action finishes.
+
+Use `withScope` for all other operations that require their own scope; anything
+that doesn't represent some context with a meaningful lifetime within your
+application.
+
+In this example, `appUser` supplies the request user's account ID and email,
+and `runHandler` is the application code that handles the request:
 
 ```haskell
 import Sentry qualified
@@ -361,14 +371,20 @@ handleRequest appUser =
           ],
         Sentry.Scope.setTag "feature" "checkout"
       ]
-    -- captured exceptions in runHandler include this request's metadata
     runHandler
 ```
+
+The user and `"feature"` tag set here provide metadata for messages, events, and
+exceptions captured within `runHandler`.
+
+See [Scopes and metadata](docs/scopes.md) for merge rules, nested scope examples,
+and updates to users and contexts.
 
 ### Breadcrumbs
 
 Breadcrumbs are a trail of events leading up to a problem; `addBreadcrumb`
-appends to the ambient isolation scope, so it does not need a `Scope` handle:
+appends to the isolation scope directly, since they are almost always meant
+to be stored there:
 
 ```haskell
 import Sentry qualified
@@ -382,7 +398,8 @@ trackPayment =
     ]
 ```
 
-The number of breadcrumbs retained per scope is capped by
+Subsequent events captured with this isolation scope include the
+`"user clicked 'pay'"` breadcrumb. `addBreadcrumb` keeps the trail within
 `ClientOptions.maxBreadcrumbs`.
 
 ### Choosing a Transport
@@ -422,12 +439,9 @@ http2Transport = Just (Sentry.Transport.HTTP2.Async.new def 1000)
 
 ### Testing
 
-`Sentry.Test` provides an in-memory transport so you can assert on what *would*
-have been sent to Sentry within your unit testing framework.
-
-Use `Sentry.Test.withClient` to create a test transport and initialize a client bound
-to the isolation scope for the action. It supplies the test DSN automatically
-and returns the transport for inspection:
+`Sentry.Test` provides an in-memory transport for inspecting recorded events in
+unit tests. `Sentry.Test.withClient` binds a client with a test DSN to the isolation
+scope for the action and returns the transport for inspection:
 
 ```haskell
 import Sentry qualified
@@ -446,8 +460,8 @@ spec = it "captures a message" do
 Use `Sentry.Test.withCustomClient opts` when testing custom configuration, such as
 sampling or event processors.
 
-Use `Sentry.Test.mkClient transport` and `Sentry.Test.mkCustomClient transport opts` for tests
-that need to manage client binding themselves,
+Use `Sentry.Test.mkClient transport` or `Sentry.Test.mkCustomClient transport opts`
+when a test needs to manage client bindings itself.
 
 > [!TIP]
 > Use `fetchAndClearEnvelopes` to inspect the raw envelopes and
@@ -455,27 +469,28 @@ that need to manage client binding themselves,
 
 ## How It Works
 
-The SDK is organized around the following abstractions:
+The SDK uses four main abstractions:
 
-- A `Scope`, which defines an interface for associating contextual metadata
-  with an enclosed scope of execution and is separated into three tiers of
-  responsibility that are merged before an event is handed off to the `Client`:
-  - a process-wide `Global` scope
-  - a per-task `Isolation` scope
-  - a narrowly-bound `Current` scope
-- A `Client`, which records configuration options, a `Transport`, and a list of
-  `Integration`s
-- `Integration`s, which observe, rewrites, and potentially discard events as
-  they pass through the `Client` on their way to a `Transport`
-- A `Transport`, which delivers a serialized envelope to Sentry
+- A `Scope` stores metadata associated with captured events.
+- A `Client` holds configuration options, a transport, and integrations.
+- An `Integration` can process or discard events before delivery.
+- A `Transport` delivers serialized envelopes to Sentry.
 
-When an artifact is captured using `captureEvent`, `captureException`, or `captureMessage`, the SDK follows this pipeline: resolve the `Client` bound to the nearest `Scope`, merge the three scope layers and apply them to the `Event`, run each integration's `processEvent` hook in order, fill in default values, invoke the user-provided `beforeSend` hook, apply sampling based on the configured rate, wrap the result in an `Envelope`, and deliver it to the transport.
+When `captureEvent`, `captureException`, or `captureMessage` records an event,
+the SDK:
 
-If an event is discarded at any point in this pipeline, the SDK increments an internal counter for the discard stage. A client report with counters for each stage is sent to Sentry at regular intervals.
+1. Resolves the client by checking the current, isolation, and global scopes in
+   that order.
+2. Merges metadata in global, isolation, and current order, applies it to the
+   event, and runs the scope's event processor.
+3. Runs the integration processors, fills in default values, and invokes
+   `beforeSend`.
+4. Applies sampling, wraps a retained event in an envelope, and passes it to
+   the transport.
 
-`withSentry` sets the default client for the process. Use `withScopedClient` to
-override it within an action, for example in a test or a request handler. See
-[Initializing the SDK](#initializing-the-sdk) for examples.
+The SDK counts events excluded by sampling, blocked by rate limits, or discarded
+for other reasons (e.g. a full transport queue); transports include these
+counts in client reports sent to Sentry.
 
 ## Reference
 
@@ -593,4 +608,3 @@ the thread-local context machinery the scope system is built on.
 
 [`sentry-rust`]: https://github.com/getsentry/sentry-rust
 [`patrol`]: https://github.com/tfausak/patrol
-

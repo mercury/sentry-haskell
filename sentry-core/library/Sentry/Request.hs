@@ -27,10 +27,15 @@ module Sentry.Request
     setOptionalQueryParam,
     removeQueryParam,
     clearQueryString,
+    lookupCookie,
+    lookupEnv,
+    lookupQueryParam,
+    lookupHeader,
   )
 where
 
 import Data.Aeson qualified as Aeson
+import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -123,7 +128,10 @@ clearQueryString = Update \r -> r{Patrol.Type.Request.queryString = Map.empty}
 
 -- | Match only ASCII letters case-insensitively; preserve the latest spelling.
 withoutHeader :: Text -> Map.Map Text Text -> Map.Map Text Text
-withoutHeader key = Map.filterWithKey (\existing _ -> asciiLower existing /= asciiLower key)
+withoutHeader key = Map.filterWithKey (\existing _ -> not (headerMatches key existing))
+
+headerMatches :: Text -> Text -> Bool
+headerMatches a b = asciiLower a == asciiLower b
   where
     asciiLower = Text.map (\c -> if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c)
 
@@ -143,3 +151,22 @@ setOptionalEnv key = maybe (removeEnv key) (setEnv key)
 -- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
 setOptionalQueryParam :: Text -> Maybe Text -> RequestUpdate
 setOptionalQueryParam key = maybe (removeQueryParam key) (setQueryParam key)
+
+-- | Look up a stored entry by key.
+lookupCookie :: Text -> Request -> Maybe Text
+lookupCookie key record = Map.lookup key record.cookies
+
+-- | Look up a stored entry by key.
+lookupEnv :: Text -> Request -> Maybe Aeson.Value
+lookupEnv key record = Map.lookup key record.env
+
+-- | Look up a stored entry by key.
+lookupQueryParam :: Text -> Request -> Maybe Text
+lookupQueryParam key record = Map.lookup key record.queryString
+
+-- | Prefer exact spelling, then the first ASCII case-insensitive match in
+-- ascending stored-key order. Whole-record replacements retain duplicate spellings.
+lookupHeader :: Text -> Request -> Maybe Text
+lookupHeader key record = case Map.lookup key record.headers of
+  Just value -> Just value
+  Nothing -> snd <$> Foldable.find (headerMatches key . fst) (Map.toAscList record.headers)

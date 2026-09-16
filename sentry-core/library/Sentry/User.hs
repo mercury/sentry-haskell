@@ -46,6 +46,7 @@ module Sentry.User
     modifyGeo,
     modifyExistingGeo,
     unsetGeo,
+    lookupData,
   )
 where
 
@@ -74,6 +75,10 @@ type UserUpdate = Update User
 -- Note that 'User' text fields are 'Text', not @Maybe Text@, so an unset field
 -- reads as @\"\"@ and cannot be distinguished from one explicitly assigned the
 -- empty string. Branch accordingly.
+--
+-- A mandatory field can be transformed with its existing setter:
+-- @Sentry.User.with \\user -> Sentry.User.setName (Text.strip user.name)@.
+-- This example assumes @Data.Text@ is imported qualified as @Text@.
 with :: (Witch.From a UserUpdate) => (User -> a) -> UserUpdate
 with = Sentry.Update.with
 
@@ -150,3 +155,7 @@ setOptionalData key = maybe (removeData key) (setData key)
 -- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
 setOptionalGeo :: Maybe Sentry.Geo.Geo -> UserUpdate
 setOptionalGeo = maybe unsetGeo setGeo
+
+-- | Look up a stored entry by key.
+lookupData :: Text -> User -> Maybe Aeson.Value
+lookupData key record = Map.lookup key record.data_

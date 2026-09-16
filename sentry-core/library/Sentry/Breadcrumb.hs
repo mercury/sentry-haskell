@@ -45,10 +45,14 @@ module Sentry.Breadcrumb
     setOptionalData,
     removeData,
     clearData,
+    lookupData,
+    findBreadcrumb,
+    filterBreadcrumbs,
   )
 where
 
 import Data.Aeson qualified as Aeson
+import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -204,3 +208,16 @@ setOptionalEventId = maybe unsetEventId setEventId
 -- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
 setOptionalData :: Text -> Maybe Aeson.Value -> BreadcrumbUpdate
 setOptionalData key = maybe (removeData key) (setData key)
+
+-- | Look up a stored entry by key.
+lookupData :: Text -> Breadcrumb -> Maybe Aeson.Value
+lookupData key record = Map.lookup key record.data_
+
+-- | Return the first matching entry.
+findBreadcrumb :: (Breadcrumb -> Bool) -> Breadcrumbs -> Maybe Breadcrumb
+findBreadcrumb predicate collection = Foldable.find predicate collection.values
+
+-- | Keep matching entries in order, preserving duplicates.
+filterBreadcrumbs :: (Breadcrumb -> Bool) -> BreadcrumbsUpdate
+filterBreadcrumbs predicate = Update \collection ->
+  let !result = filter predicate collection.values in Breadcrumbs result

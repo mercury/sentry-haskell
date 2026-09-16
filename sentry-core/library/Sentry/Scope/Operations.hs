@@ -171,6 +171,26 @@ module Sentry.Scope.Operations
 
     -- ** Event Modification
     applyToEvent,
+    alterAppContext,
+    alterAppContextAt,
+    alterOsContext,
+    alterOsContextAt,
+    alterRuntimeContext,
+    alterRuntimeContextAt,
+    alterBrowserContext,
+    alterBrowserContextAt,
+    alterDeviceContext,
+    alterDeviceContextAt,
+    alterTraceContext,
+    alterTraceContextAt,
+    modifyExistingContextValue,
+    modifyExistingContextValueAt,
+    alterContextValue,
+    alterContextValueAt,
+    filterFingerprint,
+    filterFingerprintAt,
+    filterBreadcrumbs,
+    filterBreadcrumbsAt,
   )
 where
 
@@ -1056,3 +1076,83 @@ setOptionalTraceContext scope value = Update.apply scope (Update.setOptionalTrac
 -- | Replace or remove the assignment on an existing target in this context.
 setOptionalTraceContextAt :: (MonadIO m) => Context -> Maybe Sentry.TraceContext.TraceContext -> m ()
 setOptionalTraceContextAt ctx value = updateAt ctx (Update.setOptionalTraceContext value)
+
+-- | Apply 'Update.alterAppContext' to the explicit scope, without requiring initialization.
+alterAppContext :: (MonadIO m) => Scope -> (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> m ()
+alterAppContext scope f = Update.apply scope (Update.alterAppContext f)
+
+-- | Apply 'Update.alterAppContext' to isolation in the context; absent targets are unchanged.
+alterAppContextAt :: (MonadIO m) => Context -> (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> m ()
+alterAppContextAt ctx f = updateAt ctx (Update.alterAppContext f)
+
+-- | Apply 'Update.alterOsContext' to the explicit scope, without requiring initialization.
+alterOsContext :: (MonadIO m) => Scope -> (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> m ()
+alterOsContext scope f = Update.apply scope (Update.alterOsContext f)
+
+-- | Apply 'Update.alterOsContext' to isolation in the context; absent targets are unchanged.
+alterOsContextAt :: (MonadIO m) => Context -> (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> m ()
+alterOsContextAt ctx f = updateAt ctx (Update.alterOsContext f)
+
+-- | Apply 'Update.alterRuntimeContext' to the explicit scope, without requiring initialization.
+alterRuntimeContext :: (MonadIO m) => Scope -> (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> m ()
+alterRuntimeContext scope f = Update.apply scope (Update.alterRuntimeContext f)
+
+-- | Apply 'Update.alterRuntimeContext' to isolation in the context; absent targets are unchanged.
+alterRuntimeContextAt :: (MonadIO m) => Context -> (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> m ()
+alterRuntimeContextAt ctx f = updateAt ctx (Update.alterRuntimeContext f)
+
+-- | Apply 'Update.alterBrowserContext' to the explicit scope, without requiring initialization.
+alterBrowserContext :: (MonadIO m) => Scope -> (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> m ()
+alterBrowserContext scope f = Update.apply scope (Update.alterBrowserContext f)
+
+-- | Apply 'Update.alterBrowserContext' to isolation in the context; absent targets are unchanged.
+alterBrowserContextAt :: (MonadIO m) => Context -> (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> m ()
+alterBrowserContextAt ctx f = updateAt ctx (Update.alterBrowserContext f)
+
+-- | Apply 'Update.alterDeviceContext' to the explicit scope, without requiring initialization.
+alterDeviceContext :: (MonadIO m) => Scope -> (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> m ()
+alterDeviceContext scope f = Update.apply scope (Update.alterDeviceContext f)
+
+-- | Apply 'Update.alterDeviceContext' to isolation in the context; absent targets are unchanged.
+alterDeviceContextAt :: (MonadIO m) => Context -> (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> m ()
+alterDeviceContextAt ctx f = updateAt ctx (Update.alterDeviceContext f)
+
+-- | Apply 'Update.alterTraceContext' to the explicit scope, without requiring initialization.
+alterTraceContext :: (MonadIO m) => Scope -> (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> m ()
+alterTraceContext scope f = Update.apply scope (Update.alterTraceContext f)
+
+-- | Apply 'Update.alterTraceContext' to isolation in the context; absent targets are unchanged.
+alterTraceContextAt :: (MonadIO m) => Context -> (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> m ()
+alterTraceContextAt ctx f = updateAt ctx (Update.alterTraceContext f)
+
+-- | Apply 'Update.modifyExistingContextValue' to the explicit scope, without requiring initialization.
+modifyExistingContextValue :: (MonadIO m) => Scope -> Text -> Text -> (Aeson.Value -> Aeson.Value) -> m ()
+modifyExistingContextValue scope key field f = Update.apply scope (Update.modifyExistingContextValue key field f)
+
+-- | Apply 'Update.modifyExistingContextValue' to isolation in the context; absent targets are unchanged.
+modifyExistingContextValueAt :: (MonadIO m) => Context -> Text -> Text -> (Aeson.Value -> Aeson.Value) -> m ()
+modifyExistingContextValueAt ctx key field f = updateAt ctx (Update.modifyExistingContextValue key field f)
+
+-- | Apply 'Update.alterContextValue' to the explicit scope, without requiring initialization.
+alterContextValue :: (MonadIO m) => Scope -> Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> m ()
+alterContextValue scope key field f = Update.apply scope (Update.alterContextValue key field f)
+
+-- | Apply 'Update.alterContextValue' to isolation in the context; absent targets are unchanged.
+alterContextValueAt :: (MonadIO m) => Context -> Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> m ()
+alterContextValueAt ctx key field f = updateAt ctx (Update.alterContextValue key field f)
+
+-- | Apply 'Update.filterFingerprint' to the explicit scope, without requiring initialization.
+filterFingerprint :: (MonadIO m) => Scope -> (Text -> Bool) -> m ()
+filterFingerprint scope predicate = Update.apply scope (Update.filterFingerprint predicate)
+
+-- | Apply 'Update.filterFingerprint' to isolation in the context; absent targets are unchanged.
+filterFingerprintAt :: (MonadIO m) => Context -> (Text -> Bool) -> m ()
+filterFingerprintAt ctx predicate = updateAt ctx (Update.filterFingerprint predicate)
+
+-- | Apply 'Update.filterBreadcrumbs' to the explicit scope, without requiring initialization.
+filterBreadcrumbs :: (MonadIO m) => Scope -> (Patrol.Breadcrumb -> Bool) -> m ()
+filterBreadcrumbs scope predicate = Update.apply scope (Update.filterBreadcrumbs predicate)
+
+-- | Apply 'Update.filterBreadcrumbs' to isolation in the context; absent targets are unchanged.
+filterBreadcrumbsAt :: (MonadIO m) => Context -> (Patrol.Breadcrumb -> Bool) -> m ()
+filterBreadcrumbsAt ctx predicate = updateAt ctx (Update.filterBreadcrumbs predicate)

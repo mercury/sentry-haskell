@@ -145,6 +145,16 @@ module Sentry.Core
     setTransaction,
     unsetTransaction,
     configureGlobal,
+    alterAppContext,
+    alterOsContext,
+    alterRuntimeContext,
+    alterBrowserContext,
+    alterDeviceContext,
+    alterTraceContext,
+    modifyExistingContextValue,
+    alterContextValue,
+    filterFingerprint,
+    filterBreadcrumbs,
   )
 where
 
@@ -521,3 +531,43 @@ setOptionalDeviceContext value = ambientUpdate getIsolationScope (ScopeUpdate.se
 -- Without a recording client, this operation skips its arguments.
 setOptionalTraceContext :: (MonadIO m) => Maybe Sentry.TraceContext.TraceContext -> m ()
 setOptionalTraceContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalTraceContext value)
+
+-- | Apply 'ScopeUpdate.alterAppContext' to isolation when a recording client exists.
+alterAppContext :: (MonadIO m) => (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> m ()
+alterAppContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterAppContext f)
+
+-- | Apply 'ScopeUpdate.alterOsContext' to isolation when a recording client exists.
+alterOsContext :: (MonadIO m) => (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> m ()
+alterOsContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterOsContext f)
+
+-- | Apply 'ScopeUpdate.alterRuntimeContext' to isolation when a recording client exists.
+alterRuntimeContext :: (MonadIO m) => (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> m ()
+alterRuntimeContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterRuntimeContext f)
+
+-- | Apply 'ScopeUpdate.alterBrowserContext' to isolation when a recording client exists.
+alterBrowserContext :: (MonadIO m) => (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> m ()
+alterBrowserContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterBrowserContext f)
+
+-- | Apply 'ScopeUpdate.alterDeviceContext' to isolation when a recording client exists.
+alterDeviceContext :: (MonadIO m) => (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> m ()
+alterDeviceContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterDeviceContext f)
+
+-- | Apply 'ScopeUpdate.alterTraceContext' to isolation when a recording client exists.
+alterTraceContext :: (MonadIO m) => (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> m ()
+alterTraceContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterTraceContext f)
+
+-- | Apply 'ScopeUpdate.modifyExistingContextValue' to isolation when a recording client exists.
+modifyExistingContextValue :: (MonadIO m) => Text -> Text -> (Aeson.Value -> Aeson.Value) -> m ()
+modifyExistingContextValue key field f = ambientUpdate getIsolationScope (ScopeUpdate.modifyExistingContextValue key field f)
+
+-- | Apply 'ScopeUpdate.alterContextValue' to isolation when a recording client exists.
+alterContextValue :: (MonadIO m) => Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> m ()
+alterContextValue key field f = ambientUpdate getIsolationScope (ScopeUpdate.alterContextValue key field f)
+
+-- | Apply 'ScopeUpdate.filterFingerprint' to isolation when a recording client exists.
+filterFingerprint :: (MonadIO m) => (Text -> Bool) -> m ()
+filterFingerprint predicate = ambientUpdate getIsolationScope (ScopeUpdate.filterFingerprint predicate)
+
+-- | Apply 'ScopeUpdate.filterBreadcrumbs' to isolation when a recording client exists.
+filterBreadcrumbs :: (MonadIO m) => (Patrol.Breadcrumb -> Bool) -> m ()
+filterBreadcrumbs predicate = ambientUpdate getIsolationScope (ScopeUpdate.filterBreadcrumbs predicate)
