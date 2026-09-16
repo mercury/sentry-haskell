@@ -107,6 +107,20 @@ module Sentry.Core
     unsetLevel,
     setUser,
     setOptionalUser,
+    setOptionalTraceContext,
+    setOptionalDeviceContext,
+    setOptionalBrowserContext,
+    setOptionalAppContext,
+    setOptionalOsContext,
+    setOptionalContextValue,
+    setOptionalContextValues,
+    setOptionalRuntimeContext,
+    setOptionalContext,
+    setOptionalExtra,
+    setOptionalTag,
+    setOptionalTransaction,
+    setOptionalFingerprint,
+    setOptionalLevel,
     unsetUser,
     modifyUser,
     modifyExistingUser,
@@ -141,6 +155,7 @@ import Data.Text (Text)
 import Patrol qualified
 import Sentry.AppContext (AppContext, AppContextUpdate)
 import Sentry.Breadcrumb (Breadcrumb, BreadcrumbType, BreadcrumbUpdate)
+import Sentry.BrowserContext qualified
 import Sentry.Capture
   ( CaptureOverrides (..),
     captureEvent,
@@ -156,6 +171,7 @@ import Sentry.Capture
   )
 import Sentry.Client (Client, disableIntegration, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..), DsnSource (..), TransportProvider (..), defaultClientOptions)
+import Sentry.DeviceContext qualified
 import Sentry.Event (Event, EventUpdate)
 import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Geo (Geo, GeoUpdate)
@@ -191,6 +207,7 @@ import Sentry.Scope.Operations
   )
 import Sentry.Scope.Update (ScopeUpdate)
 import Sentry.Scope.Update qualified as ScopeUpdate
+import Sentry.TraceContext qualified
 import Sentry.Transport (ShutdownResponse (..))
 import Sentry.Update (Update)
 import Sentry.User (User, UserUpdate)
@@ -434,3 +451,73 @@ unsetTransaction = ambientUpdate getCurrentScope ScopeUpdate.unsetTransaction
 -- It leaves the scope unchanged when there is no recording client.
 clearBreadcrumbs :: (MonadIO m) => m ()
 clearBreadcrumbs = ambientUpdate getIsolationScope ScopeUpdate.clearBreadcrumbs
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalLevel :: (MonadIO m) => Maybe Patrol.Level -> m ()
+setOptionalLevel value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalLevel value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalFingerprint :: (MonadIO m) => Maybe [Text] -> m ()
+setOptionalFingerprint value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalFingerprint value)
+
+-- | Replace the current transaction assignment, or remove it with 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalTransaction :: (MonadIO m) => Maybe Text -> m ()
+setOptionalTransaction value = ambientUpdate getCurrentScope (ScopeUpdate.setOptionalTransaction value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalTag :: (MonadIO m) => Text -> Maybe Text -> m ()
+setOptionalTag key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalTag key value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalExtra :: (MonadIO m) => Text -> Maybe Aeson.Value -> m ()
+setOptionalExtra key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalExtra key value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalContext :: (MonadIO m) => Text -> Maybe Patrol.Context -> m ()
+setOptionalContext key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalContext key value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalRuntimeContext :: (MonadIO m) => Maybe RuntimeContext -> m ()
+setOptionalRuntimeContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalRuntimeContext value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalContextValues :: (MonadIO m) => Text -> Maybe [(Text, Aeson.Value)] -> m ()
+setOptionalContextValues key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalContextValues key value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalContextValue :: (MonadIO m) => Text -> Text -> Maybe Aeson.Value -> m ()
+setOptionalContextValue key fieldKey value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalContextValue key fieldKey value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalOsContext :: (MonadIO m) => Maybe Sentry.OsContext.OsContext -> m ()
+setOptionalOsContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalOsContext value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalAppContext :: (MonadIO m) => Maybe Sentry.AppContext.AppContext -> m ()
+setOptionalAppContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalAppContext value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalBrowserContext :: (MonadIO m) => Maybe Sentry.BrowserContext.BrowserContext -> m ()
+setOptionalBrowserContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalBrowserContext value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalDeviceContext :: (MonadIO m) => Maybe Sentry.DeviceContext.DeviceContext -> m ()
+setOptionalDeviceContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalDeviceContext value)
+
+-- | Replace the isolation assignment, or remove it when given 'Nothing'.
+-- Without a recording client, this operation skips its arguments.
+setOptionalTraceContext :: (MonadIO m) => Maybe Sentry.TraceContext.TraceContext -> m ()
+setOptionalTraceContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalTraceContext value)

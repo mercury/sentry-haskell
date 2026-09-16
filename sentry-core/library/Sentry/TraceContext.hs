@@ -5,11 +5,13 @@ module Sentry.TraceContext
     TraceContextUpdate,
     with,
     setExclusiveTime,
+    setOptionalExclusiveTime,
     unsetExclusiveTime,
     setOp,
     setParentSpanId,
     setSpanId,
     setStatus,
+    setOptionalStatus,
     unsetStatus,
     setTraceId,
   )
@@ -62,3 +64,11 @@ unsetStatus = Update \r -> r{Patrol.Type.TraceContext.status = Nothing}
 -- | Assign traceId. Text fields can be cleared with empty text.
 setTraceId :: Text -> TraceContextUpdate
 setTraceId !assigned = Update \r -> r{Patrol.Type.TraceContext.traceId = assigned}
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalExclusiveTime :: Maybe Int -> TraceContextUpdate
+setOptionalExclusiveTime = maybe unsetExclusiveTime setExclusiveTime
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalStatus :: Maybe SpanStatus -> TraceContextUpdate
+setOptionalStatus = maybe unsetStatus setStatus

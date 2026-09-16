@@ -10,8 +10,10 @@ module Sentry.AppContext
     setBuildType,
     setDeviceAppHash,
     setAppMemory,
+    setOptionalAppMemory,
     unsetAppMemory,
     setAppStartTime,
+    setOptionalAppStartTime,
     unsetAppStartTime,
   )
 where
@@ -71,3 +73,11 @@ setAppStartTime !assigned = Update \r -> r{Patrol.Type.AppContext.appStartTime =
 -- | Clear appStartTime.
 unsetAppStartTime :: AppContextUpdate
 unsetAppStartTime = Update \r -> r{Patrol.Type.AppContext.appStartTime = Nothing}
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalAppMemory :: Maybe Int -> AppContextUpdate
+setOptionalAppMemory = maybe unsetAppMemory setAppMemory
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalAppStartTime :: Maybe UTCTime -> AppContextUpdate
+setOptionalAppStartTime = maybe unsetAppStartTime setAppStartTime

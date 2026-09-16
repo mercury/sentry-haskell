@@ -36,11 +36,13 @@ module Sentry.User
 
     -- * Keyed data
     setData,
+    setOptionalData,
     removeData,
     clearData,
 
     -- * Nested geo
     setGeo,
+    setOptionalGeo,
     modifyGeo,
     modifyExistingGeo,
     unsetGeo,
@@ -140,3 +142,11 @@ modifyExistingGeo upd = Update \u -> case u.geo of
 -- | Remove the geo from the user.
 unsetGeo :: UserUpdate
 unsetGeo = Update \u -> u{Patrol.User.geo = Nothing}
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalData :: Text -> Maybe Aeson.Value -> UserUpdate
+setOptionalData key = maybe (removeData key) (setData key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalGeo :: Maybe Sentry.Geo.Geo -> UserUpdate
+setOptionalGeo = maybe unsetGeo setGeo

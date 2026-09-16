@@ -5,61 +5,83 @@ module Sentry.DeviceContext
     with,
     setArch,
     setBatteryLevel,
+    setOptionalBatteryLevel,
     unsetBatteryLevel,
     setBatteryStatus,
     setBootTime,
+    setOptionalBootTime,
     unsetBootTime,
     setBrand,
     setCharging,
+    setOptionalCharging,
     unsetCharging,
     setCpuDescription,
     setDeviceType,
     setDeviceUniqueIdentifier,
     setExternalFreeStorage,
+    setOptionalExternalFreeStorage,
     unsetExternalFreeStorage,
     setExternalStorageSize,
+    setOptionalExternalStorageSize,
     unsetExternalStorageSize,
     setFamily,
     setFreeMemory,
+    setOptionalFreeMemory,
     unsetFreeMemory,
     setFreeStorage,
+    setOptionalFreeStorage,
     unsetFreeStorage,
     setLowMemory,
+    setOptionalLowMemory,
     unsetLowMemory,
     setManufacturer,
     setMemorySize,
+    setOptionalMemorySize,
     unsetMemorySize,
     setModel,
     setModelId,
     setName,
     setOnline,
+    setOptionalOnline,
     unsetOnline,
     setOrientation,
     setProcessorCount,
+    setOptionalProcessorCount,
     unsetProcessorCount,
     setProcessorFrequency,
+    setOptionalProcessorFrequency,
     unsetProcessorFrequency,
     setScreenDensity,
+    setOptionalScreenDensity,
     unsetScreenDensity,
     setScreenDpi,
+    setOptionalScreenDpi,
     unsetScreenDpi,
     setScreenResolution,
     setSimulator,
+    setOptionalSimulator,
     unsetSimulator,
     setStorageSize,
+    setOptionalStorageSize,
     unsetStorageSize,
     setSupportsAccelerometer,
+    setOptionalSupportsAccelerometer,
     unsetSupportsAccelerometer,
     setSupportsAudio,
+    setOptionalSupportsAudio,
     unsetSupportsAudio,
     setSupportsGyroscope,
+    setOptionalSupportsGyroscope,
     unsetSupportsGyroscope,
     setSupportsLocationService,
+    setOptionalSupportsLocationService,
     unsetSupportsLocationService,
     setSupportsVibration,
+    setOptionalSupportsVibration,
     unsetSupportsVibration,
     setTimezone,
     setUsableMemory,
+    setOptionalUsableMemory,
     unsetUsableMemory,
   )
 where
@@ -311,3 +333,91 @@ setUsableMemory !assigned = Update \r -> r{Patrol.Type.DeviceContext.usableMemor
 -- | Clear usableMemory.
 unsetUsableMemory :: DeviceContextUpdate
 unsetUsableMemory = Update \r -> r{Patrol.Type.DeviceContext.usableMemory = Nothing}
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalBatteryLevel :: Maybe Double -> DeviceContextUpdate
+setOptionalBatteryLevel = maybe unsetBatteryLevel setBatteryLevel
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalBootTime :: Maybe UTCTime -> DeviceContextUpdate
+setOptionalBootTime = maybe unsetBootTime setBootTime
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalCharging :: Maybe Bool -> DeviceContextUpdate
+setOptionalCharging = maybe unsetCharging setCharging
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalExternalFreeStorage :: Maybe Int -> DeviceContextUpdate
+setOptionalExternalFreeStorage = maybe unsetExternalFreeStorage setExternalFreeStorage
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalExternalStorageSize :: Maybe Int -> DeviceContextUpdate
+setOptionalExternalStorageSize = maybe unsetExternalStorageSize setExternalStorageSize
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalFreeMemory :: Maybe Int -> DeviceContextUpdate
+setOptionalFreeMemory = maybe unsetFreeMemory setFreeMemory
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalFreeStorage :: Maybe Int -> DeviceContextUpdate
+setOptionalFreeStorage = maybe unsetFreeStorage setFreeStorage
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalLowMemory :: Maybe Bool -> DeviceContextUpdate
+setOptionalLowMemory = maybe unsetLowMemory setLowMemory
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalMemorySize :: Maybe Int -> DeviceContextUpdate
+setOptionalMemorySize = maybe unsetMemorySize setMemorySize
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalOnline :: Maybe Bool -> DeviceContextUpdate
+setOptionalOnline = maybe unsetOnline setOnline
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalProcessorCount :: Maybe Int -> DeviceContextUpdate
+setOptionalProcessorCount = maybe unsetProcessorCount setProcessorCount
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalProcessorFrequency :: Maybe Double -> DeviceContextUpdate
+setOptionalProcessorFrequency = maybe unsetProcessorFrequency setProcessorFrequency
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalScreenDensity :: Maybe Double -> DeviceContextUpdate
+setOptionalScreenDensity = maybe unsetScreenDensity setScreenDensity
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalScreenDpi :: Maybe Double -> DeviceContextUpdate
+setOptionalScreenDpi = maybe unsetScreenDpi setScreenDpi
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSimulator :: Maybe Bool -> DeviceContextUpdate
+setOptionalSimulator = maybe unsetSimulator setSimulator
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalStorageSize :: Maybe Int -> DeviceContextUpdate
+setOptionalStorageSize = maybe unsetStorageSize setStorageSize
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSupportsAccelerometer :: Maybe Bool -> DeviceContextUpdate
+setOptionalSupportsAccelerometer = maybe unsetSupportsAccelerometer setSupportsAccelerometer
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSupportsAudio :: Maybe Bool -> DeviceContextUpdate
+setOptionalSupportsAudio = maybe unsetSupportsAudio setSupportsAudio
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSupportsGyroscope :: Maybe Bool -> DeviceContextUpdate
+setOptionalSupportsGyroscope = maybe unsetSupportsGyroscope setSupportsGyroscope
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSupportsLocationService :: Maybe Bool -> DeviceContextUpdate
+setOptionalSupportsLocationService = maybe unsetSupportsLocationService setSupportsLocationService
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSupportsVibration :: Maybe Bool -> DeviceContextUpdate
+setOptionalSupportsVibration = maybe unsetSupportsVibration setSupportsVibration
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalUsableMemory :: Maybe Int -> DeviceContextUpdate
+setOptionalUsableMemory = maybe unsetUsableMemory setUsableMemory

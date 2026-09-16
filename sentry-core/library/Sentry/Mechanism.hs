@@ -31,14 +31,18 @@ module Sentry.Mechanism
     setDescription,
     setHelpLink,
     setHandled,
+    setOptionalHandled,
     unsetHandled,
     setSynthetic,
+    setOptionalSynthetic,
     unsetSynthetic,
     setMeta,
+    setOptionalMeta,
     unsetMeta,
 
     -- * Keyed data
     setData,
+    setOptionalData,
     removeData,
     clearData,
   )
@@ -122,3 +126,19 @@ removeData !key = Update \m -> let !result = Map.delete key m.data_ in m{Patrol.
 -- | Remove all data keys.
 clearData :: MechanismUpdate
 clearData = Update \m -> m{Patrol.Mechanism.data_ = Map.empty}
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalHandled :: Maybe Bool -> MechanismUpdate
+setOptionalHandled = maybe unsetHandled setHandled
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSynthetic :: Maybe Bool -> MechanismUpdate
+setOptionalSynthetic = maybe unsetSynthetic setSynthetic
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalMeta :: Maybe Patrol.MechanismMeta -> MechanismUpdate
+setOptionalMeta = maybe unsetMeta setMeta
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalData :: Text -> Maybe Aeson.Value -> MechanismUpdate
+setOptionalData key = maybe (removeData key) (setData key)

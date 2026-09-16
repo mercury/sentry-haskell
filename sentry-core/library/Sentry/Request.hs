@@ -12,15 +12,19 @@ module Sentry.Request
     setData,
     clearData,
     setCookie,
+    setOptionalCookie,
     removeCookie,
     clearCookies,
     setHeader,
+    setOptionalHeader,
     removeHeader,
     clearHeaders,
     setEnv,
+    setOptionalEnv,
     removeEnv,
     clearEnv,
     setQueryParam,
+    setOptionalQueryParam,
     removeQueryParam,
     clearQueryString,
   )
@@ -122,3 +126,20 @@ withoutHeader :: Text -> Map.Map Text Text -> Map.Map Text Text
 withoutHeader key = Map.filterWithKey (\existing _ -> asciiLower existing /= asciiLower key)
   where
     asciiLower = Text.map (\c -> if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalCookie :: Text -> Maybe Text -> RequestUpdate
+setOptionalCookie key = maybe (removeCookie key) (setCookie key)
+
+-- | Replace or remove every ASCII case-insensitive match for this header.
+-- Replacement retains the supplied key spelling.
+setOptionalHeader :: Text -> Maybe Text -> RequestUpdate
+setOptionalHeader key = maybe (removeHeader key) (setHeader key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalEnv :: Text -> Maybe Aeson.Value -> RequestUpdate
+setOptionalEnv key = maybe (removeEnv key) (setEnv key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalQueryParam :: Text -> Maybe Text -> RequestUpdate
+setOptionalQueryParam key = maybe (removeQueryParam key) (setQueryParam key)

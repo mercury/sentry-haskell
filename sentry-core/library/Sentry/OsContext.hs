@@ -11,6 +11,7 @@ module Sentry.OsContext
     setRawDescription,
     setVersion,
     setRooted,
+    setOptionalRooted,
     unsetRooted,
   )
 where
@@ -57,3 +58,7 @@ setRooted !assigned = Update \r -> r{Patrol.Type.OsContext.rooted = Just assigne
 -- | Clear rooted.
 unsetRooted :: OsContextUpdate
 unsetRooted = Update \r -> r{Patrol.Type.OsContext.rooted = Nothing}
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalRooted :: Maybe Bool -> OsContextUpdate
+setOptionalRooted = maybe unsetRooted setRooted

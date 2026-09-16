@@ -28,16 +28,21 @@ module Sentry.Breadcrumb
     setMessage,
     setCategory,
     setLevel,
+    setOptionalLevel,
     unsetLevel,
     setType,
+    setOptionalType,
     unsetType,
     setTimestamp,
+    setOptionalTimestamp,
     unsetTimestamp,
     setEventId,
+    setOptionalEventId,
     unsetEventId,
 
     -- * Keyed data
     setData,
+    setOptionalData,
     removeData,
     clearData,
   )
@@ -179,3 +184,23 @@ eachBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> BreadcrumbsUpdate
 eachBreadcrumb upd = Update \(Breadcrumbs xs) ->
   let !result = mapWHNF (Sentry.Update.run upd) xs
    in Breadcrumbs result
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalLevel :: Maybe Patrol.Level -> BreadcrumbUpdate
+setOptionalLevel = maybe unsetLevel setLevel
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalType :: Maybe BreadcrumbType -> BreadcrumbUpdate
+setOptionalType = maybe unsetType setType
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTimestamp :: Maybe UTCTime -> BreadcrumbUpdate
+setOptionalTimestamp = maybe unsetTimestamp setTimestamp
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalEventId :: Maybe Patrol.EventId -> BreadcrumbUpdate
+setOptionalEventId = maybe unsetEventId setEventId
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalData :: Text -> Maybe Aeson.Value -> BreadcrumbUpdate
+setOptionalData key = maybe (removeData key) (setData key)

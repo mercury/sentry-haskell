@@ -13,8 +13,10 @@ module Sentry.Exception
     setModule,
     setThreadId,
     setStacktrace,
+    setOptionalStacktrace,
     unsetStacktrace,
     setMechanism,
+    setOptionalMechanism,
     modifyMechanism,
     modifyExistingMechanism,
     unsetMechanism,
@@ -147,3 +149,11 @@ eachException :: (Witch.From a ExceptionUpdate) => a -> ExceptionsUpdate
 eachException upd = Update \(Exceptions xs) ->
   let !result = mapWHNF (Sentry.Update.run upd) xs
    in Exceptions result
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalStacktrace :: Maybe Patrol.Stacktrace -> ExceptionUpdate
+setOptionalStacktrace = maybe unsetStacktrace setStacktrace
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalMechanism :: Maybe Sentry.Mechanism.Mechanism -> ExceptionUpdate
+setOptionalMechanism = maybe unsetMechanism setMechanism

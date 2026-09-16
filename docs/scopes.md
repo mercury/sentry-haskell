@@ -276,3 +276,37 @@ Sentry.updateScope scope
     Sentry.Scope.setTagIfAbsent "owner" "platform"
   ]
 ```
+
+## Optional assignments
+
+Use `setOptionalX` to copy a value that may be absent. `Just value` replaces the
+assignment; `Nothing` removes it. These builders accept concrete optional values,
+such as `Maybe User`, so bare `Nothing` needs no type annotation. Existing
+`setX`, `unsetX`, and keyed `removeX` operations remain available.
+
+For example, with qualified imports of `Sentry` and `Sentry.Scope`, and an
+existing scope handle `scope`:
+
+```haskell
+Sentry.updateScope scope
+  [ Sentry.Scope.setOptionalTag "region" (Just "eu"),
+    Sentry.Scope.setOptionalTransaction Nothing,
+    Sentry.Scope.setOptionalFingerprint (Just [])
+  ]
+```
+
+Removing an assignment affects only local metadata and may reveal inherited
+metadata. Assigning an empty user, empty fingerprint, or empty custom context
+retains a present local value. `setOptionalContextValues key (Just [])` therefore
+differs from `setOptionalContextValues key Nothing`.
+
+Optional typed-context setters replace the canonical entry with `Just record`
+and remove it with `Nothing`, regardless of its previous variant. Optional
+custom-context field setters leave typed payloads unchanged; deleting a final
+custom field retains its empty context. Optional headers retain the existing
+ASCII case-insensitive replacement and removal rules.
+
+Automatic optional setters target isolation, except transaction naming, which
+targets current. They skip their arguments without a recording client. Explicit
+scope operations remain usable without initialization; context-based `*At`
+operations skip absent targets without creating scopes.

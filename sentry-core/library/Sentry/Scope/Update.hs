@@ -32,6 +32,10 @@
 -- scope `Update.apply` (stagingTags <> Update.setUser u)
 -- @
 --
+-- Optional setters accept concrete values: 'Just' replaces the local assignment
+-- and 'Nothing' removes it. Removal may reveal inherited metadata; assigning
+-- an empty record or collection retains a present local override.
+--
 -- This is the same 'Sentry.Update.Update' the builder modules use; see
 -- "Sentry.Update" for the shared composition rules.
 module Sentry.Scope.Update
@@ -45,6 +49,7 @@ module Sentry.Scope.Update
 
     -- ** Scalar fields
     setLevel,
+    setOptionalLevel,
     unsetLevel,
     setUser,
     setOptionalUser,
@@ -57,47 +62,60 @@ module Sentry.Scope.Update
     removeDefaultFingerprint,
     modifyFingerprint,
     setFingerprint,
+    setOptionalFingerprint,
     unsetFingerprint,
     appendFingerprintComponent,
     clearFingerprint,
     modifyExistingFingerprint,
     setTransaction,
+    setOptionalTransaction,
     unsetTransaction,
 
     -- ** Tags
     setTag,
+    setOptionalTag,
     setTagIfAbsent,
     removeTag,
     clearTags,
 
     -- ** Extras
     setExtra,
+    setOptionalExtra,
     removeExtra,
     clearExtras,
 
     -- ** Contexts
     setContext,
+    setOptionalContext,
     setContextIfAbsent,
     setBrowserContext,
+    setOptionalBrowserContext,
     modifyBrowserContext,
     modifyExistingBrowserContext,
     setDeviceContext,
+    setOptionalDeviceContext,
     modifyDeviceContext,
     modifyExistingDeviceContext,
     setTraceContext,
+    setOptionalTraceContext,
     modifyTraceContext,
     modifyExistingTraceContext,
     setOsContext,
+    setOptionalOsContext,
     modifyOsContext,
     modifyExistingOsContext,
     setAppContext,
+    setOptionalAppContext,
     modifyAppContext,
     modifyExistingAppContext,
     setRuntimeContext,
+    setOptionalRuntimeContext,
     modifyRuntimeContext,
     modifyExistingRuntimeContext,
     setContextValues,
+    setOptionalContextValues,
     setContextValue,
+    setOptionalContextValue,
     removeContextValue,
     modifyContextValues,
     removeContext,
@@ -602,3 +620,67 @@ lastBreadcrumb = modifyBreadcrumbs . Sentry.Breadcrumb.lastBreadcrumb
 -- | Each local breadcrumb edit; no capture policies are run.
 eachBreadcrumb :: (Witch.From a BreadcrumbUpdate) => a -> ScopeUpdate
 eachBreadcrumb = modifyBreadcrumbs . Sentry.Breadcrumb.eachBreadcrumb
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalLevel :: Maybe Patrol.Level -> ScopeUpdate
+setOptionalLevel = maybe unsetLevel setLevel
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalFingerprint :: Maybe [Text] -> ScopeUpdate
+setOptionalFingerprint = maybe unsetFingerprint setFingerprint
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTransaction :: Maybe Text -> ScopeUpdate
+setOptionalTransaction = maybe unsetTransaction setTransaction
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTag :: Text -> Maybe Text -> ScopeUpdate
+setOptionalTag key = maybe (removeTag key) (setTag key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalExtra :: Text -> Maybe Aeson.Value -> ScopeUpdate
+setOptionalExtra key = maybe (removeExtra key) (setExtra key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalContext :: Text -> Maybe Patrol.Context -> ScopeUpdate
+setOptionalContext key = maybe (removeContext key) (setContext key)
+
+-- | Replace the @"runtime"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalRuntimeContext :: Maybe Sentry.RuntimeContext.RuntimeContext -> ScopeUpdate
+setOptionalRuntimeContext = maybe (removeContext "runtime") setRuntimeContext
+
+-- | Replace a named context with custom values, or remove it with 'Nothing'.
+-- 'Just' an empty list retains a present empty custom context.
+setOptionalContextValues :: Text -> Maybe [(Text, Aeson.Value)] -> ScopeUpdate
+setOptionalContextValues key = maybe (removeContext key) (setContextValues key)
+
+-- | Assign or remove a custom-context field. Typed payloads are unchanged.
+-- Removal never creates a context; deleting its last field retains it.
+setOptionalContextValue :: Text -> Text -> Maybe Aeson.Value -> ScopeUpdate
+setOptionalContextValue key fieldKey = maybe (removeContextValue key fieldKey) (setContextValue key fieldKey)
+
+-- | Replace the @"os"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalOsContext :: Maybe Sentry.OsContext.OsContext -> ScopeUpdate
+setOptionalOsContext = maybe (removeContext "os") setOsContext
+
+-- | Replace the @"app"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalAppContext :: Maybe Sentry.AppContext.AppContext -> ScopeUpdate
+setOptionalAppContext = maybe (removeContext "app") setAppContext
+
+-- | Replace the @"browser"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalBrowserContext :: Maybe Sentry.BrowserContext.BrowserContext -> ScopeUpdate
+setOptionalBrowserContext = maybe (removeContext "browser") setBrowserContext
+
+-- | Replace the @"device"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalDeviceContext :: Maybe Sentry.DeviceContext.DeviceContext -> ScopeUpdate
+setOptionalDeviceContext = maybe (removeContext "device") setDeviceContext
+
+-- | Replace the @"trace"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalTraceContext :: Maybe Sentry.TraceContext.TraceContext -> ScopeUpdate
+setOptionalTraceContext = maybe (removeContext "trace") setTraceContext

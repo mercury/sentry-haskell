@@ -32,19 +32,25 @@ module Sentry.Event
     -- * Identity and severity
     setEventId,
     setLevel,
+    setOptionalLevel,
     unsetLevel,
     setType,
+    setOptionalType,
     unsetType,
     setPlatform,
+    setOptionalPlatform,
     unsetPlatform,
     setTimestamp,
+    setOptionalTimestamp,
     unsetTimestamp,
     setTimeSpent,
+    setOptionalTimeSpent,
     unsetTimeSpent,
 
     -- * Tags
     setTags,
     setTag,
+    setOptionalTag,
     setTagIfAbsent,
     removeTag,
     clearTags,
@@ -52,33 +58,43 @@ module Sentry.Event
     -- * Extra data
     setExtras,
     setExtra,
+    setOptionalExtra,
     removeExtra,
     clearExtras,
 
     -- * Contexts
     setContexts,
     setContext,
+    setOptionalContext,
     setContextIfAbsent,
     setBrowserContext,
+    setOptionalBrowserContext,
     modifyBrowserContext,
     modifyExistingBrowserContext,
     setDeviceContext,
+    setOptionalDeviceContext,
     modifyDeviceContext,
     modifyExistingDeviceContext,
     setTraceContext,
+    setOptionalTraceContext,
     modifyTraceContext,
     modifyExistingTraceContext,
     setOsContext,
+    setOptionalOsContext,
     modifyOsContext,
     modifyExistingOsContext,
     setAppContext,
+    setOptionalAppContext,
     modifyAppContext,
     modifyExistingAppContext,
     setRuntimeContext,
+    setOptionalRuntimeContext,
     modifyRuntimeContext,
     modifyExistingRuntimeContext,
     setContextValues,
+    setOptionalContextValues,
     setContextValue,
+    setOptionalContextValue,
     removeContextValue,
     modifyContextValues,
     removeContext,
@@ -87,6 +103,7 @@ module Sentry.Event
     -- * Modules
     setModules,
     setModule,
+    setOptionalModule,
     removeModule,
     clearModules,
 
@@ -107,32 +124,41 @@ module Sentry.Event
 
     -- * User
     setUser,
+    setOptionalUser,
     modifyUser,
     modifyExistingUser,
     unsetUser,
 
     -- * Integration-populated payloads
     setBreadcrumbs,
+    setOptionalBreadcrumbs,
     modifyBreadcrumbs,
     modifyExistingBreadcrumbs,
     unsetBreadcrumbs,
     setDebugMeta,
+    setOptionalDebugMeta,
     unsetDebugMeta,
     setExceptionChain,
+    setOptionalExceptionChain,
     modifyExceptionChain,
     modifyExistingExceptionChain,
     unsetExceptionChain,
     setLogentry,
+    setOptionalLogentry,
     unsetLogentry,
     setRequest,
+    setOptionalRequest,
     modifyRequest,
     modifyExistingRequest,
     unsetRequest,
     setSdk,
+    setOptionalSdk,
     unsetSdk,
     setThreads,
+    setOptionalThreads,
     unsetThreads,
     setTransactionInfo,
+    setOptionalTransactionInfo,
     unsetTransactionInfo,
 
     -- * Whole-event builders
@@ -766,3 +792,115 @@ modifyExistingTraceContext upd = Update \e ->
   where
     project (Patrol.Context.Trace record) = Just record
     project _ = Nothing
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalLevel :: Maybe Patrol.Level -> EventUpdate
+setOptionalLevel = maybe unsetLevel setLevel
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalType :: Maybe Patrol.EventType -> EventUpdate
+setOptionalType = maybe unsetType setType
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalPlatform :: Maybe Patrol.Platform -> EventUpdate
+setOptionalPlatform = maybe unsetPlatform setPlatform
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTimestamp :: Maybe UTCTime -> EventUpdate
+setOptionalTimestamp = maybe unsetTimestamp setTimestamp
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTimeSpent :: Maybe NominalDiffTime -> EventUpdate
+setOptionalTimeSpent = maybe unsetTimeSpent setTimeSpent
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTag :: Text -> Maybe Text -> EventUpdate
+setOptionalTag key = maybe (removeTag key) (setTag key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalExtra :: Text -> Maybe Aeson.Value -> EventUpdate
+setOptionalExtra key = maybe (removeExtra key) (setExtra key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalContext :: Text -> Maybe Patrol.Context -> EventUpdate
+setOptionalContext key = maybe (removeContext key) (setContext key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalModule :: Text -> Maybe Text -> EventUpdate
+setOptionalModule key = maybe (removeModule key) (setModule key)
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalUser :: Maybe Sentry.User.User -> EventUpdate
+setOptionalUser = maybe unsetUser setUser
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalBreadcrumbs :: Maybe Sentry.Breadcrumb.Breadcrumbs -> EventUpdate
+setOptionalBreadcrumbs = maybe unsetBreadcrumbs setBreadcrumbs
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalDebugMeta :: Maybe Patrol.DebugMeta -> EventUpdate
+setOptionalDebugMeta = maybe unsetDebugMeta setDebugMeta
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalExceptionChain :: Maybe Sentry.Exception.Exceptions -> EventUpdate
+setOptionalExceptionChain = maybe unsetExceptionChain setExceptionChain
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalLogentry :: Maybe Patrol.LogEntry -> EventUpdate
+setOptionalLogentry = maybe unsetLogentry setLogentry
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalRequest :: Maybe Sentry.Request.Request -> EventUpdate
+setOptionalRequest = maybe unsetRequest setRequest
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalSdk :: Maybe Patrol.ClientSdkInfo -> EventUpdate
+setOptionalSdk = maybe unsetSdk setSdk
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalThreads :: Maybe Patrol.Threads -> EventUpdate
+setOptionalThreads = maybe unsetThreads setThreads
+
+-- | Replace this assignment with 'Just' a value, or remove it with 'Nothing'.
+setOptionalTransactionInfo :: Maybe Patrol.TransactionInfo -> EventUpdate
+setOptionalTransactionInfo = maybe unsetTransactionInfo setTransactionInfo
+
+-- | Replace a named context with custom values, or remove it with 'Nothing'.
+-- 'Just' an empty list retains a present empty custom context.
+setOptionalContextValues :: Text -> Maybe [(Text, Aeson.Value)] -> EventUpdate
+setOptionalContextValues key = maybe (removeContext key) (setContextValues key)
+
+-- | Assign or remove a custom-context field. Typed payloads are unchanged.
+-- Removal never creates a context; deleting its last field retains it.
+setOptionalContextValue :: Text -> Text -> Maybe Aeson.Value -> EventUpdate
+setOptionalContextValue key fieldKey = maybe (removeContextValue key fieldKey) (setContextValue key fieldKey)
+
+-- | Replace the @"os"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalOsContext :: Maybe Sentry.OsContext.OsContext -> EventUpdate
+setOptionalOsContext = maybe (removeContext "os") setOsContext
+
+-- | Replace the @"app"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalAppContext :: Maybe Sentry.AppContext.AppContext -> EventUpdate
+setOptionalAppContext = maybe (removeContext "app") setAppContext
+
+-- | Replace the @"runtime"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalRuntimeContext :: Maybe Sentry.RuntimeContext.RuntimeContext -> EventUpdate
+setOptionalRuntimeContext = maybe (removeContext "runtime") setRuntimeContext
+
+-- | Replace the @"browser"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalBrowserContext :: Maybe Sentry.BrowserContext.BrowserContext -> EventUpdate
+setOptionalBrowserContext = maybe (removeContext "browser") setBrowserContext
+
+-- | Replace the @"device"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalDeviceContext :: Maybe Sentry.DeviceContext.DeviceContext -> EventUpdate
+setOptionalDeviceContext = maybe (removeContext "device") setDeviceContext
+
+-- | Replace the @"trace"@ context with the supplied record, or remove the
+-- entry with 'Nothing', regardless of its previous variant.
+setOptionalTraceContext :: Maybe Sentry.TraceContext.TraceContext -> EventUpdate
+setOptionalTraceContext = maybe (removeContext "trace") setTraceContext

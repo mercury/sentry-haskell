@@ -53,8 +53,36 @@ module Sentry.Scope.Operations
     unsetLevelAt,
     setUser,
     setOptionalUser,
+    setOptionalTraceContext,
+    setOptionalDeviceContext,
+    setOptionalBrowserContext,
+    setOptionalAppContext,
+    setOptionalOsContext,
+    setOptionalContextValue,
+    setOptionalContextValues,
+    setOptionalRuntimeContext,
+    setOptionalContext,
+    setOptionalExtra,
+    setOptionalTag,
+    setOptionalTransaction,
+    setOptionalFingerprint,
+    setOptionalLevel,
     setUserAt,
     setOptionalUserAt,
+    setOptionalTraceContextAt,
+    setOptionalDeviceContextAt,
+    setOptionalBrowserContextAt,
+    setOptionalAppContextAt,
+    setOptionalOsContextAt,
+    setOptionalContextValueAt,
+    setOptionalContextValuesAt,
+    setOptionalRuntimeContextAt,
+    setOptionalContextAt,
+    setOptionalExtraAt,
+    setOptionalTagAt,
+    setOptionalTransactionAt,
+    setOptionalFingerprintAt,
+    setOptionalLevelAt,
     unsetUser,
     unsetUserAt,
     modifyUser,
@@ -167,16 +195,22 @@ import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.AppContext (AppContextUpdate)
+import Sentry.AppContext qualified
 import Sentry.Breadcrumb qualified
+import Sentry.BrowserContext qualified
 import Sentry.Client (Client, pattern NON_RECORDING_CLIENT)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.DeviceContext qualified
 import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Fingerprint.Internal qualified as Fingerprint
 import Sentry.OsContext (OsContextUpdate)
+import Sentry.OsContext qualified
 import Sentry.RuntimeContext (RuntimeContextUpdate)
+import Sentry.RuntimeContext qualified
 import Sentry.Scope.Internal (Scope, ScopeData (..), ScopeType (..))
 import Sentry.Scope.Internal qualified as Internal
 import Sentry.Scope.Update qualified as Update
+import Sentry.TraceContext qualified
 import Sentry.Update qualified
 import Sentry.User (User, UserUpdate)
 import System.IO.Unsafe (unsafePerformIO)
@@ -910,3 +944,115 @@ modifyExistingUser scope upd = Update.apply scope (Update.modifyExistingUser upd
 -- is absent, this operation leaves the context unchanged.
 modifyExistingUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
 modifyExistingUserAt ctx upd = updateAt ctx (Update.modifyExistingUser upd)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalLevel :: (MonadIO m) => Scope -> Maybe Patrol.Level -> m ()
+setOptionalLevel scope value = Update.apply scope (Update.setOptionalLevel value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalLevelAt :: (MonadIO m) => Context -> Maybe Patrol.Level -> m ()
+setOptionalLevelAt ctx value = updateAt ctx (Update.setOptionalLevel value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalFingerprint :: (MonadIO m) => Scope -> Maybe [Text] -> m ()
+setOptionalFingerprint scope value = Update.apply scope (Update.setOptionalFingerprint value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalFingerprintAt :: (MonadIO m) => Context -> Maybe [Text] -> m ()
+setOptionalFingerprintAt ctx value = updateAt ctx (Update.setOptionalFingerprint value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalTransaction :: (MonadIO m) => Scope -> Maybe Text -> m ()
+setOptionalTransaction scope value = Update.apply scope (Update.setOptionalTransaction value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalTransactionAt :: (MonadIO m) => Context -> Maybe Text -> m ()
+setOptionalTransactionAt ctx value = for_ (lookupCurrent ctx) \scope -> setOptionalTransaction scope value
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalTag :: (MonadIO m) => Scope -> Text -> Maybe Text -> m ()
+setOptionalTag scope key value = Update.apply scope (Update.setOptionalTag key value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalTagAt :: (MonadIO m) => Context -> Text -> Maybe Text -> m ()
+setOptionalTagAt ctx key value = updateAt ctx (Update.setOptionalTag key value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalExtra :: (MonadIO m) => Scope -> Text -> Maybe Aeson.Value -> m ()
+setOptionalExtra scope key value = Update.apply scope (Update.setOptionalExtra key value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalExtraAt :: (MonadIO m) => Context -> Text -> Maybe Aeson.Value -> m ()
+setOptionalExtraAt ctx key value = updateAt ctx (Update.setOptionalExtra key value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalContext :: (MonadIO m) => Scope -> Text -> Maybe Patrol.Context -> m ()
+setOptionalContext scope key value = Update.apply scope (Update.setOptionalContext key value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalContextAt :: (MonadIO m) => Context -> Text -> Maybe Patrol.Context -> m ()
+setOptionalContextAt ctx key value = updateAt ctx (Update.setOptionalContext key value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalRuntimeContext :: (MonadIO m) => Scope -> Maybe Sentry.RuntimeContext.RuntimeContext -> m ()
+setOptionalRuntimeContext scope value = Update.apply scope (Update.setOptionalRuntimeContext value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalRuntimeContextAt :: (MonadIO m) => Context -> Maybe Sentry.RuntimeContext.RuntimeContext -> m ()
+setOptionalRuntimeContextAt ctx value = updateAt ctx (Update.setOptionalRuntimeContext value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalContextValues :: (MonadIO m) => Scope -> Text -> Maybe [(Text, Aeson.Value)] -> m ()
+setOptionalContextValues scope key value = Update.apply scope (Update.setOptionalContextValues key value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalContextValuesAt :: (MonadIO m) => Context -> Text -> Maybe [(Text, Aeson.Value)] -> m ()
+setOptionalContextValuesAt ctx key value = updateAt ctx (Update.setOptionalContextValues key value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalContextValue :: (MonadIO m) => Scope -> Text -> Text -> Maybe Aeson.Value -> m ()
+setOptionalContextValue scope key fieldKey value = Update.apply scope (Update.setOptionalContextValue key fieldKey value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalContextValueAt :: (MonadIO m) => Context -> Text -> Text -> Maybe Aeson.Value -> m ()
+setOptionalContextValueAt ctx key fieldKey value = updateAt ctx (Update.setOptionalContextValue key fieldKey value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalOsContext :: (MonadIO m) => Scope -> Maybe Sentry.OsContext.OsContext -> m ()
+setOptionalOsContext scope value = Update.apply scope (Update.setOptionalOsContext value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalOsContextAt :: (MonadIO m) => Context -> Maybe Sentry.OsContext.OsContext -> m ()
+setOptionalOsContextAt ctx value = updateAt ctx (Update.setOptionalOsContext value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalAppContext :: (MonadIO m) => Scope -> Maybe Sentry.AppContext.AppContext -> m ()
+setOptionalAppContext scope value = Update.apply scope (Update.setOptionalAppContext value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalAppContextAt :: (MonadIO m) => Context -> Maybe Sentry.AppContext.AppContext -> m ()
+setOptionalAppContextAt ctx value = updateAt ctx (Update.setOptionalAppContext value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalBrowserContext :: (MonadIO m) => Scope -> Maybe Sentry.BrowserContext.BrowserContext -> m ()
+setOptionalBrowserContext scope value = Update.apply scope (Update.setOptionalBrowserContext value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalBrowserContextAt :: (MonadIO m) => Context -> Maybe Sentry.BrowserContext.BrowserContext -> m ()
+setOptionalBrowserContextAt ctx value = updateAt ctx (Update.setOptionalBrowserContext value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalDeviceContext :: (MonadIO m) => Scope -> Maybe Sentry.DeviceContext.DeviceContext -> m ()
+setOptionalDeviceContext scope value = Update.apply scope (Update.setOptionalDeviceContext value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalDeviceContextAt :: (MonadIO m) => Context -> Maybe Sentry.DeviceContext.DeviceContext -> m ()
+setOptionalDeviceContextAt ctx value = updateAt ctx (Update.setOptionalDeviceContext value)
+
+-- | Replace the assignment, or remove it when given 'Nothing'.
+setOptionalTraceContext :: (MonadIO m) => Scope -> Maybe Sentry.TraceContext.TraceContext -> m ()
+setOptionalTraceContext scope value = Update.apply scope (Update.setOptionalTraceContext value)
+
+-- | Replace or remove the assignment on an existing target in this context.
+setOptionalTraceContextAt :: (MonadIO m) => Context -> Maybe Sentry.TraceContext.TraceContext -> m ()
+setOptionalTraceContextAt ctx value = updateAt ctx (Update.setOptionalTraceContext value)

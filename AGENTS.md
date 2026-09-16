@@ -502,3 +502,18 @@ For example:
 --
 -- It leaves the scope unchanged when there is no recording client.
 ```
+
+### Optional assignments
+
+`setOptionalX` accepts concrete optional values: `Just value` replaces an
+assignment and `Nothing` removes it. Delegate to existing setters and
+`unset`/`remove` operations to preserve strictness and normalization. Empty
+records and collections remain present; removing a scope assignment is local
+and may reveal inherited metadata. Mirror scope builders through all effectful
+layers, preserving isolation routing except for current-scope transactions,
+disabled-client argument skipping, and absent explicit-context targets.
+
+The unimplemented lookup and transformation follow-up is documented in
+`docs/builder-helpers-plan.md`. Use `modifyExistingX` for present-only edits and
+`alterX` for `Maybe a -> Maybe a`; do not introduce `adjustX` aliases or scalar
+defaults to complete a naming family.

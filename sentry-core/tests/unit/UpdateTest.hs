@@ -11,7 +11,22 @@ import Data.Foldable (for_)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Time.Clock (UTCTime)
+import OpenTelemetry.Context qualified as Context
+import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
+import Patrol.Type.ClientSdkInfo qualified as Patrol.ClientSdkInfo
+import Patrol.Type.Context qualified as Patrol.Context
+import Patrol.Type.DebugMeta qualified as Patrol.DebugMeta
+import Patrol.Type.EventId qualified as Patrol.EventId
+import Patrol.Type.EventType qualified as Patrol.EventType
+import Patrol.Type.LogEntry qualified as Patrol.LogEntry
+import Patrol.Type.MechanismMeta qualified as Patrol.MechanismMeta
+import Patrol.Type.Platform qualified as Patrol.Platform
+import Patrol.Type.SpanStatus qualified as Patrol.SpanStatus
+import Patrol.Type.Stacktrace qualified as Patrol.Stacktrace
+import Patrol.Type.Threads qualified as Patrol.Threads
+import Patrol.Type.TransactionInfo qualified as Patrol.TransactionInfo
 import Sentry.AppContext qualified
+import Sentry.Breadcrumb qualified
 import Sentry.BrowserContext qualified
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Context qualified
@@ -19,7 +34,9 @@ import Sentry.Core qualified as Sentry
 import Sentry.DeviceContext qualified
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Exception qualified
 import Sentry.Geo qualified
+import Sentry.Mechanism qualified
 import Sentry.OsContext qualified
 import Sentry.Request qualified
 import Sentry.RuntimeContext qualified
@@ -812,3 +829,917 @@ spec_typedContextModification = describe "typed context modification" do
         expected = Just (Sentry.Context.Trace record)
     Map.lookup "trace" (asEvent (Sentry.Event.setContextValues "trace" [] <> Sentry.Event.setTraceContext replacement)).contexts `shouldBe` expected
     Map.lookup "trace" (Sentry.Update.run (Builders.setContextValues "trace" [] <> Builders.setTraceContext record) (mempty :: Sentry.ScopeData)).contexts `shouldBe` expected
+
+spec_optionalAssignments :: Spec
+spec_optionalAssignments = describe "optional assignments" do
+  it "AppContext.setOptionalAppMemory assigns and removes" do
+    let assigned = Sentry.AppContext.setOptionalAppMemory (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.appMemory
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.AppContext.setOptionalAppMemory Nothing) `shouldBe` Nothing
+    inspect (Sentry.AppContext.setOptionalAppMemory Nothing <> assigned) `shouldBe` Just (42)
+  it "AppContext.setOptionalAppStartTime assigns and removes" do
+    let assigned = Sentry.AppContext.setOptionalAppStartTime (Just (read "2025-01-01 00:00:00 UTC"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.appStartTime
+    inspect assigned `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+    inspect (assigned <> Sentry.AppContext.setOptionalAppStartTime Nothing) `shouldBe` Nothing
+    inspect (Sentry.AppContext.setOptionalAppStartTime Nothing <> assigned) `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+  it "OsContext.setOptionalRooted assigns and removes" do
+    let assigned = Sentry.OsContext.setOptionalRooted (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.rooted
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.OsContext.setOptionalRooted Nothing) `shouldBe` Nothing
+    inspect (Sentry.OsContext.setOptionalRooted Nothing <> assigned) `shouldBe` Just (True)
+  it "Mechanism.setOptionalHandled assigns and removes" do
+    let assigned = Sentry.Mechanism.setOptionalHandled (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.handled
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.Mechanism.setOptionalHandled Nothing) `shouldBe` Nothing
+    inspect (Sentry.Mechanism.setOptionalHandled Nothing <> assigned) `shouldBe` Just (True)
+  it "Mechanism.setOptionalSynthetic assigns and removes" do
+    let assigned = Sentry.Mechanism.setOptionalSynthetic (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.synthetic
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.Mechanism.setOptionalSynthetic Nothing) `shouldBe` Nothing
+    inspect (Sentry.Mechanism.setOptionalSynthetic Nothing <> assigned) `shouldBe` Just (True)
+  it "Mechanism.setOptionalMeta assigns and removes" do
+    let assigned = Sentry.Mechanism.setOptionalMeta (Just (Patrol.MechanismMeta.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.meta
+    inspect assigned `shouldBe` Just (Patrol.MechanismMeta.empty)
+    inspect (assigned <> Sentry.Mechanism.setOptionalMeta Nothing) `shouldBe` Nothing
+    inspect (Sentry.Mechanism.setOptionalMeta Nothing <> assigned) `shouldBe` Just (Patrol.MechanismMeta.empty)
+  it "Mechanism.setOptionalData assigns and removes" do
+    let assigned = Sentry.Mechanism.setOptionalData "key" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.data_
+    inspect assigned `shouldBe` Just (Aeson.String "value")
+    inspect (assigned <> Sentry.Mechanism.setOptionalData "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Mechanism.setOptionalData "key" Nothing <> assigned) `shouldBe` Just (Aeson.String "value")
+  it "Exception.setOptionalStacktrace assigns and removes" do
+    let assigned = Sentry.Exception.setOptionalStacktrace (Just (Patrol.Stacktrace.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.stacktrace
+    inspect assigned `shouldBe` Just (Patrol.Stacktrace.empty)
+    inspect (assigned <> Sentry.Exception.setOptionalStacktrace Nothing) `shouldBe` Nothing
+    inspect (Sentry.Exception.setOptionalStacktrace Nothing <> assigned) `shouldBe` Just (Patrol.Stacktrace.empty)
+  it "Exception.setOptionalMechanism assigns and removes" do
+    let assigned = Sentry.Exception.setOptionalMechanism (Just (Sentry.Mechanism.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.mechanism
+    inspect assigned `shouldBe` Just (Sentry.Mechanism.empty)
+    inspect (assigned <> Sentry.Exception.setOptionalMechanism Nothing) `shouldBe` Nothing
+    inspect (Sentry.Exception.setOptionalMechanism Nothing <> assigned) `shouldBe` Just (Sentry.Mechanism.empty)
+  it "Breadcrumb.setOptionalLevel assigns and removes" do
+    let assigned = Sentry.Breadcrumb.setOptionalLevel (Just (Sentry.Warning))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.level
+    inspect assigned `shouldBe` Just (Sentry.Warning)
+    inspect (assigned <> Sentry.Breadcrumb.setOptionalLevel Nothing) `shouldBe` Nothing
+    inspect (Sentry.Breadcrumb.setOptionalLevel Nothing <> assigned) `shouldBe` Just (Sentry.Warning)
+  it "Breadcrumb.setOptionalType assigns and removes" do
+    let assigned = Sentry.Breadcrumb.setOptionalType (Just (Patrol.BreadcrumbType.Default))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.type_
+    inspect assigned `shouldBe` Just (Patrol.BreadcrumbType.Default)
+    inspect (assigned <> Sentry.Breadcrumb.setOptionalType Nothing) `shouldBe` Nothing
+    inspect (Sentry.Breadcrumb.setOptionalType Nothing <> assigned) `shouldBe` Just (Patrol.BreadcrumbType.Default)
+  it "Breadcrumb.setOptionalTimestamp assigns and removes" do
+    let assigned = Sentry.Breadcrumb.setOptionalTimestamp (Just (read "2025-01-01 00:00:00 UTC"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.timestamp
+    inspect assigned `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+    inspect (assigned <> Sentry.Breadcrumb.setOptionalTimestamp Nothing) `shouldBe` Nothing
+    inspect (Sentry.Breadcrumb.setOptionalTimestamp Nothing <> assigned) `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+  it "Breadcrumb.setOptionalEventId assigns and removes" do
+    let assigned = Sentry.Breadcrumb.setOptionalEventId (Just (Patrol.EventId.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.eventId
+    inspect assigned `shouldBe` Just (Patrol.EventId.empty)
+    inspect (assigned <> Sentry.Breadcrumb.setOptionalEventId Nothing) `shouldBe` Nothing
+    inspect (Sentry.Breadcrumb.setOptionalEventId Nothing <> assigned) `shouldBe` Just (Patrol.EventId.empty)
+  it "Breadcrumb.setOptionalData assigns and removes" do
+    let assigned = Sentry.Breadcrumb.setOptionalData "key" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.data_
+    inspect assigned `shouldBe` Just (Aeson.String "value")
+    inspect (assigned <> Sentry.Breadcrumb.setOptionalData "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Breadcrumb.setOptionalData "key" Nothing <> assigned) `shouldBe` Just (Aeson.String "value")
+  it "Event.setOptionalLevel assigns and removes" do
+    let assigned = Sentry.Event.setOptionalLevel (Just (Sentry.Warning))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.level
+    inspect assigned `shouldBe` Just (Sentry.Warning)
+    inspect (assigned <> Sentry.Event.setOptionalLevel Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalLevel Nothing <> assigned) `shouldBe` Just (Sentry.Warning)
+  it "Event.setOptionalType assigns and removes" do
+    let assigned = Sentry.Event.setOptionalType (Just (Patrol.EventType.Error))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.type_
+    inspect assigned `shouldBe` Just (Patrol.EventType.Error)
+    inspect (assigned <> Sentry.Event.setOptionalType Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalType Nothing <> assigned) `shouldBe` Just (Patrol.EventType.Error)
+  it "Event.setOptionalPlatform assigns and removes" do
+    let assigned = Sentry.Event.setOptionalPlatform (Just (Patrol.Platform.Haskell))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.platform
+    inspect assigned `shouldBe` Just (Patrol.Platform.Haskell)
+    inspect (assigned <> Sentry.Event.setOptionalPlatform Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalPlatform Nothing <> assigned) `shouldBe` Just (Patrol.Platform.Haskell)
+  it "Event.setOptionalTimestamp assigns and removes" do
+    let assigned = Sentry.Event.setOptionalTimestamp (Just (read "2025-01-01 00:00:00 UTC"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.timestamp
+    inspect assigned `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+    inspect (assigned <> Sentry.Event.setOptionalTimestamp Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalTimestamp Nothing <> assigned) `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+  it "Event.setOptionalTimeSpent assigns and removes" do
+    let assigned = Sentry.Event.setOptionalTimeSpent (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.timeSpent
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.Event.setOptionalTimeSpent Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalTimeSpent Nothing <> assigned) `shouldBe` Just (42)
+  it "Event.setOptionalTag assigns and removes" do
+    let assigned = Sentry.Event.setOptionalTag "key" (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.tags
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Sentry.Event.setOptionalTag "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalTag "key" Nothing <> assigned) `shouldBe` Just ("value")
+  it "Event.setOptionalExtra assigns and removes" do
+    let assigned = Sentry.Event.setOptionalExtra "key" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.extra
+    inspect assigned `shouldBe` Just (Aeson.String "value")
+    inspect (assigned <> Sentry.Event.setOptionalExtra "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalExtra "key" Nothing <> assigned) `shouldBe` Just (Aeson.String "value")
+  it "Event.setOptionalContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalContext "key" (Just (Patrol.Context.Other Map.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Other Map.empty)
+    inspect (assigned <> Sentry.Event.setOptionalContext "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalContext "key" Nothing <> assigned) `shouldBe` Just (Patrol.Context.Other Map.empty)
+  it "Event.setOptionalModule assigns and removes" do
+    let assigned = Sentry.Event.setOptionalModule "key" (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.modules
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Sentry.Event.setOptionalModule "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalModule "key" Nothing <> assigned) `shouldBe` Just ("value")
+  it "Event.setOptionalUser assigns and removes" do
+    let assigned = Sentry.Event.setOptionalUser (Just (Sentry.User.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.user
+    inspect assigned `shouldBe` Just (Sentry.User.empty)
+    inspect (assigned <> Sentry.Event.setOptionalUser Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalUser Nothing <> assigned) `shouldBe` Just (Sentry.User.empty)
+  it "Event.setOptionalBreadcrumbs assigns and removes" do
+    let assigned = Sentry.Event.setOptionalBreadcrumbs (Just (Sentry.Breadcrumb.emptyCollection))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.breadcrumbs
+    inspect assigned `shouldBe` Just (Sentry.Breadcrumb.emptyCollection)
+    inspect (assigned <> Sentry.Event.setOptionalBreadcrumbs Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalBreadcrumbs Nothing <> assigned) `shouldBe` Just (Sentry.Breadcrumb.emptyCollection)
+  it "Event.setOptionalDebugMeta assigns and removes" do
+    let assigned = Sentry.Event.setOptionalDebugMeta (Just (Patrol.DebugMeta.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.debugMeta
+    inspect assigned `shouldBe` Just (Patrol.DebugMeta.empty)
+    inspect (assigned <> Sentry.Event.setOptionalDebugMeta Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalDebugMeta Nothing <> assigned) `shouldBe` Just (Patrol.DebugMeta.empty)
+  it "Event.setOptionalExceptionChain assigns and removes" do
+    let assigned = Sentry.Event.setOptionalExceptionChain (Just (Sentry.Exception.emptyChain))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.exception
+    inspect assigned `shouldBe` Just (Sentry.Exception.emptyChain)
+    inspect (assigned <> Sentry.Event.setOptionalExceptionChain Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalExceptionChain Nothing <> assigned) `shouldBe` Just (Sentry.Exception.emptyChain)
+  it "Event.setOptionalLogentry assigns and removes" do
+    let assigned = Sentry.Event.setOptionalLogentry (Just (Patrol.LogEntry.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.logentry
+    inspect assigned `shouldBe` Just (Patrol.LogEntry.empty)
+    inspect (assigned <> Sentry.Event.setOptionalLogentry Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalLogentry Nothing <> assigned) `shouldBe` Just (Patrol.LogEntry.empty)
+  it "Event.setOptionalRequest assigns and removes" do
+    let assigned = Sentry.Event.setOptionalRequest (Just (Sentry.Request.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.request
+    inspect assigned `shouldBe` Just (Sentry.Request.empty)
+    inspect (assigned <> Sentry.Event.setOptionalRequest Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalRequest Nothing <> assigned) `shouldBe` Just (Sentry.Request.empty)
+  it "Event.setOptionalSdk assigns and removes" do
+    let assigned = Sentry.Event.setOptionalSdk (Just (Patrol.ClientSdkInfo.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.sdk
+    inspect assigned `shouldBe` Just (Patrol.ClientSdkInfo.empty)
+    inspect (assigned <> Sentry.Event.setOptionalSdk Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalSdk Nothing <> assigned) `shouldBe` Just (Patrol.ClientSdkInfo.empty)
+  it "Event.setOptionalThreads assigns and removes" do
+    let assigned = Sentry.Event.setOptionalThreads (Just (Patrol.Threads.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.threads
+    inspect assigned `shouldBe` Just (Patrol.Threads.empty)
+    inspect (assigned <> Sentry.Event.setOptionalThreads Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalThreads Nothing <> assigned) `shouldBe` Just (Patrol.Threads.empty)
+  it "Event.setOptionalTransactionInfo assigns and removes" do
+    let assigned = Sentry.Event.setOptionalTransactionInfo (Just (Patrol.TransactionInfo.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.transactionInfo
+    inspect assigned `shouldBe` Just (Patrol.TransactionInfo.empty)
+    inspect (assigned <> Sentry.Event.setOptionalTransactionInfo Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalTransactionInfo Nothing <> assigned) `shouldBe` Just (Patrol.TransactionInfo.empty)
+  it "Event.setOptionalContextValues assigns and removes" do
+    let assigned = Sentry.Event.setOptionalContextValues "key" (Just ([("field", Aeson.String "value")]))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+    inspect (assigned <> Sentry.Event.setOptionalContextValues "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalContextValues "key" Nothing <> assigned) `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+  it "Event.setOptionalContextValue assigns and removes" do
+    let assigned = Sentry.Event.setOptionalContextValue "key" "field" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+    inspect (assigned <> Sentry.Event.setOptionalContextValue "key" "field" Nothing) `shouldBe` Just (Patrol.Context.Other Map.empty)
+    inspect (Sentry.Event.setOptionalContextValue "key" "field" Nothing <> assigned) `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+  it "Event.setOptionalOsContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalOsContext (Just (Sentry.OsContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "os" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Os (Sentry.OsContext.empty))
+    inspect (assigned <> Sentry.Event.setOptionalOsContext Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalOsContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Os (Sentry.OsContext.empty))
+  it "Event.setOptionalAppContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalAppContext (Just (Sentry.AppContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "app" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.App (Sentry.AppContext.empty))
+    inspect (assigned <> Sentry.Event.setOptionalAppContext Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalAppContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.App (Sentry.AppContext.empty))
+  it "Event.setOptionalRuntimeContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalRuntimeContext (Just (Sentry.RuntimeContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "runtime" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Runtime (Sentry.RuntimeContext.empty))
+    inspect (assigned <> Sentry.Event.setOptionalRuntimeContext Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalRuntimeContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Runtime (Sentry.RuntimeContext.empty))
+  it "Event.setOptionalBrowserContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalBrowserContext (Just (Sentry.BrowserContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "browser" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Browser (Sentry.BrowserContext.empty))
+    inspect (assigned <> Sentry.Event.setOptionalBrowserContext Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalBrowserContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Browser (Sentry.BrowserContext.empty))
+  it "Event.setOptionalDeviceContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalDeviceContext (Just (Sentry.DeviceContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "device" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Device (Sentry.DeviceContext.empty))
+    inspect (assigned <> Sentry.Event.setOptionalDeviceContext Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalDeviceContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Device (Sentry.DeviceContext.empty))
+  it "Event.setOptionalTraceContext assigns and removes" do
+    let assigned = Sentry.Event.setOptionalTraceContext (Just (Sentry.TraceContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "trace" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Trace (Sentry.TraceContext.empty))
+    inspect (assigned <> Sentry.Event.setOptionalTraceContext Nothing) `shouldBe` Nothing
+    inspect (Sentry.Event.setOptionalTraceContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Trace (Sentry.TraceContext.empty))
+  it "User.setOptionalData assigns and removes" do
+    let assigned = Sentry.User.setOptionalData "key" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.data_
+    inspect assigned `shouldBe` Just (Aeson.String "value")
+    inspect (assigned <> Sentry.User.setOptionalData "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.User.setOptionalData "key" Nothing <> assigned) `shouldBe` Just (Aeson.String "value")
+  it "User.setOptionalGeo assigns and removes" do
+    let assigned = Sentry.User.setOptionalGeo (Just (Sentry.Geo.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.geo
+    inspect assigned `shouldBe` Just (Sentry.Geo.empty)
+    inspect (assigned <> Sentry.User.setOptionalGeo Nothing) `shouldBe` Nothing
+    inspect (Sentry.User.setOptionalGeo Nothing <> assigned) `shouldBe` Just (Sentry.Geo.empty)
+  it "DeviceContext.setOptionalBatteryLevel assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalBatteryLevel (Just (42.5))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.batteryLevel
+    inspect assigned `shouldBe` Just (42.5)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalBatteryLevel Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalBatteryLevel Nothing <> assigned) `shouldBe` Just (42.5)
+  it "DeviceContext.setOptionalBootTime assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalBootTime (Just (read "2025-01-01 00:00:00 UTC"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.bootTime
+    inspect assigned `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+    inspect (assigned <> Sentry.DeviceContext.setOptionalBootTime Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalBootTime Nothing <> assigned) `shouldBe` Just (read "2025-01-01 00:00:00 UTC")
+  it "DeviceContext.setOptionalCharging assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalCharging (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.charging
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalCharging Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalCharging Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalExternalFreeStorage assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalExternalFreeStorage (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.externalFreeStorage
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalExternalFreeStorage Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalExternalFreeStorage Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalExternalStorageSize assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalExternalStorageSize (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.externalStorageSize
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalExternalStorageSize Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalExternalStorageSize Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalFreeMemory assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalFreeMemory (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.freeMemory
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalFreeMemory Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalFreeMemory Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalFreeStorage assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalFreeStorage (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.freeStorage
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalFreeStorage Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalFreeStorage Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalLowMemory assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalLowMemory (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.lowMemory
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalLowMemory Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalLowMemory Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalMemorySize assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalMemorySize (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.memorySize
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalMemorySize Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalMemorySize Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalOnline assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalOnline (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.online
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalOnline Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalOnline Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalProcessorCount assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalProcessorCount (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.processorCount
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalProcessorCount Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalProcessorCount Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalProcessorFrequency assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalProcessorFrequency (Just (42.5))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.processorFrequency
+    inspect assigned `shouldBe` Just (42.5)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalProcessorFrequency Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalProcessorFrequency Nothing <> assigned) `shouldBe` Just (42.5)
+  it "DeviceContext.setOptionalScreenDensity assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalScreenDensity (Just (42.5))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.screenDensity
+    inspect assigned `shouldBe` Just (42.5)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalScreenDensity Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalScreenDensity Nothing <> assigned) `shouldBe` Just (42.5)
+  it "DeviceContext.setOptionalScreenDpi assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalScreenDpi (Just (42.5))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.screenDpi
+    inspect assigned `shouldBe` Just (42.5)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalScreenDpi Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalScreenDpi Nothing <> assigned) `shouldBe` Just (42.5)
+  it "DeviceContext.setOptionalSimulator assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalSimulator (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.simulator
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalSimulator Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalSimulator Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalStorageSize assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalStorageSize (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.storageSize
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalStorageSize Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalStorageSize Nothing <> assigned) `shouldBe` Just (42)
+  it "DeviceContext.setOptionalSupportsAccelerometer assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalSupportsAccelerometer (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.supportsAccelerometer
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalSupportsAccelerometer Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalSupportsAccelerometer Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalSupportsAudio assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalSupportsAudio (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.supportsAudio
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalSupportsAudio Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalSupportsAudio Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalSupportsGyroscope assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalSupportsGyroscope (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.supportsGyroscope
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalSupportsGyroscope Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalSupportsGyroscope Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalSupportsLocationService assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalSupportsLocationService (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.supportsLocationService
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalSupportsLocationService Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalSupportsLocationService Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalSupportsVibration assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalSupportsVibration (Just (True))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.supportsVibration
+    inspect assigned `shouldBe` Just (True)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalSupportsVibration Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalSupportsVibration Nothing <> assigned) `shouldBe` Just (True)
+  it "DeviceContext.setOptionalUsableMemory assigns and removes" do
+    let assigned = Sentry.DeviceContext.setOptionalUsableMemory (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.usableMemory
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.DeviceContext.setOptionalUsableMemory Nothing) `shouldBe` Nothing
+    inspect (Sentry.DeviceContext.setOptionalUsableMemory Nothing <> assigned) `shouldBe` Just (42)
+  it "TraceContext.setOptionalExclusiveTime assigns and removes" do
+    let assigned = Sentry.TraceContext.setOptionalExclusiveTime (Just (42))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.exclusiveTime
+    inspect assigned `shouldBe` Just (42)
+    inspect (assigned <> Sentry.TraceContext.setOptionalExclusiveTime Nothing) `shouldBe` Nothing
+    inspect (Sentry.TraceContext.setOptionalExclusiveTime Nothing <> assigned) `shouldBe` Just (42)
+  it "TraceContext.setOptionalStatus assigns and removes" do
+    let assigned = Sentry.TraceContext.setOptionalStatus (Just (Patrol.SpanStatus.Ok))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.status
+    inspect assigned `shouldBe` Just (Patrol.SpanStatus.Ok)
+    inspect (assigned <> Sentry.TraceContext.setOptionalStatus Nothing) `shouldBe` Nothing
+    inspect (Sentry.TraceContext.setOptionalStatus Nothing <> assigned) `shouldBe` Just (Patrol.SpanStatus.Ok)
+  it "Request.setOptionalCookie assigns and removes" do
+    let assigned = Sentry.Request.setOptionalCookie "key" (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.cookies
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Sentry.Request.setOptionalCookie "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Request.setOptionalCookie "key" Nothing <> assigned) `shouldBe` Just ("value")
+  it "Request.setOptionalHeader assigns and removes" do
+    let assigned = Sentry.Request.setOptionalHeader "key" (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.headers
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Sentry.Request.setOptionalHeader "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Request.setOptionalHeader "key" Nothing <> assigned) `shouldBe` Just ("value")
+  it "Request.setOptionalEnv assigns and removes" do
+    let assigned = Sentry.Request.setOptionalEnv "key" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.env
+    inspect assigned `shouldBe` Just (Aeson.String "value")
+    inspect (assigned <> Sentry.Request.setOptionalEnv "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Request.setOptionalEnv "key" Nothing <> assigned) `shouldBe` Just (Aeson.String "value")
+  it "Request.setOptionalQueryParam assigns and removes" do
+    let assigned = Sentry.Request.setOptionalQueryParam "key" (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.queryString
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Sentry.Request.setOptionalQueryParam "key" Nothing) `shouldBe` Nothing
+    inspect (Sentry.Request.setOptionalQueryParam "key" Nothing <> assigned) `shouldBe` Just ("value")
+  it "Scope.Update.setOptionalLevel assigns and removes" do
+    let assigned = Update.setOptionalLevel (Just (Sentry.Warning))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.level
+    inspect assigned `shouldBe` Just (Sentry.Warning)
+    inspect (assigned <> Update.setOptionalLevel Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalLevel Nothing <> assigned) `shouldBe` Just (Sentry.Warning)
+  it "Scope.Update.setOptionalUser assigns and removes" do
+    let assigned = Update.setOptionalUser (Just (Sentry.User.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.user
+    inspect assigned `shouldBe` Just (Sentry.User.empty)
+    inspect (assigned <> Update.setOptionalUser Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalUser Nothing <> assigned) `shouldBe` Just (Sentry.User.empty)
+  it "Scope.Update.setOptionalFingerprint assigns and removes" do
+    let assigned = Update.setOptionalFingerprint (Just (["group"]))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.fingerprint
+    inspect assigned `shouldBe` Just (["group"])
+    inspect (assigned <> Update.setOptionalFingerprint Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalFingerprint Nothing <> assigned) `shouldBe` Just (["group"])
+  it "Scope.Update.setOptionalTransaction assigns and removes" do
+    let assigned = Update.setOptionalTransaction (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in result.transaction
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Update.setOptionalTransaction Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalTransaction Nothing <> assigned) `shouldBe` Just ("value")
+  it "Scope.Update.setOptionalTag assigns and removes" do
+    let assigned = Update.setOptionalTag "key" (Just ("value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.tags
+    inspect assigned `shouldBe` Just ("value")
+    inspect (assigned <> Update.setOptionalTag "key" Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalTag "key" Nothing <> assigned) `shouldBe` Just ("value")
+  it "Scope.Update.setOptionalExtra assigns and removes" do
+    let assigned = Update.setOptionalExtra "key" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.extras
+    inspect assigned `shouldBe` Just (Aeson.String "value")
+    inspect (assigned <> Update.setOptionalExtra "key" Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalExtra "key" Nothing <> assigned) `shouldBe` Just (Aeson.String "value")
+  it "Scope.Update.setOptionalContext assigns and removes" do
+    let assigned = Update.setOptionalContext "key" (Just (Patrol.Context.Other Map.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Other Map.empty)
+    inspect (assigned <> Update.setOptionalContext "key" Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalContext "key" Nothing <> assigned) `shouldBe` Just (Patrol.Context.Other Map.empty)
+  it "Scope.Update.setOptionalRuntimeContext assigns and removes" do
+    let assigned = Update.setOptionalRuntimeContext (Just (Sentry.RuntimeContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "runtime" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Runtime (Sentry.RuntimeContext.empty))
+    inspect (assigned <> Update.setOptionalRuntimeContext Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalRuntimeContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Runtime (Sentry.RuntimeContext.empty))
+  it "Scope.Update.setOptionalContextValues assigns and removes" do
+    let assigned = Update.setOptionalContextValues "key" (Just ([("field", Aeson.String "value")]))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+    inspect (assigned <> Update.setOptionalContextValues "key" Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalContextValues "key" Nothing <> assigned) `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+  it "Scope.Update.setOptionalContextValue assigns and removes" do
+    let assigned = Update.setOptionalContextValue "key" "field" (Just (Aeson.String "value"))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "key" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+    inspect (assigned <> Update.setOptionalContextValue "key" "field" Nothing) `shouldBe` Just (Patrol.Context.Other Map.empty)
+    inspect (Update.setOptionalContextValue "key" "field" Nothing <> assigned) `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+  it "Scope.Update.setOptionalOsContext assigns and removes" do
+    let assigned = Update.setOptionalOsContext (Just (Sentry.OsContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "os" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Os (Sentry.OsContext.empty))
+    inspect (assigned <> Update.setOptionalOsContext Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalOsContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Os (Sentry.OsContext.empty))
+  it "Scope.Update.setOptionalAppContext assigns and removes" do
+    let assigned = Update.setOptionalAppContext (Just (Sentry.AppContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "app" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.App (Sentry.AppContext.empty))
+    inspect (assigned <> Update.setOptionalAppContext Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalAppContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.App (Sentry.AppContext.empty))
+  it "Scope.Update.setOptionalBrowserContext assigns and removes" do
+    let assigned = Update.setOptionalBrowserContext (Just (Sentry.BrowserContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "browser" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Browser (Sentry.BrowserContext.empty))
+    inspect (assigned <> Update.setOptionalBrowserContext Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalBrowserContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Browser (Sentry.BrowserContext.empty))
+  it "Scope.Update.setOptionalDeviceContext assigns and removes" do
+    let assigned = Update.setOptionalDeviceContext (Just (Sentry.DeviceContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "device" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Device (Sentry.DeviceContext.empty))
+    inspect (assigned <> Update.setOptionalDeviceContext Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalDeviceContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Device (Sentry.DeviceContext.empty))
+  it "Scope.Update.setOptionalTraceContext assigns and removes" do
+    let assigned = Update.setOptionalTraceContext (Just (Sentry.TraceContext.empty))
+        inspect update = let result = Sentry.Update.runUpdate update Sentry.Update.empty in Map.lookup "trace" result.contexts
+    inspect assigned `shouldBe` Just (Patrol.Context.Trace (Sentry.TraceContext.empty))
+    inspect (assigned <> Update.setOptionalTraceContext Nothing) `shouldBe` Nothing
+    inspect (Update.setOptionalTraceContext Nothing <> assigned) `shouldBe` Just (Patrol.Context.Trace (Sentry.TraceContext.empty))
+
+spec_optionalEdges :: Spec
+spec_optionalEdges = describe "optional assignment edge cases" do
+  it "replaces nested records and collection wrappers without retaining old fields" do
+    let old =
+          Sentry.Update.run
+            [ Sentry.Event.setUser (Sentry.User.setName "old"),
+              Sentry.Event.setRequest (Sentry.Request.setHeader "Old" "value"),
+              Sentry.Event.setBreadcrumbs (Sentry.Breadcrumb.setValues [Sentry.Breadcrumb.setMessage "old"]),
+              Sentry.Event.setExceptionChain (Sentry.Exception.setValues [Sentry.Exception.setValue "old"]),
+              Sentry.Event.setTag "keep" "value"
+            ]
+            Sentry.Event.empty
+        result =
+          Sentry.Update.run
+            [ Sentry.Event.setOptionalUser (Just Sentry.User.empty),
+              Sentry.Event.setOptionalRequest (Just Sentry.Request.empty),
+              Sentry.Event.setOptionalBreadcrumbs (Just Sentry.Breadcrumb.emptyCollection),
+              Sentry.Event.setOptionalExceptionChain (Just Sentry.Exception.emptyChain)
+            ]
+            old
+        user =
+          Sentry.Update.run
+            (Sentry.User.setGeo (Sentry.Geo.setCity "old") <> Sentry.User.setOptionalGeo (Just Sentry.Geo.empty))
+            Sentry.User.empty
+    result.user `shouldBe` Just Sentry.User.empty
+    result.request `shouldBe` Just Sentry.Request.empty
+    result.breadcrumbs `shouldBe` Just Sentry.Breadcrumb.emptyCollection
+    result.exception `shouldBe` Just Sentry.Exception.emptyChain
+    result.tags `shouldBe` Map.singleton "keep" "value"
+    user.geo `shouldBe` Just Sentry.Geo.empty
+
+  it "replaces and removes all ASCII case variants of headers" do
+    let original = Sentry.Request.empty{Sentry.Request.headers = Map.fromList [("X-ID", "one"), ("x-id", "two"), ("Keep", "three")]}
+        assigned = Sentry.Update.run (Sentry.Request.setOptionalHeader "X-Id" (Just "new")) original
+        removed = Sentry.Update.run (Sentry.Request.setOptionalHeader "x-Id" Nothing) original
+    assigned.headers `shouldBe` Map.fromList [("X-Id", "new"), ("Keep", "three")]
+    removed.headers `shouldBe` Map.singleton "Keep" "three"
+
+  it "does not create custom contexts on removal or mutate typed payloads" do
+    let absent = Sentry.Update.run (Update.setOptionalContextValue "missing" "key" Nothing) (mempty @Sentry.ScopeData)
+        typed = Update.setAppContext Sentry.AppContext.empty
+        kept = Sentry.Update.run (typed <> Update.setOptionalContextValue "app" "key" (Just (error "unused JSON"))) (mempty @Sentry.ScopeData)
+        event = Sentry.Update.run (Sentry.Event.setOptionalContextValue "missing" "key" Nothing) Sentry.Event.empty
+    absent.contexts `shouldBe` Map.empty
+    event.contexts `shouldBe` Map.empty
+    kept.contexts `shouldBe` Map.singleton "app" (Patrol.Context.App Sentry.AppContext.empty)
+
+  it "forces assigned nested records without deeply evaluating JSON or collection elements" do
+    evaluate (Sentry.Update.run (Sentry.Event.setOptionalRequest (Just (error "request"))) Sentry.Event.empty) `shouldThrow` anyErrorCall
+    evaluate (Sentry.Update.run (Sentry.User.setOptionalGeo (Just (error "geo"))) Sentry.User.empty) `shouldThrow` anyErrorCall
+    let value = Aeson.Array (pure (error "JSON element"))
+    _ <- evaluate (Sentry.Update.run (Sentry.User.setOptionalData "key" (Just value)) Sentry.User.empty)
+    _ <- evaluate (Sentry.Update.run (Sentry.Event.setOptionalBreadcrumbs (Just (Sentry.Breadcrumb.Breadcrumbs [error "breadcrumb"]))) Sentry.Event.empty)
+    pure ()
+
+  it "type-checks the scope guide's optional assignment example" do
+    scope <- Scope.create Scope.Isolation
+    Sentry.updateScope
+      scope
+      [ Builders.setOptionalTag "region" (Just "eu"),
+        Builders.setOptionalTransaction Nothing,
+        Builders.setOptionalFingerprint (Just [])
+      ]
+    result <- Scope.readScopeRef scope
+    result.tags `shouldBe` Map.singleton "region" "eu"
+    result.transaction `shouldBe` Nothing
+    result.fingerprint `shouldBe` Just []
+
+spec_optionalRouting :: Spec
+spec_optionalRouting = describe "optional scope routing" do
+  it "setOptionalLevel routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalLevel (Just (Sentry.Warning))
+        result <- Scope.readScopeRef isolation
+        result.level `shouldBe` Just (Sentry.Warning)
+        untouched <- Scope.readScopeRef current
+        untouched.level `shouldBe` Nothing
+        Scope.setOptionalLevelAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        removed.level `shouldBe` Nothing
+        Scope.setOptionalLevel isolation (Just (Sentry.Warning))
+        restored <- Scope.readScopeRef isolation
+        restored.level `shouldBe` Just (Sentry.Warning)
+    Test.withGlobalScope do
+      Sentry.setOptionalLevel (error "optional value")
+      Scope.setOptionalLevelAt Context.empty (error "optional value")
+  it "setOptionalUser routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalUser (Just (Sentry.User.empty))
+        result <- Scope.readScopeRef isolation
+        result.user `shouldBe` Just (Sentry.User.empty)
+        untouched <- Scope.readScopeRef current
+        untouched.user `shouldBe` Nothing
+        Scope.setOptionalUserAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        removed.user `shouldBe` Nothing
+        Scope.setOptionalUser isolation (Just (Sentry.User.empty))
+        restored <- Scope.readScopeRef isolation
+        restored.user `shouldBe` Just (Sentry.User.empty)
+    Test.withGlobalScope do
+      Sentry.setOptionalUser (error "optional value")
+      Scope.setOptionalUserAt Context.empty (error "optional value")
+  it "setOptionalFingerprint routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalFingerprint (Just (["group"]))
+        result <- Scope.readScopeRef isolation
+        result.fingerprint `shouldBe` Just (["group"])
+        untouched <- Scope.readScopeRef current
+        untouched.fingerprint `shouldBe` Nothing
+        Scope.setOptionalFingerprintAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        removed.fingerprint `shouldBe` Nothing
+        Scope.setOptionalFingerprint isolation (Just (["group"]))
+        restored <- Scope.readScopeRef isolation
+        restored.fingerprint `shouldBe` Just (["group"])
+    Test.withGlobalScope do
+      Sentry.setOptionalFingerprint (error "optional value")
+      Scope.setOptionalFingerprintAt Context.empty (error "optional value")
+  it "setOptionalTransaction routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalTransaction (Just ("value"))
+        result <- Scope.readScopeRef current
+        result.transaction `shouldBe` Just ("value")
+        untouched <- Scope.readScopeRef isolation
+        untouched.transaction `shouldBe` Nothing
+        Scope.setOptionalTransactionAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef current
+        removed.transaction `shouldBe` Nothing
+        Scope.setOptionalTransaction current (Just ("value"))
+        restored <- Scope.readScopeRef current
+        restored.transaction `shouldBe` Just ("value")
+    Test.withGlobalScope do
+      Sentry.setOptionalTransaction (error "optional value")
+      Scope.setOptionalTransactionAt Context.empty (error "optional value")
+  it "setOptionalTag routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalTag "key" (Just ("value"))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "key" result.tags `shouldBe` Just ("value")
+        untouched <- Scope.readScopeRef current
+        Map.lookup "key" untouched.tags `shouldBe` Nothing
+        Scope.setOptionalTagAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) "key" Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "key" removed.tags `shouldBe` Nothing
+        Scope.setOptionalTag isolation "key" (Just ("value"))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "key" restored.tags `shouldBe` Just ("value")
+    Test.withGlobalScope do
+      Sentry.setOptionalTag (error "key") (error "optional value")
+      Scope.setOptionalTagAt Context.empty (error "key") (error "optional value")
+  it "setOptionalExtra routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalExtra "key" (Just (Aeson.String "value"))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "key" result.extras `shouldBe` Just (Aeson.String "value")
+        untouched <- Scope.readScopeRef current
+        Map.lookup "key" untouched.extras `shouldBe` Nothing
+        Scope.setOptionalExtraAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) "key" Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "key" removed.extras `shouldBe` Nothing
+        Scope.setOptionalExtra isolation "key" (Just (Aeson.String "value"))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "key" restored.extras `shouldBe` Just (Aeson.String "value")
+    Test.withGlobalScope do
+      Sentry.setOptionalExtra (error "key") (error "optional value")
+      Scope.setOptionalExtraAt Context.empty (error "key") (error "optional value")
+  it "setOptionalContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalContext "key" (Just (Patrol.Context.Other Map.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "key" result.contexts `shouldBe` Just (Patrol.Context.Other Map.empty)
+        untouched <- Scope.readScopeRef current
+        Map.lookup "key" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) "key" Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "key" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalContext isolation "key" (Just (Patrol.Context.Other Map.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "key" restored.contexts `shouldBe` Just (Patrol.Context.Other Map.empty)
+    Test.withGlobalScope do
+      Sentry.setOptionalContext (error "key") (error "optional value")
+      Scope.setOptionalContextAt Context.empty (error "key") (error "optional value")
+  it "setOptionalRuntimeContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalRuntimeContext (Just (Sentry.RuntimeContext.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "runtime" result.contexts `shouldBe` Just (Patrol.Context.Runtime (Sentry.RuntimeContext.empty))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "runtime" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalRuntimeContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "runtime" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalRuntimeContext isolation (Just (Sentry.RuntimeContext.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "runtime" restored.contexts `shouldBe` Just (Patrol.Context.Runtime (Sentry.RuntimeContext.empty))
+    Test.withGlobalScope do
+      Sentry.setOptionalRuntimeContext (error "optional value")
+      Scope.setOptionalRuntimeContextAt Context.empty (error "optional value")
+  it "setOptionalContextValues routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalContextValues "key" (Just ([("field", Aeson.String "value")]))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "key" result.contexts `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "key" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalContextValuesAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) "key" Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "key" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalContextValues isolation "key" (Just ([("field", Aeson.String "value")]))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "key" restored.contexts `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+    Test.withGlobalScope do
+      Sentry.setOptionalContextValues (error "key") (error "optional value")
+      Scope.setOptionalContextValuesAt Context.empty (error "key") (error "optional value")
+  it "setOptionalContextValue routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalContextValue "key" "field" (Just (Aeson.String "value"))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "key" result.contexts `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "key" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalContextValueAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) "key" "field" Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "key" removed.contexts `shouldBe` Just (Patrol.Context.Other Map.empty)
+        Scope.setOptionalContextValue isolation "key" "field" (Just (Aeson.String "value"))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "key" restored.contexts `shouldBe` Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value")))
+    Test.withGlobalScope do
+      Sentry.setOptionalContextValue (error "key") (error "key") (error "optional value")
+      Scope.setOptionalContextValueAt Context.empty (error "key") (error "key") (error "optional value")
+  it "setOptionalOsContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalOsContext (Just (Sentry.OsContext.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "os" result.contexts `shouldBe` Just (Patrol.Context.Os (Sentry.OsContext.empty))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "os" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalOsContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "os" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalOsContext isolation (Just (Sentry.OsContext.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "os" restored.contexts `shouldBe` Just (Patrol.Context.Os (Sentry.OsContext.empty))
+    Test.withGlobalScope do
+      Sentry.setOptionalOsContext (error "optional value")
+      Scope.setOptionalOsContextAt Context.empty (error "optional value")
+  it "setOptionalAppContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalAppContext (Just (Sentry.AppContext.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "app" result.contexts `shouldBe` Just (Patrol.Context.App (Sentry.AppContext.empty))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "app" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalAppContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "app" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalAppContext isolation (Just (Sentry.AppContext.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "app" restored.contexts `shouldBe` Just (Patrol.Context.App (Sentry.AppContext.empty))
+    Test.withGlobalScope do
+      Sentry.setOptionalAppContext (error "optional value")
+      Scope.setOptionalAppContextAt Context.empty (error "optional value")
+  it "setOptionalBrowserContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalBrowserContext (Just (Sentry.BrowserContext.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "browser" result.contexts `shouldBe` Just (Patrol.Context.Browser (Sentry.BrowserContext.empty))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "browser" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalBrowserContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "browser" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalBrowserContext isolation (Just (Sentry.BrowserContext.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "browser" restored.contexts `shouldBe` Just (Patrol.Context.Browser (Sentry.BrowserContext.empty))
+    Test.withGlobalScope do
+      Sentry.setOptionalBrowserContext (error "optional value")
+      Scope.setOptionalBrowserContextAt Context.empty (error "optional value")
+  it "setOptionalDeviceContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalDeviceContext (Just (Sentry.DeviceContext.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "device" result.contexts `shouldBe` Just (Patrol.Context.Device (Sentry.DeviceContext.empty))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "device" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalDeviceContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "device" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalDeviceContext isolation (Just (Sentry.DeviceContext.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "device" restored.contexts `shouldBe` Just (Patrol.Context.Device (Sentry.DeviceContext.empty))
+    Test.withGlobalScope do
+      Sentry.setOptionalDeviceContext (error "optional value")
+      Scope.setOptionalDeviceContextAt Context.empty (error "optional value")
+  it "setOptionalTraceContext routes, removes, and skips unavailable targets" do
+    _ <- Test.withClient \_ ->
+      Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+        Sentry.setOptionalTraceContext (Just (Sentry.TraceContext.empty))
+        result <- Scope.readScopeRef isolation
+        Map.lookup "trace" result.contexts `shouldBe` Just (Patrol.Context.Trace (Sentry.TraceContext.empty))
+        untouched <- Scope.readScopeRef current
+        Map.lookup "trace" untouched.contexts `shouldBe` Nothing
+        Scope.setOptionalTraceContextAt (Scope.insertCurrent current (Scope.insertIsolation isolation Context.empty)) Nothing
+        removed <- Scope.readScopeRef isolation
+        Map.lookup "trace" removed.contexts `shouldBe` Nothing
+        Scope.setOptionalTraceContext isolation (Just (Sentry.TraceContext.empty))
+        restored <- Scope.readScopeRef isolation
+        Map.lookup "trace" restored.contexts `shouldBe` Just (Patrol.Context.Trace (Sentry.TraceContext.empty))
+    Test.withGlobalScope do
+      Sentry.setOptionalTraceContext (error "optional value")
+      Scope.setOptionalTraceContextAt Context.empty (error "optional value")
+
+spec_optionalTypedReplacement :: Spec
+spec_optionalTypedReplacement = describe "optional typed context replacement" do
+  it "Update.setOptionalAppContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Update.setContextValues "app" [("old", Aeson.Bool True)]) (mempty @Sentry.ScopeData)
+        assigned = Sentry.Update.run (Update.setOptionalAppContext (Just Sentry.AppContext.empty)) original
+        removed = Sentry.Update.run (Update.setOptionalAppContext Nothing) original
+    Map.lookup "app" assigned.contexts `shouldBe` Just (Patrol.Context.App Sentry.AppContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Sentry.Event.setOptionalAppContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Sentry.Event.setContextValues "app" [("old", Aeson.Bool True)]) Sentry.Event.empty
+        assigned = Sentry.Update.run (Sentry.Event.setOptionalAppContext (Just Sentry.AppContext.empty)) original
+        removed = Sentry.Update.run (Sentry.Event.setOptionalAppContext Nothing) original
+    Map.lookup "app" assigned.contexts `shouldBe` Just (Patrol.Context.App Sentry.AppContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Update.setOptionalOsContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Update.setContextValues "os" [("old", Aeson.Bool True)]) (mempty @Sentry.ScopeData)
+        assigned = Sentry.Update.run (Update.setOptionalOsContext (Just Sentry.OsContext.empty)) original
+        removed = Sentry.Update.run (Update.setOptionalOsContext Nothing) original
+    Map.lookup "os" assigned.contexts `shouldBe` Just (Patrol.Context.Os Sentry.OsContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Sentry.Event.setOptionalOsContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Sentry.Event.setContextValues "os" [("old", Aeson.Bool True)]) Sentry.Event.empty
+        assigned = Sentry.Update.run (Sentry.Event.setOptionalOsContext (Just Sentry.OsContext.empty)) original
+        removed = Sentry.Update.run (Sentry.Event.setOptionalOsContext Nothing) original
+    Map.lookup "os" assigned.contexts `shouldBe` Just (Patrol.Context.Os Sentry.OsContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Update.setOptionalRuntimeContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Update.setContextValues "runtime" [("old", Aeson.Bool True)]) (mempty @Sentry.ScopeData)
+        assigned = Sentry.Update.run (Update.setOptionalRuntimeContext (Just Sentry.RuntimeContext.empty)) original
+        removed = Sentry.Update.run (Update.setOptionalRuntimeContext Nothing) original
+    Map.lookup "runtime" assigned.contexts `shouldBe` Just (Patrol.Context.Runtime Sentry.RuntimeContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Sentry.Event.setOptionalRuntimeContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Sentry.Event.setContextValues "runtime" [("old", Aeson.Bool True)]) Sentry.Event.empty
+        assigned = Sentry.Update.run (Sentry.Event.setOptionalRuntimeContext (Just Sentry.RuntimeContext.empty)) original
+        removed = Sentry.Update.run (Sentry.Event.setOptionalRuntimeContext Nothing) original
+    Map.lookup "runtime" assigned.contexts `shouldBe` Just (Patrol.Context.Runtime Sentry.RuntimeContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Update.setOptionalBrowserContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Update.setContextValues "browser" [("old", Aeson.Bool True)]) (mempty @Sentry.ScopeData)
+        assigned = Sentry.Update.run (Update.setOptionalBrowserContext (Just Sentry.BrowserContext.empty)) original
+        removed = Sentry.Update.run (Update.setOptionalBrowserContext Nothing) original
+    Map.lookup "browser" assigned.contexts `shouldBe` Just (Patrol.Context.Browser Sentry.BrowserContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Sentry.Event.setOptionalBrowserContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Sentry.Event.setContextValues "browser" [("old", Aeson.Bool True)]) Sentry.Event.empty
+        assigned = Sentry.Update.run (Sentry.Event.setOptionalBrowserContext (Just Sentry.BrowserContext.empty)) original
+        removed = Sentry.Update.run (Sentry.Event.setOptionalBrowserContext Nothing) original
+    Map.lookup "browser" assigned.contexts `shouldBe` Just (Patrol.Context.Browser Sentry.BrowserContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Update.setOptionalDeviceContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Update.setContextValues "device" [("old", Aeson.Bool True)]) (mempty @Sentry.ScopeData)
+        assigned = Sentry.Update.run (Update.setOptionalDeviceContext (Just Sentry.DeviceContext.empty)) original
+        removed = Sentry.Update.run (Update.setOptionalDeviceContext Nothing) original
+    Map.lookup "device" assigned.contexts `shouldBe` Just (Patrol.Context.Device Sentry.DeviceContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Sentry.Event.setOptionalDeviceContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Sentry.Event.setContextValues "device" [("old", Aeson.Bool True)]) Sentry.Event.empty
+        assigned = Sentry.Update.run (Sentry.Event.setOptionalDeviceContext (Just Sentry.DeviceContext.empty)) original
+        removed = Sentry.Update.run (Sentry.Event.setOptionalDeviceContext Nothing) original
+    Map.lookup "device" assigned.contexts `shouldBe` Just (Patrol.Context.Device Sentry.DeviceContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Update.setOptionalTraceContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Update.setContextValues "trace" [("old", Aeson.Bool True)]) (mempty @Sentry.ScopeData)
+        assigned = Sentry.Update.run (Update.setOptionalTraceContext (Just Sentry.TraceContext.empty)) original
+        removed = Sentry.Update.run (Update.setOptionalTraceContext Nothing) original
+    Map.lookup "trace" assigned.contexts `shouldBe` Just (Patrol.Context.Trace Sentry.TraceContext.empty)
+    removed.contexts `shouldBe` Map.empty
+  it "Sentry.Event.setOptionalTraceContext replaces and removes mismatched variants" do
+    let original = Sentry.Update.run (Sentry.Event.setContextValues "trace" [("old", Aeson.Bool True)]) Sentry.Event.empty
+        assigned = Sentry.Update.run (Sentry.Event.setOptionalTraceContext (Just Sentry.TraceContext.empty)) original
+        removed = Sentry.Update.run (Sentry.Event.setOptionalTraceContext Nothing) original
+    Map.lookup "trace" assigned.contexts `shouldBe` Just (Patrol.Context.Trace Sentry.TraceContext.empty)
+    removed.contexts `shouldBe` Map.empty
