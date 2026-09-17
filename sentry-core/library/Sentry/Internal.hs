@@ -244,7 +244,7 @@ class (Typeable t) => Integration t where
   -- The default implementation renders the type representation of the
   -- integration as text.
   name :: t -> Text
-  name = Text.show . typeOf @t
+  name = Text.pack . show . typeOf @t
 
   -- | A setup hook called whenever the integration is attached to a
   -- 'Sentry.Client.Client' via 'Sentry.Client.new'.
