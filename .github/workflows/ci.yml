@@ -53,7 +53,7 @@ jobs:
           path: |
             ~/.cache/cabal/packages
             ~/.local/state/cabal/store
-          key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}
+          key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', 'cabal.project.ci', '*/*.cabal') }}
           restore-keys: |
             cabal-${{ runner.os }}-${{ matrix.ghc }}-
       - name: Build dependencies
@@ -62,9 +62,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: dist-newstyle
-          key: dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}-${{ github.sha }}
+          key: dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', 'cabal.project.ci', '*/*.cabal') }}-${{ github.sha }}
           restore-keys: |
-            dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', '*/*.cabal') }}-
+            dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('flake.lock', 'cabal.project', 'cabal.project.ci', '*/*.cabal') }}-
             dist-${{ runner.os }}-${{ matrix.ghc }}-
       - name: Build
         run: nix develop .#ci-${{ matrix.ghc }} --command just project_file=cabal.project.ci build-all

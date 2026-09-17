@@ -1,5 +1,3 @@
--- Inherit packages, the patrol source-repository-package, constraints, and
--- allow-newer from the base project so this file can't drift out of sync.
 import: cabal.project
 
 optimization: 2

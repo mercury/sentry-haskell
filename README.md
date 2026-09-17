@@ -36,10 +36,9 @@ Sentry backend.
 
 ## Installation
 
-This project is not yet published to Hackage, and it depends on `patrol`, which
-is also unpublished. To use it, add the following `source-repository-package`
-stanzas to your `cabal.project` and then list `sentry` (and/or `sentry-core`) as
-a dependency of your package.
+This project is not yet published to Hackage; to use it, add the following
+`source-repository-package` stanzas to your `cabal.project` and then list
+`sentry` (and/or `sentry-core`) as a dependency of your package.
 
 <details> <summary>cabal.project fragment</summary>
 
@@ -55,11 +54,6 @@ source-repository-package
   location: https://github.com/MercuryTechnologies/sentry-haskell
   tag: main
   subdir: sentry-core
-
-source-repository-package
-  type: git
-  location: https://github.com/tfausak/patrol
-  tag: main
 ```
 
 </details>
