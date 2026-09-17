@@ -37,8 +37,6 @@ module Sentry.Scope
     lookupIsolation,
     insertIsolation,
     removeIsolation,
-    resolveMutationScope,
-    resolveBreadcrumbScope,
     propagateScope,
 
     -- * Global scope
@@ -50,78 +48,122 @@ module Sentry.Scope
 
     -- * Pure local metadata edits
     ScopeUpdate,
+
+    -- ** Level
     setLevel,
+    setOptionalLevel,
     unsetLevel,
+
+    -- ** User
     setUser,
     setOptionalUser,
-    setOptionalTraceContext,
-    setOptionalDeviceContext,
-    setOptionalBrowserContext,
-    setOptionalAppContext,
-    setOptionalOsContext,
-    setOptionalContextValue,
-    setOptionalContextValues,
-    setOptionalRuntimeContext,
-    setOptionalContext,
-    setOptionalExtra,
-    setOptionalTag,
-    setOptionalTransaction,
-    setOptionalFingerprint,
-    setOptionalLevel,
     unsetUser,
     modifyUser,
     modifyExistingUser,
+
+    -- ** Fingerprint
+    setFingerprint,
+    setOptionalFingerprint,
+    unsetFingerprint,
+    clearFingerprint,
     defaultFingerprintComponent,
     prependFingerprintComponent,
+    appendFingerprintComponent,
     ensureDefaultFingerprint,
     removeDefaultFingerprint,
     modifyFingerprint,
-    setFingerprint,
-    unsetFingerprint,
-    appendFingerprintComponent,
-    clearFingerprint,
     modifyExistingFingerprint,
+    findFingerprintComponent,
+    filterFingerprint,
+
+    -- ** Transaction
     setTransaction,
+    setOptionalTransaction,
     unsetTransaction,
 
     -- ** Tags
     setTag,
+    setOptionalTag,
     setTagIfAbsent,
     removeTag,
     clearTags,
+    lookupTag,
 
     -- ** Extras
     setExtra,
+    setOptionalExtra,
     removeExtra,
     clearExtras,
+    lookupExtra,
 
     -- ** Contexts
+
+    -- *** Generic contexts
     setContext,
+    setOptionalContext,
     setContextIfAbsent,
-    setBrowserContext,
-    modifyBrowserContext,
-    modifyExistingBrowserContext,
-    setDeviceContext,
-    modifyDeviceContext,
-    modifyExistingDeviceContext,
-    setTraceContext,
-    modifyTraceContext,
-    modifyExistingTraceContext,
-    setOsContext,
-    modifyOsContext,
-    modifyExistingOsContext,
-    setAppContext,
-    modifyAppContext,
-    modifyExistingAppContext,
-    setRuntimeContext,
-    modifyRuntimeContext,
-    modifyExistingRuntimeContext,
-    setContextValues,
-    setContextValue,
-    removeContextValue,
-    modifyContextValues,
     removeContext,
     clearContexts,
+    lookupContext,
+
+    -- *** Custom context values
+    setContextValues,
+    setOptionalContextValues,
+    setContextValue,
+    setOptionalContextValue,
+    removeContextValue,
+    modifyContextValues,
+    lookupContextValue,
+    modifyExistingContextValue,
+    alterContextValue,
+
+    -- *** OS context
+    setOsContext,
+    setOptionalOsContext,
+    modifyOsContext,
+    modifyExistingOsContext,
+    lookupOsContext,
+    alterOsContext,
+
+    -- *** App context
+    setAppContext,
+    setOptionalAppContext,
+    modifyAppContext,
+    modifyExistingAppContext,
+    lookupAppContext,
+    alterAppContext,
+
+    -- *** Runtime context
+    setRuntimeContext,
+    setOptionalRuntimeContext,
+    modifyRuntimeContext,
+    modifyExistingRuntimeContext,
+    lookupRuntimeContext,
+    alterRuntimeContext,
+
+    -- *** Browser context
+    setBrowserContext,
+    setOptionalBrowserContext,
+    modifyBrowserContext,
+    modifyExistingBrowserContext,
+    lookupBrowserContext,
+    alterBrowserContext,
+
+    -- *** Device context
+    setDeviceContext,
+    setOptionalDeviceContext,
+    modifyDeviceContext,
+    modifyExistingDeviceContext,
+    lookupDeviceContext,
+    alterDeviceContext,
+
+    -- *** Trace context
+    setTraceContext,
+    setOptionalTraceContext,
+    modifyTraceContext,
+    modifyExistingTraceContext,
+    lookupTraceContext,
+    alterTraceContext,
 
     -- ** Breadcrumbs (without policy)
     appendBreadcrumb,
@@ -134,36 +176,18 @@ module Sentry.Scope
     modifyBreadcrumbs,
     clearBreadcrumbs,
     trimBreadcrumbs,
+    findBreadcrumb,
+    filterBreadcrumbs,
 
     -- ** Event processors
     setEventProcessor,
     addEventProcessor,
     unsetEventProcessor,
+
+    -- ** Inspection
     with,
-    lookupTag,
-    lookupExtra,
-    lookupContext,
-    lookupContextValue,
-    modifyExistingContextValue,
-    alterContextValue,
-    lookupAppContext,
-    alterAppContext,
-    lookupOsContext,
-    alterOsContext,
-    lookupRuntimeContext,
-    alterRuntimeContext,
-    lookupBrowserContext,
-    alterBrowserContext,
-    lookupDeviceContext,
-    alterDeviceContext,
-    lookupTraceContext,
-    alterTraceContext,
-    findFingerprintComponent,
-    filterFingerprint,
-    findBreadcrumb,
-    filterBreadcrumbs,
   )
 where
 
-import Sentry.Scope.Operations (Scope, ScopeData (..), ScopeType (..), applyToEvent, bindClient, clone, configureGlobal, create, getCurrentScope, getGlobal, getIsolationScope, insertCurrent, insertIsolation, lookupClient, lookupClientAt, lookupCurrent, lookupIsolation, propagateScope, readMergedScope, readScopeAt, readScopeRef, removeCurrent, removeIsolation, resolveBreadcrumbScope, resolveClient, resolveClientAt, resolveMutationScope)
+import Sentry.Scope.Operations (Scope, ScopeData (..), ScopeType (..), applyToEvent, bindClient, clone, configureGlobal, create, getCurrentScope, getGlobal, getIsolationScope, insertCurrent, insertIsolation, lookupClient, lookupClientAt, lookupCurrent, lookupIsolation, propagateScope, readMergedScope, readScopeAt, readScopeRef, removeCurrent, removeIsolation, resolveClient, resolveClientAt)
 import Sentry.Scope.Update hiding (apply)

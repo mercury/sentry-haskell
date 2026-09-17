@@ -47,26 +47,34 @@ module Sentry.Scope.Update
 
     -- * Smart constructors
 
-    -- ** Scalar fields
+    -- ** Level
     setLevel,
     setOptionalLevel,
     unsetLevel,
+
+    -- ** User
     setUser,
     setOptionalUser,
     unsetUser,
     modifyUser,
     modifyExistingUser,
-    defaultFingerprintComponent,
-    prependFingerprintComponent,
-    ensureDefaultFingerprint,
-    removeDefaultFingerprint,
-    modifyFingerprint,
+
+    -- ** Fingerprint
     setFingerprint,
     setOptionalFingerprint,
     unsetFingerprint,
-    appendFingerprintComponent,
     clearFingerprint,
+    defaultFingerprintComponent,
+    prependFingerprintComponent,
+    appendFingerprintComponent,
+    ensureDefaultFingerprint,
+    removeDefaultFingerprint,
+    modifyFingerprint,
     modifyExistingFingerprint,
+    findFingerprintComponent,
+    filterFingerprint,
+
+    -- ** Transaction
     setTransaction,
     setOptionalTransaction,
     unsetTransaction,
@@ -77,49 +85,83 @@ module Sentry.Scope.Update
     setTagIfAbsent,
     removeTag,
     clearTags,
+    lookupTag,
 
     -- ** Extras
     setExtra,
     setOptionalExtra,
     removeExtra,
     clearExtras,
+    lookupExtra,
 
     -- ** Contexts
+
+    -- *** Generic contexts
     setContext,
     setOptionalContext,
     setContextIfAbsent,
-    setBrowserContext,
-    setOptionalBrowserContext,
-    modifyBrowserContext,
-    modifyExistingBrowserContext,
-    setDeviceContext,
-    setOptionalDeviceContext,
-    modifyDeviceContext,
-    modifyExistingDeviceContext,
-    setTraceContext,
-    setOptionalTraceContext,
-    modifyTraceContext,
-    modifyExistingTraceContext,
-    setOsContext,
-    setOptionalOsContext,
-    modifyOsContext,
-    modifyExistingOsContext,
-    setAppContext,
-    setOptionalAppContext,
-    modifyAppContext,
-    modifyExistingAppContext,
-    setRuntimeContext,
-    setOptionalRuntimeContext,
-    modifyRuntimeContext,
-    modifyExistingRuntimeContext,
+    removeContext,
+    clearContexts,
+    lookupContext,
+
+    -- *** Custom context values
     setContextValues,
     setOptionalContextValues,
     setContextValue,
     setOptionalContextValue,
     removeContextValue,
     modifyContextValues,
-    removeContext,
-    clearContexts,
+    lookupContextValue,
+    modifyExistingContextValue,
+    alterContextValue,
+
+    -- *** OS context
+    setOsContext,
+    setOptionalOsContext,
+    modifyOsContext,
+    modifyExistingOsContext,
+    lookupOsContext,
+    alterOsContext,
+
+    -- *** App context
+    setAppContext,
+    setOptionalAppContext,
+    modifyAppContext,
+    modifyExistingAppContext,
+    lookupAppContext,
+    alterAppContext,
+
+    -- *** Runtime context
+    setRuntimeContext,
+    setOptionalRuntimeContext,
+    modifyRuntimeContext,
+    modifyExistingRuntimeContext,
+    lookupRuntimeContext,
+    alterRuntimeContext,
+
+    -- *** Browser context
+    setBrowserContext,
+    setOptionalBrowserContext,
+    modifyBrowserContext,
+    modifyExistingBrowserContext,
+    lookupBrowserContext,
+    alterBrowserContext,
+
+    -- *** Device context
+    setDeviceContext,
+    setOptionalDeviceContext,
+    modifyDeviceContext,
+    modifyExistingDeviceContext,
+    lookupDeviceContext,
+    alterDeviceContext,
+
+    -- *** Trace context
+    setTraceContext,
+    setOptionalTraceContext,
+    modifyTraceContext,
+    modifyExistingTraceContext,
+    lookupTraceContext,
+    alterTraceContext,
 
     -- ** Breadcrumbs
     appendBreadcrumb,
@@ -132,34 +174,16 @@ module Sentry.Scope.Update
     modifyBreadcrumbs,
     clearBreadcrumbs,
     trimBreadcrumbs,
+    findBreadcrumb,
+    filterBreadcrumbs,
 
     -- ** Event processors
     setEventProcessor,
     addEventProcessor,
     unsetEventProcessor,
-    lookupTag,
-    lookupExtra,
-    lookupContext,
+
+    -- ** Inspection
     with,
-    lookupAppContext,
-    alterAppContext,
-    lookupOsContext,
-    alterOsContext,
-    lookupRuntimeContext,
-    alterRuntimeContext,
-    lookupBrowserContext,
-    alterBrowserContext,
-    lookupDeviceContext,
-    alterDeviceContext,
-    lookupTraceContext,
-    alterTraceContext,
-    lookupContextValue,
-    modifyExistingContextValue,
-    alterContextValue,
-    findFingerprintComponent,
-    filterFingerprint,
-    findBreadcrumb,
-    filterBreadcrumbs,
   )
 where
 

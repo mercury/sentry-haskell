@@ -46,61 +46,49 @@ module Sentry.Scope.Operations
 
     -- ** Mutation
 
-    -- *** Scalar fields
+    -- *** Level
     setLevel,
     setLevelAt,
+    setOptionalLevel,
+    setOptionalLevelAt,
     unsetLevel,
     unsetLevelAt,
+
+    -- *** User
     setUser,
-    setOptionalUser,
-    setOptionalTraceContext,
-    setOptionalDeviceContext,
-    setOptionalBrowserContext,
-    setOptionalAppContext,
-    setOptionalOsContext,
-    setOptionalContextValue,
-    setOptionalContextValues,
-    setOptionalRuntimeContext,
-    setOptionalContext,
-    setOptionalExtra,
-    setOptionalTag,
-    setOptionalTransaction,
-    setOptionalFingerprint,
-    setOptionalLevel,
     setUserAt,
+    setOptionalUser,
     setOptionalUserAt,
-    setOptionalTraceContextAt,
-    setOptionalDeviceContextAt,
-    setOptionalBrowserContextAt,
-    setOptionalAppContextAt,
-    setOptionalOsContextAt,
-    setOptionalContextValueAt,
-    setOptionalContextValuesAt,
-    setOptionalRuntimeContextAt,
-    setOptionalContextAt,
-    setOptionalExtraAt,
-    setOptionalTagAt,
-    setOptionalTransactionAt,
-    setOptionalFingerprintAt,
-    setOptionalLevelAt,
     unsetUser,
     unsetUserAt,
     modifyUser,
     modifyUserAt,
     modifyExistingUser,
     modifyExistingUserAt,
+
+    -- *** Fingerprint
     setFingerprint,
     setFingerprintAt,
+    setOptionalFingerprint,
+    setOptionalFingerprintAt,
     unsetFingerprint,
     unsetFingerprintAt,
+    filterFingerprint,
+    filterFingerprintAt,
+
+    -- *** Transaction
     setTransaction,
     setTransactionAt,
+    setOptionalTransaction,
+    setOptionalTransactionAt,
     unsetTransaction,
     unsetTransactionAt,
 
     -- *** Tags
     setTag,
     setTagAt,
+    setOptionalTag,
+    setOptionalTagAt,
     removeTag,
     removeTagAt,
     clearTags,
@@ -109,32 +97,77 @@ module Sentry.Scope.Operations
     -- *** Extras
     setExtra,
     setExtraAt,
+    setOptionalExtra,
+    setOptionalExtraAt,
     removeExtra,
     removeExtraAt,
     clearExtras,
     clearExtrasAt,
 
     -- *** Contexts
+
+    -- Generic contexts
     setContext,
     setContextAt,
-    setOsContext,
-    setAppContext,
-    setRuntimeContext,
-    setOsContextAt,
-    setAppContextAt,
-    setRuntimeContextAt,
-    setContextValues,
-    setContextValuesAt,
-    setContextValue,
-    setContextValueAt,
-    removeContextValue,
-    removeContextValueAt,
-    modifyContextValues,
-    modifyContextValuesAt,
+    setOptionalContext,
+    setOptionalContextAt,
     removeContext,
     removeContextAt,
     clearContexts,
     clearContextsAt,
+    -- Custom context values
+    setContextValues,
+    setContextValuesAt,
+    setOptionalContextValues,
+    setOptionalContextValuesAt,
+    setContextValue,
+    setContextValueAt,
+    setOptionalContextValue,
+    setOptionalContextValueAt,
+    removeContextValue,
+    removeContextValueAt,
+    modifyContextValues,
+    modifyContextValuesAt,
+    modifyExistingContextValue,
+    modifyExistingContextValueAt,
+    alterContextValue,
+    alterContextValueAt,
+    -- OS context
+    setOsContext,
+    setOsContextAt,
+    setOptionalOsContext,
+    setOptionalOsContextAt,
+    alterOsContext,
+    alterOsContextAt,
+    -- App context
+    setAppContext,
+    setAppContextAt,
+    setOptionalAppContext,
+    setOptionalAppContextAt,
+    alterAppContext,
+    alterAppContextAt,
+    -- Runtime context
+    setRuntimeContext,
+    setRuntimeContextAt,
+    setOptionalRuntimeContext,
+    setOptionalRuntimeContextAt,
+    alterRuntimeContext,
+    alterRuntimeContextAt,
+    -- Browser context
+    setOptionalBrowserContext,
+    setOptionalBrowserContextAt,
+    alterBrowserContext,
+    alterBrowserContextAt,
+    -- Device context
+    setOptionalDeviceContext,
+    setOptionalDeviceContextAt,
+    alterDeviceContext,
+    alterDeviceContextAt,
+    -- Trace context
+    setOptionalTraceContext,
+    setOptionalTraceContextAt,
+    alterTraceContext,
+    alterTraceContextAt,
 
     -- *** Breadcrumbs
     addBreadcrumb,
@@ -143,6 +176,8 @@ module Sentry.Scope.Operations
     addBreadcrumbsAt,
     clearBreadcrumbs,
     clearBreadcrumbsAt,
+    filterBreadcrumbs,
+    filterBreadcrumbsAt,
 
     -- ** Thread-local Context Manipulation
     lookupCurrent,
@@ -158,8 +193,6 @@ module Sentry.Scope.Operations
     propagateScope,
 
     -- ** Context-first operations
-    resolveMutationScope,
-    resolveBreadcrumbScope,
     updateAt,
 
     -- ** Global Scope
@@ -176,26 +209,6 @@ module Sentry.Scope.Operations
 
     -- ** Event Modification
     applyToEvent,
-    alterAppContext,
-    alterAppContextAt,
-    alterOsContext,
-    alterOsContextAt,
-    alterRuntimeContext,
-    alterRuntimeContextAt,
-    alterBrowserContext,
-    alterBrowserContextAt,
-    alterDeviceContext,
-    alterDeviceContextAt,
-    alterTraceContext,
-    alterTraceContextAt,
-    modifyExistingContextValue,
-    modifyExistingContextValueAt,
-    alterContextValue,
-    alterContextValueAt,
-    filterFingerprint,
-    filterFingerprintAt,
-    filterBreadcrumbs,
-    filterBreadcrumbsAt,
   )
 where
 
@@ -626,7 +639,7 @@ addBreadcrumbs crumbs = do
 --
 -- This operation can install a scope in the thread-local 'Context'. Explicit
 -- context mutations only use scopes already attached to the supplied context;
--- see 'resolveMutationScope'.
+-- see 'lookupIsolation'.
 ambientBreadcrumbTarget :: (MonadIO m) => m (Maybe (Client, Scope))
 ambientBreadcrumbTarget = liftIO $ mask_ do
   context <- ThreadLocal.getContext
@@ -824,7 +837,7 @@ modifyContextValuesAt :: (MonadIO m) => Context -> Text -> (Map Text Aeson.Value
 modifyContextValuesAt ctx k f = updateAt ctx (Update.modifyContextValues k f)
 
 -- | Assign an event processor to the isolation scope on the given context,
--- replacing an event processor if one already existed. 
+-- replacing an event processor if one already existed.
 setEventProcessorAt :: (MonadIO m) => Context -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
 setEventProcessorAt ctx f = updateAt ctx (Update.setEventProcessor f)
 
@@ -853,7 +866,7 @@ addBreadcrumbsAt ctx crumbs = do
 
 -- | Remove all breadcrumbs from the isolation scope on the given context.
 clearBreadcrumbsAt :: (MonadIO m) => Context -> m ()
-clearBreadcrumbsAt ctx = for_ (resolveBreadcrumbScope ctx) \scope -> Update.apply scope Update.clearBreadcrumbs
+clearBreadcrumbsAt ctx = for_ (lookupIsolation ctx) \scope -> Update.apply scope Update.clearBreadcrumbs
 
 -- | Add a breadcrumb to the given scope, applying the 'beforeBreadcrumb' hook
 -- and trim the list of breadcrumbs if it exceeds 'maxBreadcrumbs'.

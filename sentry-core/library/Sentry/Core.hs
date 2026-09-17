@@ -95,68 +95,102 @@ module Sentry.Core
     RuntimeContextUpdate,
     MechanismUpdate,
 
-    -- * Breadcrumbs
+    -- * Scope metadata
+
+    -- ** Update application
+    updateScope,
+
+    -- ** Level
+    setLevel,
+    unsetLevel,
+    setOptionalLevel,
+
+    -- ** User
+    setUser,
+    setOptionalUser,
+    unsetUser,
+    modifyUser,
+    modifyExistingUser,
+
+    -- ** Fingerprint
+    setFingerprint,
+    setOptionalFingerprint,
+    unsetFingerprint,
+    filterFingerprint,
+
+    -- ** Transaction
+    setTransaction,
+    setOptionalTransaction,
+    unsetTransaction,
+
+    -- ** Tags
+    setTag,
+    setOptionalTag,
+    removeTag,
+    clearTags,
+
+    -- ** Extras
+    setExtra,
+    setOptionalExtra,
+    removeExtra,
+    clearExtras,
+
+    -- ** Contexts
+
+    -- *** Generic contexts
+    setContext,
+    setOptionalContext,
+    removeContext,
+    clearContexts,
+
+    -- *** Custom context values
+    setContextValues,
+    setOptionalContextValues,
+    setContextValue,
+    setOptionalContextValue,
+    removeContextValue,
+    modifyContextValues,
+    modifyExistingContextValue,
+    alterContextValue,
+
+    -- *** OS context
+    setOsContext,
+    setOptionalOsContext,
+    alterOsContext,
+
+    -- *** App context
+    setAppContext,
+    setOptionalAppContext,
+    alterAppContext,
+
+    -- *** Runtime context
+    setRuntimeContext,
+    setOptionalRuntimeContext,
+    alterRuntimeContext,
+
+    -- *** Browser context
+    setOptionalBrowserContext,
+    alterBrowserContext,
+
+    -- *** Device context
+    setOptionalDeviceContext,
+    alterDeviceContext,
+
+    -- *** Trace context
+    setOptionalTraceContext,
+    alterTraceContext,
+
+    -- ** Breadcrumbs
     addBreadcrumb,
     addBreadcrumbAt,
     addBreadcrumbs,
     addBreadcrumbsAt,
     clearBreadcrumbs,
     clearBreadcrumbsAt,
-
-    -- * Scope metadata
-    updateScope,
-    setLevel,
-    unsetLevel,
-    setUser,
-    setOptionalUser,
-    setOptionalTraceContext,
-    setOptionalDeviceContext,
-    setOptionalBrowserContext,
-    setOptionalAppContext,
-    setOptionalOsContext,
-    setOptionalContextValue,
-    setOptionalContextValues,
-    setOptionalRuntimeContext,
-    setOptionalContext,
-    setOptionalExtra,
-    setOptionalTag,
-    setOptionalTransaction,
-    setOptionalFingerprint,
-    setOptionalLevel,
-    unsetUser,
-    modifyUser,
-    modifyExistingUser,
-    setTag,
-    removeTag,
-    clearTags,
-    setExtra,
-    removeExtra,
-    clearExtras,
-    setContext,
-    setContextValues,
-    setContextValue,
-    removeContextValue,
-    modifyContextValues,
-    setOsContext,
-    setAppContext,
-    setRuntimeContext,
-    removeContext,
-    clearContexts,
-    setFingerprint,
-    unsetFingerprint,
-    setTransaction,
-    unsetTransaction,
-    configureGlobal,
-    alterAppContext,
-    alterOsContext,
-    alterRuntimeContext,
-    alterBrowserContext,
-    alterDeviceContext,
-    alterTraceContext,
-    modifyExistingContextValue,
-    alterContextValue,
-    filterFingerprint,
     filterBreadcrumbs,
+
+    -- ** Global scope
+    configureGlobal,
   )
 where
 

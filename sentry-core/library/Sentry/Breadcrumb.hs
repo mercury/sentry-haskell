@@ -17,6 +17,8 @@ module Sentry.Breadcrumb
     firstBreadcrumb,
     lastBreadcrumb,
     eachBreadcrumb,
+    findBreadcrumb,
+    filterBreadcrumbs,
     BreadcrumbType (..),
 
     -- * Updates
@@ -46,8 +48,6 @@ module Sentry.Breadcrumb
     removeData,
     clearData,
     lookupData,
-    findBreadcrumb,
-    filterBreadcrumbs,
   )
 where
 

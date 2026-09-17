@@ -39,6 +39,7 @@ module Sentry.User
     setOptionalData,
     removeData,
     clearData,
+    lookupData,
 
     -- * Nested geo
     setGeo,
@@ -46,7 +47,6 @@ module Sentry.User
     modifyGeo,
     modifyExistingGeo,
     unsetGeo,
-    lookupData,
   )
 where
 
