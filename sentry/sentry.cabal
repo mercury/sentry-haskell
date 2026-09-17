@@ -74,6 +74,7 @@ library
   -- cabal-gild: discover library
   exposed-modules:
     Sentry
+    Sentry.Async
     Sentry.Transport.Delivery
     Sentry.Transport.Executor.Async
     Sentry.Transport.Executor.RateLimiter
@@ -182,6 +183,7 @@ test-suite unit
   -- cabal-gild: discover tests/unit --exclude=tests/unit/Driver.hs
   other-modules:
     AsyncExecutorTest
+    AsyncScopeTest
     DeliveryTest
     RateLimiterTest
     ScopeMetadataTest
@@ -200,6 +202,7 @@ test-suite unit
     sentry-core,
     stm,
     stm-chans,
+    text,
     time,
     unliftio,
 

@@ -172,11 +172,12 @@ spec_with = describe "with transformations" do
     let cycleAttempt = Sentry.updateScope scope $
           S.with \local ->
             S.setOptionalTag "attempt" $
-              (\case
-                Nothing -> Just "first"
-                Just "first" -> Just "retry"
-                Just _ -> Nothing)
-              (S.lookupTag "attempt" local)
+              ( \case
+                  Nothing -> Just "first"
+                  Just "first" -> Just "retry"
+                  Just _ -> Nothing
+              )
+                (S.lookupTag "attempt" local)
     forM_ [Just "first", Just "retry", Nothing] \expected -> do
       cycleAttempt
       S.lookupTag "attempt" <$> S.readScopeRef scope `shouldReturn` expected

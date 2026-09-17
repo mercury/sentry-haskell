@@ -63,6 +63,9 @@ module Sentry.Core
     readScopeRef,
     readMergedScope,
 
+    -- * Scope propagation
+    propagateScope,
+
     -- * Record types
     User,
     Geo,
@@ -101,7 +104,6 @@ module Sentry.Core
     clearBreadcrumbsAt,
 
     -- * Scope metadata
-    -- $scope-metadata
     updateScope,
     setLevel,
     unsetLevel,
@@ -210,6 +212,7 @@ import Sentry.Scope.Operations
     configureGlobal,
     getCurrentScope,
     getIsolationScope,
+    propagateScope,
     readMergedScope,
     readScopeRef,
     resolveClient,
@@ -223,34 +226,6 @@ import Sentry.Update (Update)
 import Sentry.User (User, UserUpdate)
 import Witch qualified
 import Prelude hiding (init)
-
--- $scope-metadata
---
--- 'setUser' and 'setTag' select the isolation scope without a scope handle.
--- These automatic operations are called ambient operations. Transaction naming
--- selects the current scope instead.
---
--- Without a recording client, ambient operations leave metadata unchanged.
--- Explicit getters and 'updateScope' remain usable before initialization.
---
--- Establish a user with 'setUser', built from the field builders in
--- "Sentry.User", and refine it afterwards with 'modifyUser':
---
--- @
--- import Sentry qualified
--- import Sentry.User qualified
---
--- Sentry.setUser [Sentry.User.setId \"42\", Sentry.User.setName \"Alice\"]
--- Sentry.modifyUser (Sentry.User.setEmail \"alice\@example.com\")
--- @
---
--- Every one of these verbs accepts a single update, a list of them, or a whole
--- record; updates also compose with '<>', applying left to right, so later
--- assignments win.
---
--- Each scope operation applies one atomic update. 'modifyUser' starts from empty
--- when the scope has no user of its own, and never reaches through to a user
--- inherited from another scope.
 
 -- | Apply a single scope builder, a list, or a composed bundle atomically,
 -- from left to right. Later assignments win. Builders modify only local
@@ -268,7 +243,6 @@ import Prelude hiding (init)
 updateScope :: (MonadIO m, Witch.From a ScopeUpdate) => Scope -> a -> m ()
 updateScope = ScopeUpdate.apply
 
--- Ambient routing checks the client before evaluating the update or acquiring state.
 ambientUpdate :: (MonadIO m) => m Scope -> ScopeUpdate -> m ()
 ambientUpdate target upd = do
   client <- resolveClient
@@ -276,298 +250,210 @@ ambientUpdate target upd = do
     NON_RECORDING_CLIENT -> pure ()
     _ -> target >>= \scope -> ScopeUpdate.apply scope upd
 
--- | This operation sets the isolation scope's level.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setLevel' to the active isolation scope.
 setLevel :: (MonadIO m) => Patrol.Level -> m ()
 setLevel level = ambientUpdate getIsolationScope (ScopeUpdate.setLevel level)
 
--- | This operation removes the isolation scope's level assignment.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.unsetLevel' to the active isolation scope.
 unsetLevel :: (MonadIO m) => m ()
 unsetLevel = ambientUpdate getIsolationScope ScopeUpdate.unsetLevel
 
--- | This operation replaces the isolation scope's user with a supplied record
--- or a user built from empty.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setUser' to the active isolation scope.
 setUser :: (MonadIO m, Witch.From a UserUpdate) => a -> m ()
 setUser u = ambientUpdate getIsolationScope (ScopeUpdate.setUser u)
 
--- | This operation replaces the isolation scope's user with a supplied record,
--- or removes the local assignment when given 'Nothing'.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setOptionalUser' to the active isolation scope.
 setOptionalUser :: (MonadIO m) => Maybe User -> m ()
 setOptionalUser user = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalUser user)
 
--- | This operation removes the isolation scope's local user, allowing a global
--- user to appear in captures.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.unsetUser' to the active isolation scope.
 unsetUser :: (MonadIO m) => m ()
 unsetUser = ambientUpdate getIsolationScope ScopeUpdate.unsetUser
 
--- | This operation modifies the isolation scope's user, starting from an empty
--- user when none exists locally.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.modifyUser' to the active isolation scope.
 modifyUser :: (MonadIO m, Witch.From a UserUpdate) => a -> m ()
 modifyUser upd = ambientUpdate getIsolationScope (ScopeUpdate.modifyUser upd)
 
--- | This operation modifies the isolation scope's user only when one exists
--- locally.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.modifyExistingUser' to the active isolation scope.
 modifyExistingUser :: (MonadIO m, Witch.From a UserUpdate) => a -> m ()
 modifyExistingUser upd = ambientUpdate getIsolationScope (ScopeUpdate.modifyExistingUser upd)
 
--- | This operation sets a tag on the isolation scope, replacing any local
--- value at that key.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setTag' to the active isolation scope.
 setTag :: (MonadIO m) => Text -> Text -> m ()
 setTag k v = ambientUpdate getIsolationScope (ScopeUpdate.setTag k v)
 
--- | This operation removes a tag from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.removeTag' to the active isolation scope.
 removeTag :: (MonadIO m) => Text -> m ()
 removeTag k = ambientUpdate getIsolationScope (ScopeUpdate.removeTag k)
 
--- | This operation removes all tags from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.clearTags' to the active isolation scope.
 clearTags :: (MonadIO m) => m ()
 clearTags = ambientUpdate getIsolationScope ScopeUpdate.clearTags
 
--- | This operation sets an extra value on the isolation scope, replacing any
--- local value at that key.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setExtra' to the active isolation scope.
 setExtra :: (MonadIO m) => Text -> Aeson.Value -> m ()
 setExtra k v = ambientUpdate getIsolationScope (ScopeUpdate.setExtra k v)
 
--- | This operation removes an extra value from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.removeExtra' to the active isolation scope.
 removeExtra :: (MonadIO m) => Text -> m ()
 removeExtra k = ambientUpdate getIsolationScope (ScopeUpdate.removeExtra k)
 
--- | This operation removes all extra values from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.clearExtras' to the active isolation scope.
 clearExtras :: (MonadIO m) => m ()
 clearExtras = ambientUpdate getIsolationScope ScopeUpdate.clearExtras
 
--- | This operation replaces the entire context payload at the given name on
--- the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setContext' to the active isolation scope.
 setContext :: (MonadIO m) => Text -> Patrol.Context -> m ()
 setContext k v = ambientUpdate getIsolationScope (ScopeUpdate.setContext k v)
 
--- | This operation replaces the named context on the isolation scope with a
--- custom payload built from the supplied fields.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setContextValues' to the active isolation scope.
 setContextValues :: (MonadIO m) => Text -> [(Text, Aeson.Value)] -> m ()
 setContextValues k kvs = ambientUpdate getIsolationScope (ScopeUpdate.setContextValues k kvs)
 
--- | This operation sets a field in a custom context on the isolation scope,
--- creating the context when absent. Typed contexts remain unchanged.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setContextValue' to the active isolation scope.
 setContextValue :: (MonadIO m) => Text -> Text -> Aeson.Value -> m ()
 setContextValue k key value = ambientUpdate getIsolationScope (ScopeUpdate.setContextValue k key value)
 
--- | This operation removes a field from a local custom context on the
--- isolation scope. Absent and typed contexts remain unchanged; removing the
--- last field retains an empty context.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.removeContextValue' to the active isolation scope.
 removeContextValue :: (MonadIO m) => Text -> Text -> m ()
 removeContextValue k key = ambientUpdate getIsolationScope (ScopeUpdate.removeContextValue k key)
 
--- | This operation transforms a custom context's fields on the isolation
--- scope, starting from an empty map when absent. Typed contexts remain
--- unchanged.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.modifyContextValues' to the active isolation scope.
 modifyContextValues :: (MonadIO m) => Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> m ()
 modifyContextValues k f = ambientUpdate getIsolationScope (ScopeUpdate.modifyContextValues k f)
 
--- | This operation replaces the isolation scope's entire os context with an
--- operating system payload.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setOsContext' to the active isolation scope.
 setOsContext :: (MonadIO m, Witch.From a OsContextUpdate) => a -> m ()
 setOsContext upd = ambientUpdate getIsolationScope (ScopeUpdate.setOsContext upd)
 
--- | This operation replaces the isolation scope's entire app context with an
--- application payload.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setAppContext' to the active isolation scope.
 setAppContext :: (MonadIO m, Witch.From a AppContextUpdate) => a -> m ()
 setAppContext upd = ambientUpdate getIsolationScope (ScopeUpdate.setAppContext upd)
 
--- | This operation replaces the isolation scope's entire runtime context with
--- a runtime payload.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setRuntimeContext' to the active isolation scope.
 setRuntimeContext :: (MonadIO m, Witch.From a RuntimeContextUpdate) => a -> m ()
 setRuntimeContext rc = ambientUpdate getIsolationScope (ScopeUpdate.setRuntimeContext rc)
 
--- | This operation removes the named context from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.removeContext' to the active isolation scope.
 removeContext :: (MonadIO m) => Text -> m ()
 removeContext k = ambientUpdate getIsolationScope (ScopeUpdate.removeContext k)
 
--- | This operation removes all contexts from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.clearContexts' to the active isolation scope.
 clearContexts :: (MonadIO m) => m ()
 clearContexts = ambientUpdate getIsolationScope ScopeUpdate.clearContexts
 
--- | This operation replaces the isolation scope's fingerprint, including when
--- the supplied list is empty.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setFingerprint' to the active isolation scope.
 setFingerprint :: (MonadIO m) => [Text] -> m ()
 setFingerprint fp = ambientUpdate getIsolationScope (ScopeUpdate.setFingerprint fp)
 
--- | This operation removes the isolation scope's fingerprint assignment.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.unsetFingerprint' to the active isolation scope.
 unsetFingerprint :: (MonadIO m) => m ()
 unsetFingerprint = ambientUpdate getIsolationScope ScopeUpdate.unsetFingerprint
 
--- | This operation sets the transaction name on the current scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.setTransaction' to the active isolation scope.
 setTransaction :: (MonadIO m) => Text -> m ()
 setTransaction t = ambientUpdate getCurrentScope (ScopeUpdate.setTransaction t)
 
--- | This operation removes the current scope's transaction name assignment.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.unsetTransaction' to the active isolation scope.
 unsetTransaction :: (MonadIO m) => m ()
 unsetTransaction = ambientUpdate getCurrentScope ScopeUpdate.unsetTransaction
 
--- | This operation removes all breadcrumbs from the isolation scope.
---
--- It leaves the scope unchanged when there is no recording client.
+-- | Apply 'ScopeUpdate.clearBreadcrumbs' to the active isolation scope.
 clearBreadcrumbs :: (MonadIO m) => m ()
 clearBreadcrumbs = ambientUpdate getIsolationScope ScopeUpdate.clearBreadcrumbs
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalLevel' to the active isolation scope.
 setOptionalLevel :: (MonadIO m) => Maybe Patrol.Level -> m ()
 setOptionalLevel value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalLevel value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalFingerprint' to the active isolation scope.
 setOptionalFingerprint :: (MonadIO m) => Maybe [Text] -> m ()
 setOptionalFingerprint value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalFingerprint value)
 
--- | Replace the current transaction assignment, or remove it with 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalTransaction' to the active isolation scope.
 setOptionalTransaction :: (MonadIO m) => Maybe Text -> m ()
 setOptionalTransaction value = ambientUpdate getCurrentScope (ScopeUpdate.setOptionalTransaction value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalTag' to the active isolation scope.
 setOptionalTag :: (MonadIO m) => Text -> Maybe Text -> m ()
 setOptionalTag key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalTag key value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalExtra' to the active isolation scope.
 setOptionalExtra :: (MonadIO m) => Text -> Maybe Aeson.Value -> m ()
 setOptionalExtra key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalExtra key value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalContext' to the active isolation scope.
 setOptionalContext :: (MonadIO m) => Text -> Maybe Patrol.Context -> m ()
 setOptionalContext key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalContext key value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalRuntimeContext' to the active isolation scope.
 setOptionalRuntimeContext :: (MonadIO m) => Maybe RuntimeContext -> m ()
 setOptionalRuntimeContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalRuntimeContext value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalContextValues' to the active isolation scope.
 setOptionalContextValues :: (MonadIO m) => Text -> Maybe [(Text, Aeson.Value)] -> m ()
 setOptionalContextValues key value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalContextValues key value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalContextValue' to the active isolation scope.
 setOptionalContextValue :: (MonadIO m) => Text -> Text -> Maybe Aeson.Value -> m ()
 setOptionalContextValue key fieldKey value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalContextValue key fieldKey value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalOsContext' to the active isolation scope.
 setOptionalOsContext :: (MonadIO m) => Maybe Sentry.OsContext.OsContext -> m ()
 setOptionalOsContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalOsContext value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalAppContext' to the active isolation scope.
 setOptionalAppContext :: (MonadIO m) => Maybe Sentry.AppContext.AppContext -> m ()
 setOptionalAppContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalAppContext value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalBrowserContext' to the active isolation scope.
 setOptionalBrowserContext :: (MonadIO m) => Maybe Sentry.BrowserContext.BrowserContext -> m ()
 setOptionalBrowserContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalBrowserContext value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalDeviceContext' to the active isolation scope.
 setOptionalDeviceContext :: (MonadIO m) => Maybe Sentry.DeviceContext.DeviceContext -> m ()
 setOptionalDeviceContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalDeviceContext value)
 
--- | Replace the isolation assignment, or remove it when given 'Nothing'.
--- Without a recording client, this operation skips its arguments.
+-- | Apply 'ScopeUpdate.setOptionalTraceContext' to the active isolation scope.
 setOptionalTraceContext :: (MonadIO m) => Maybe Sentry.TraceContext.TraceContext -> m ()
 setOptionalTraceContext value = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalTraceContext value)
 
--- | Apply 'ScopeUpdate.alterAppContext' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterAppContext' to the active isolation scope.
 alterAppContext :: (MonadIO m) => (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> m ()
 alterAppContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterAppContext f)
 
--- | Apply 'ScopeUpdate.alterOsContext' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterOsContext' to the active isolation scope.
 alterOsContext :: (MonadIO m) => (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> m ()
 alterOsContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterOsContext f)
 
--- | Apply 'ScopeUpdate.alterRuntimeContext' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterRuntimeContext' to the active isolation scope.
 alterRuntimeContext :: (MonadIO m) => (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> m ()
 alterRuntimeContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterRuntimeContext f)
 
--- | Apply 'ScopeUpdate.alterBrowserContext' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterBrowserContext' to the active isolation scope.
 alterBrowserContext :: (MonadIO m) => (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> m ()
 alterBrowserContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterBrowserContext f)
 
--- | Apply 'ScopeUpdate.alterDeviceContext' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterDeviceContext' to the active isolation scope.
 alterDeviceContext :: (MonadIO m) => (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> m ()
 alterDeviceContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterDeviceContext f)
 
--- | Apply 'ScopeUpdate.alterTraceContext' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterTraceContext' to the active isolation scope.
 alterTraceContext :: (MonadIO m) => (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> m ()
 alterTraceContext f = ambientUpdate getIsolationScope (ScopeUpdate.alterTraceContext f)
 
--- | Apply 'ScopeUpdate.modifyExistingContextValue' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.modifyExistingContextValue' to the active isolation scope.
 modifyExistingContextValue :: (MonadIO m) => Text -> Text -> (Aeson.Value -> Aeson.Value) -> m ()
 modifyExistingContextValue key field f = ambientUpdate getIsolationScope (ScopeUpdate.modifyExistingContextValue key field f)
 
--- | Apply 'ScopeUpdate.alterContextValue' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.alterContextValue' to the active isolation scope.
 alterContextValue :: (MonadIO m) => Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> m ()
 alterContextValue key field f = ambientUpdate getIsolationScope (ScopeUpdate.alterContextValue key field f)
 
--- | Apply 'ScopeUpdate.filterFingerprint' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.filterFingerprint' to the active isolation scope.
 filterFingerprint :: (MonadIO m) => (Text -> Bool) -> m ()
 filterFingerprint predicate = ambientUpdate getIsolationScope (ScopeUpdate.filterFingerprint predicate)
 
--- | Apply 'ScopeUpdate.filterBreadcrumbs' to isolation when a recording client exists.
+-- | Apply 'ScopeUpdate.filterBreadcrumbs' to the active isolation scope.
 filterBreadcrumbs :: (MonadIO m) => (Patrol.Breadcrumb -> Bool) -> m ()
 filterBreadcrumbs predicate = ambientUpdate getIsolationScope (ScopeUpdate.filterBreadcrumbs predicate)

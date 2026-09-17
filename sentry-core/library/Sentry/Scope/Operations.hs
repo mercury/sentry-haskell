@@ -151,6 +151,11 @@ module Sentry.Scope.Operations
     lookupIsolation,
     insertIsolation,
     removeIsolation,
+    acquireCurrent,
+    releaseCurrent,
+
+    -- ** Thread propagation
+    propagateScope,
 
     -- ** Context-first operations
     resolveMutationScope,
@@ -195,8 +200,8 @@ module Sentry.Scope.Operations
 where
 
 import Control.Applicative ((<|>))
-import Control.Exception (mask_)
-import Control.Monad (guard)
+import Control.Exception (bracket, mask_)
+import Control.Monad (guard, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
 import Data.Default (def)
@@ -399,6 +404,49 @@ insertCurrent = Context.insert currentScopeKey
 -- | Remove any active 'Current' scope from thread-local storage.
 removeCurrent :: Context -> Context
 removeCurrent = Context.delete currentScopeKey
+
+-- | Clone the current layer and return its parent together with the child.
+--
+-- Creates a fresh current scope when none exists locally, otherwise clones
+-- the existing one. The clone is installed on the thread-local 'Context'
+-- immediately; call 'releaseCurrent' with the returned pair to restore the
+-- parent.
+acquireCurrent :: IO (Maybe Scope, Scope)
+acquireCurrent = do
+  context <- ThreadLocal.getContext
+  scope <- case lookupCurrent context of
+    Nothing -> create Current
+    Just s -> clone s
+  let parentScope = lookupCurrent context
+  ThreadLocal.adjustContext (insertCurrent scope)
+  pure (parentScope, scope)
+
+-- | Restore only the current key in the latest context.
+--
+-- Reinstalls the parent captured by 'acquireCurrent', or removes the key
+-- entirely when there was no parent.
+releaseCurrent :: (Maybe Scope, Scope) -> IO ()
+releaseCurrent (parentScope, _) =
+  ThreadLocal.adjustContext \ctx ->
+    maybe (removeCurrent ctx) (`insertCurrent` ctx) parentScope
+
+-- | Clone the current scope layer around the given action, restoring the
+-- prior current scope once it completes.
+--
+-- This is 'bracket' over 'acquireCurrent' and 'releaseCurrent' with no
+-- exception annotation.
+withClonedCurrentScope :: IO a -> IO a
+withClonedCurrentScope action = bracket acquireCurrent releaseCurrent (const action)
+
+-- | Capture the calling thread's 'OpenTelemetry.Context.Context' now, and
+-- return a deferred action that, when run, attaches that captured context and
+-- then clones the current scope on top of it.
+propagateScope :: IO a -> IO (IO a)
+propagateScope action = do
+  context <- ThreadLocal.getContext
+  pure do
+    void (ThreadLocal.attachContext context)
+    withClonedCurrentScope action
 
 isolationScopeKey :: Key Scope
 isolationScopeKey = unsafePerformIO $ Context.newKey "isolation_scope"
@@ -638,22 +686,9 @@ clearBreadcrumbs scope = Update.apply scope Update.clearBreadcrumbs
 -- 2. Mutations no-op when their target scope is absent. General metadata
 --    targets isolation; transactions require current.
 
--- | Resolve the scope that general mutations target: 'Isolation' only.
---
--- This function returns 'Nothing' when isolation is absent.
---
--- The supplied 'Context' is immutable; this function never installs a scope.
-resolveMutationScope :: Context -> Maybe Scope
-resolveMutationScope = lookupIsolation
-
--- | Resolve the scope that breadcrumbs target: 'Isolation' only.
-resolveBreadcrumbScope :: Context -> Maybe Scope
-resolveBreadcrumbScope = lookupIsolation
-
--- | Apply a 'Update.ScopeUpdate' to the scope resolved by
--- 'resolveMutationScope' on the given 'Context'.
+-- | Apply a 'Update.ScopeUpdate' to the isolation scope on the given context.
 updateAt :: (MonadIO m) => Context -> Update.ScopeUpdate -> m ()
-updateAt ctx upd = for_ (resolveMutationScope ctx) \scope -> Update.apply scope upd
+updateAt ctx upd = for_ (lookupIsolation ctx) \scope -> Update.apply scope upd
 
 -- | Like 'readMergedScope', but reads the given 'Context' instead of the
 -- thread-local one.
@@ -682,240 +717,146 @@ lookupClientAt context = go [lookupCurrent context, lookupIsolation context, Jus
       client <- (.client) <$> readScopeRef scope
       maybe (go rest) (pure . Just) client
 
--- | This operation sets the isolation scope's level.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setLevel' to the isolation scope on the given context.
 setLevelAt :: (MonadIO m) => Context -> Patrol.Level -> m ()
 setLevelAt ctx level = updateAt ctx (Update.setLevel level)
 
--- | This operation removes the isolation scope's level assignment.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.unsetLevel' to the isolation scope on the given context.
 unsetLevelAt :: (MonadIO m) => Context -> m ()
 unsetLevelAt ctx = updateAt ctx Update.unsetLevel
 
--- | This operation replaces the isolation scope's user with a supplied record
--- or a user built from empty.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setUser' to the isolation scope on the given context.
 setUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
 setUserAt ctx u = updateAt ctx (Update.setUser u)
 
--- | This operation replaces the isolation scope's local user in the supplied
--- 'Context', or removes the assignment when given 'Nothing'.
---
--- It leaves the context unchanged when the isolation scope is absent.
+-- | Apply 'Update.setOptionalUser' to the isolation scope on the given context.
 setOptionalUserAt :: (MonadIO m) => Context -> Maybe User -> m ()
 setOptionalUserAt ctx user = updateAt ctx (Update.setOptionalUser user)
 
--- | This operation removes the isolation scope's local user, allowing a global
--- user to appear in captures.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.unsetUser' to the isolation scope on the given context.
 unsetUserAt :: (MonadIO m) => Context -> m ()
 unsetUserAt ctx = updateAt ctx Update.unsetUser
 
--- | This operation modifies the isolation scope's user, starting from an empty
--- user when none exists locally.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.modifyUser' to the isolation scope on the given context.
 modifyUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
 modifyUserAt ctx upd = updateAt ctx (Update.modifyUser upd)
 
--- | This operation replaces the isolation scope's fingerprint, including when
--- the supplied list is empty.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setFingerprint' to the isolation scope on the given
+-- context.
 setFingerprintAt :: (MonadIO m) => Context -> [Text] -> m ()
 setFingerprintAt ctx fp = updateAt ctx (Update.setFingerprint fp)
 
--- | This operation removes the isolation scope's fingerprint assignment.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.unsetFingerprint' to the isolation scope on the given
+-- context.
 unsetFingerprintAt :: (MonadIO m) => Context -> m ()
 unsetFingerprintAt ctx = updateAt ctx Update.unsetFingerprint
 
--- | This operation sets the transaction name on the current scope.
---
--- The target is the current scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setTransaction' to the current scope on the given context.
 setTransactionAt :: (MonadIO m) => Context -> Text -> m ()
 setTransactionAt ctx t = for_ (lookupCurrent ctx) \scope -> setTransaction scope t
 
--- | This operation removes the current scope's transaction name assignment.
---
--- The target is the current scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.unsetTransaction' to the current scope on the given
+-- context.
 unsetTransactionAt :: (MonadIO m) => Context -> m ()
 unsetTransactionAt ctx = for_ (lookupCurrent ctx) unsetTransaction
 
--- | This operation sets a tag on the isolation scope, replacing any local
--- value at that key.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setTag' to the isolation scope on the given context.
 setTagAt :: (MonadIO m) => Context -> Text -> Text -> m ()
 setTagAt ctx k v = updateAt ctx (Update.setTag k v)
 
--- | This operation removes a tag from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.removeTag' to the isolation scope on the given context.
 removeTagAt :: (MonadIO m) => Context -> Text -> m ()
 removeTagAt ctx k = updateAt ctx (Update.removeTag k)
 
--- | This operation removes all tags from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.clearTags' to the isolation scope on the given context.
 clearTagsAt :: (MonadIO m) => Context -> m ()
 clearTagsAt ctx = updateAt ctx Update.clearTags
 
--- | This operation sets an extra value on the isolation scope, replacing any
--- local value at that key.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setExtra' to the isolation scope on the given context.
 setExtraAt :: (MonadIO m) => Context -> Text -> Aeson.Value -> m ()
 setExtraAt ctx k v = updateAt ctx (Update.setExtra k v)
 
--- | This operation removes an extra value from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.removeExtra' to the isolation scope on the given context.
 removeExtraAt :: (MonadIO m) => Context -> Text -> m ()
 removeExtraAt ctx k = updateAt ctx (Update.removeExtra k)
 
--- | This operation removes all extra values from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.clearExtras' to the isolation scope on the given context.
 clearExtrasAt :: (MonadIO m) => Context -> m ()
 clearExtrasAt ctx = updateAt ctx Update.clearExtras
 
--- | This operation replaces the entire context payload at the given name on
--- the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setContext' to the isolation scope on the given context.
 setContextAt :: (MonadIO m) => Context -> Text -> Patrol.Context -> m ()
 setContextAt ctx k v = updateAt ctx (Update.setContext k v)
 
--- | This operation removes the named context from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.removeContext' to the isolation scope on the given
+-- context.
 removeContextAt :: (MonadIO m) => Context -> Text -> m ()
 removeContextAt ctx k = updateAt ctx (Update.removeContext k)
 
--- | This operation removes all contexts from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.clearContexts' to the isolation scope on the given
+-- context.
 clearContextsAt :: (MonadIO m) => Context -> m ()
 clearContextsAt ctx = updateAt ctx Update.clearContexts
 
--- | This operation replaces the isolation scope's entire runtime context with
--- a runtime payload.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setRuntimeContext' to the isolation scope on the given
+-- context.
 setRuntimeContextAt :: (MonadIO m, Witch.From a RuntimeContextUpdate) => Context -> a -> m ()
 setRuntimeContextAt ctx rc = updateAt ctx (Update.setRuntimeContext rc)
 
--- | This operation replaces the named context on the isolation scope with a
--- custom payload built from the supplied fields.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setContextValue' to the isolation scope on the given
+-- context.
 setContextValuesAt :: (MonadIO m) => Context -> Text -> [(Text, Aeson.Value)] -> m ()
 setContextValuesAt ctx k kvs = updateAt ctx (Update.setContextValues k kvs)
 
--- | This operation sets a field in a custom context on the isolation scope,
--- creating the context when absent. Typed contexts remain unchanged.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setContextValue' to the isolation scope on the given
+-- context.
 setContextValueAt :: (MonadIO m) => Context -> Text -> Text -> Aeson.Value -> m ()
 setContextValueAt ctx k key value = updateAt ctx (Update.setContextValue k key value)
 
--- | This operation removes a field from a local custom context on the
--- isolation scope. Absent and typed contexts remain unchanged; removing the
--- last field retains an empty context.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.removeContextValue' to the isolation scope on the given
+-- context.
 removeContextValueAt :: (MonadIO m) => Context -> Text -> Text -> m ()
 removeContextValueAt ctx k key = updateAt ctx (Update.removeContextValue k key)
 
--- | This operation transforms a custom context's fields on the isolation
--- scope, starting from an empty map when absent. Typed contexts remain
--- unchanged.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.modifyContextValues' to the isolation scope on the given
+-- context.
 modifyContextValuesAt :: (MonadIO m) => Context -> Text -> (Map Text Aeson.Value -> Map Text Aeson.Value) -> m ()
 modifyContextValuesAt ctx k f = updateAt ctx (Update.modifyContextValues k f)
 
--- | This operation replaces the isolation scope's event processor.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Assign an event processor to the isolation scope on the given context,
+-- replacing an event processor if one already existed. 
 setEventProcessorAt :: (MonadIO m) => Context -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
 setEventProcessorAt ctx f = updateAt ctx (Update.setEventProcessor f)
 
--- | This operation appends an event processor to the isolation scope's
--- processor chain.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Add an event processor to the isolation scope on the given context.
 addEventProcessorAt :: (MonadIO m) => Context -> (CapturedEvent -> Maybe Patrol.Event) -> m ()
 addEventProcessorAt ctx g = updateAt ctx (Update.addEventProcessor g)
 
--- | This operation restores the isolation scope's event processor to the
--- identity processor.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Remove the event processor from the isolation scope on the given context.
 unsetEventProcessorAt :: (MonadIO m) => Context -> m ()
 unsetEventProcessorAt ctx = updateAt ctx Update.unsetEventProcessor
 
--- | Like 'addBreadcrumb', but takes the 'Context' explicitly instead of
--- reading the thread-local one.
---
--- Targets 'resolveBreadcrumbScope' (isolation only) — no-ops when no
--- isolation scope is active on the given 'Context'.
+-- | Add a single breadcrumb to the isolation scope on the given context.
 addBreadcrumbAt :: (MonadIO m, Witch.From a Sentry.Breadcrumb.BreadcrumbUpdate) => Context -> a -> m ()
 addBreadcrumbAt ctx upd = do
   let !crumb = Sentry.Update.run upd Sentry.Breadcrumb.empty
   client <- resolveClientAt ctx
-  for_ (resolveBreadcrumbScope ctx) \scope ->
+  for_ (lookupIsolation ctx) \scope ->
     addBreadcrumbToScope client.options scope crumb
 
--- | This operation adds breadcrumbs in order to the isolation scope in the
--- supplied 'Context'. It leaves the context unchanged when isolation is absent.
+-- | Add a list of breadcrumbs to the isolation scope on the given context.
 addBreadcrumbsAt :: (MonadIO m) => Context -> [Patrol.Breadcrumb] -> m ()
 addBreadcrumbsAt ctx crumbs = do
   client <- resolveClientAt ctx
-  for_ (resolveBreadcrumbScope ctx) \scope ->
+  for_ (lookupIsolation ctx) \scope ->
     for_ crumbs (addBreadcrumbToScope client.options scope)
 
--- | This operation removes all breadcrumbs from the isolation scope.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Remove all breadcrumbs from the isolation scope on the given context.
 clearBreadcrumbsAt :: (MonadIO m) => Context -> m ()
 clearBreadcrumbsAt ctx = for_ (resolveBreadcrumbScope ctx) \scope -> Update.apply scope Update.clearBreadcrumbs
 
--- | Enforce 'ClientOptions.beforeBreadcrumb' and trim to
--- 'ClientOptions.maxBreadcrumbs', then append to the scope.
+-- | Add a breadcrumb to the given scope, applying the 'beforeBreadcrumb' hook
+-- and trim the list of breadcrumbs if it exceeds 'maxBreadcrumbs'.
 addBreadcrumbToScope :: (MonadIO m) => ClientOptions -> Scope -> Patrol.Breadcrumb -> m ()
 addBreadcrumbToScope opts scope crumb0 = liftIO do
   now <- getCurrentTime
@@ -929,230 +870,236 @@ addBreadcrumbToScope opts scope crumb0 = liftIO do
     Just !crumb3 ->
       Update.apply scope (Update.appendBreadcrumb crumb3 <> Update.trimBreadcrumbs maxN)
 
--- | Replace the local typed context. See 'Update.setOsContext'.
+-- | Apply 'Update.setOsContext' to the given scope.
 setOsContext :: (MonadIO m, Witch.From a OsContextUpdate) => Scope -> a -> m ()
 setOsContext scope upd = Update.apply scope (Update.setOsContext upd)
 
--- | This operation replaces the isolation scope's entire os context with an
--- operating system payload.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setOsContext' to the isolation scope on the given context.
 setOsContextAt :: (MonadIO m, Witch.From a OsContextUpdate) => Context -> a -> m ()
 setOsContextAt ctx upd = updateAt ctx (Update.setOsContext upd)
 
--- | Replace the local typed context. See 'Update.setAppContext'.
+-- | Apply 'Update.setAppContext' to the given scope.
 setAppContext :: (MonadIO m, Witch.From a AppContextUpdate) => Scope -> a -> m ()
 setAppContext scope upd = Update.apply scope (Update.setAppContext upd)
 
--- | This operation replaces the isolation scope's entire app context with an
--- application payload.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.setAppContext' to the isolation scope on the given context.
 setAppContextAt :: (MonadIO m, Witch.From a AppContextUpdate) => Context -> a -> m ()
 setAppContextAt ctx upd = updateAt ctx (Update.setAppContext upd)
 
--- | This operation modifies the supplied scope's local user only when present.
+-- | Apply 'Update.modifyExistingUser' to the given scope.
 modifyExistingUser :: (MonadIO m, Witch.From a UserUpdate) => Scope -> a -> m ()
 modifyExistingUser scope upd = Update.apply scope (Update.modifyExistingUser upd)
 
--- | This operation modifies the isolation scope's user only when one exists
--- locally.
---
--- The target is the isolation scope in the supplied 'Context'. If that scope
--- is absent, this operation leaves the context unchanged.
+-- | Apply 'Update.modifyExistingUser' to the isolation scope on the given
+-- context.
 modifyExistingUserAt :: (MonadIO m, Witch.From a UserUpdate) => Context -> a -> m ()
 modifyExistingUserAt ctx upd = updateAt ctx (Update.modifyExistingUser upd)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalLevel' to the given scope.
 setOptionalLevel :: (MonadIO m) => Scope -> Maybe Patrol.Level -> m ()
 setOptionalLevel scope value = Update.apply scope (Update.setOptionalLevel value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalLevel' to the isolation scope on the given context.
 setOptionalLevelAt :: (MonadIO m) => Context -> Maybe Patrol.Level -> m ()
 setOptionalLevelAt ctx value = updateAt ctx (Update.setOptionalLevel value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalFingerprint' to the given scope.
 setOptionalFingerprint :: (MonadIO m) => Scope -> Maybe [Text] -> m ()
 setOptionalFingerprint scope value = Update.apply scope (Update.setOptionalFingerprint value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalFingerprint' to the isolation scope on the given
+-- context.
 setOptionalFingerprintAt :: (MonadIO m) => Context -> Maybe [Text] -> m ()
 setOptionalFingerprintAt ctx value = updateAt ctx (Update.setOptionalFingerprint value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalTransaction' to the given scope.
 setOptionalTransaction :: (MonadIO m) => Scope -> Maybe Text -> m ()
 setOptionalTransaction scope value = Update.apply scope (Update.setOptionalTransaction value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalTransaction' to the isolation scope on the given
+-- context.
 setOptionalTransactionAt :: (MonadIO m) => Context -> Maybe Text -> m ()
 setOptionalTransactionAt ctx value = for_ (lookupCurrent ctx) \scope -> setOptionalTransaction scope value
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalTag' to the given scope.
 setOptionalTag :: (MonadIO m) => Scope -> Text -> Maybe Text -> m ()
 setOptionalTag scope key value = Update.apply scope (Update.setOptionalTag key value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalTag' to the isolation scope on the given context.
 setOptionalTagAt :: (MonadIO m) => Context -> Text -> Maybe Text -> m ()
 setOptionalTagAt ctx key value = updateAt ctx (Update.setOptionalTag key value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalExtra' to the given scope.
 setOptionalExtra :: (MonadIO m) => Scope -> Text -> Maybe Aeson.Value -> m ()
 setOptionalExtra scope key value = Update.apply scope (Update.setOptionalExtra key value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalExtra' to the isolation scope on the given
+-- context.
 setOptionalExtraAt :: (MonadIO m) => Context -> Text -> Maybe Aeson.Value -> m ()
 setOptionalExtraAt ctx key value = updateAt ctx (Update.setOptionalExtra key value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalContext' to the given scope.
 setOptionalContext :: (MonadIO m) => Scope -> Text -> Maybe Patrol.Context -> m ()
 setOptionalContext scope key value = Update.apply scope (Update.setOptionalContext key value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalContext' to the isolation scope on the given
+-- context.
 setOptionalContextAt :: (MonadIO m) => Context -> Text -> Maybe Patrol.Context -> m ()
 setOptionalContextAt ctx key value = updateAt ctx (Update.setOptionalContext key value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalRuntimeContext' to the given scope.
 setOptionalRuntimeContext :: (MonadIO m) => Scope -> Maybe Sentry.RuntimeContext.RuntimeContext -> m ()
 setOptionalRuntimeContext scope value = Update.apply scope (Update.setOptionalRuntimeContext value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalRuntimeContext' to the isolation scope on the
+-- given context.
 setOptionalRuntimeContextAt :: (MonadIO m) => Context -> Maybe Sentry.RuntimeContext.RuntimeContext -> m ()
 setOptionalRuntimeContextAt ctx value = updateAt ctx (Update.setOptionalRuntimeContext value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalContextValues' to the given scope.
 setOptionalContextValues :: (MonadIO m) => Scope -> Text -> Maybe [(Text, Aeson.Value)] -> m ()
 setOptionalContextValues scope key value = Update.apply scope (Update.setOptionalContextValues key value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalContextValues' to the isolation scope on the
+-- given context.
 setOptionalContextValuesAt :: (MonadIO m) => Context -> Text -> Maybe [(Text, Aeson.Value)] -> m ()
 setOptionalContextValuesAt ctx key value = updateAt ctx (Update.setOptionalContextValues key value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalContextValue' to the given scope.
 setOptionalContextValue :: (MonadIO m) => Scope -> Text -> Text -> Maybe Aeson.Value -> m ()
 setOptionalContextValue scope key fieldKey value = Update.apply scope (Update.setOptionalContextValue key fieldKey value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalContextValue' to the isolation scope on the given
+-- context.
 setOptionalContextValueAt :: (MonadIO m) => Context -> Text -> Text -> Maybe Aeson.Value -> m ()
 setOptionalContextValueAt ctx key fieldKey value = updateAt ctx (Update.setOptionalContextValue key fieldKey value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalOsContext' to the given scope.
 setOptionalOsContext :: (MonadIO m) => Scope -> Maybe Sentry.OsContext.OsContext -> m ()
 setOptionalOsContext scope value = Update.apply scope (Update.setOptionalOsContext value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalOsContext' to the isolation scope on the given
+-- context.
 setOptionalOsContextAt :: (MonadIO m) => Context -> Maybe Sentry.OsContext.OsContext -> m ()
 setOptionalOsContextAt ctx value = updateAt ctx (Update.setOptionalOsContext value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalAppContext' to the given scope.
 setOptionalAppContext :: (MonadIO m) => Scope -> Maybe Sentry.AppContext.AppContext -> m ()
 setOptionalAppContext scope value = Update.apply scope (Update.setOptionalAppContext value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalAppContext' to the isolation scope on the given
+-- context.
 setOptionalAppContextAt :: (MonadIO m) => Context -> Maybe Sentry.AppContext.AppContext -> m ()
 setOptionalAppContextAt ctx value = updateAt ctx (Update.setOptionalAppContext value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalBrowserContext' to the given scope.
 setOptionalBrowserContext :: (MonadIO m) => Scope -> Maybe Sentry.BrowserContext.BrowserContext -> m ()
 setOptionalBrowserContext scope value = Update.apply scope (Update.setOptionalBrowserContext value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalBrowserContext' to the isolation scope on the
+-- given context.
 setOptionalBrowserContextAt :: (MonadIO m) => Context -> Maybe Sentry.BrowserContext.BrowserContext -> m ()
 setOptionalBrowserContextAt ctx value = updateAt ctx (Update.setOptionalBrowserContext value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalDeviceContext' to the given scope.
 setOptionalDeviceContext :: (MonadIO m) => Scope -> Maybe Sentry.DeviceContext.DeviceContext -> m ()
 setOptionalDeviceContext scope value = Update.apply scope (Update.setOptionalDeviceContext value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalDeviceContext' to the isolation scope on the given
+-- context.
 setOptionalDeviceContextAt :: (MonadIO m) => Context -> Maybe Sentry.DeviceContext.DeviceContext -> m ()
 setOptionalDeviceContextAt ctx value = updateAt ctx (Update.setOptionalDeviceContext value)
 
--- | Replace the assignment, or remove it when given 'Nothing'.
+-- | Apply 'Update.setOptionalTraceContext' to the given scope.
 setOptionalTraceContext :: (MonadIO m) => Scope -> Maybe Sentry.TraceContext.TraceContext -> m ()
 setOptionalTraceContext scope value = Update.apply scope (Update.setOptionalTraceContext value)
 
--- | Replace or remove the assignment on an existing target in this context.
+-- | Apply 'Update.setOptionalTraceContext' to the isolation scope on the given
+-- context.
 setOptionalTraceContextAt :: (MonadIO m) => Context -> Maybe Sentry.TraceContext.TraceContext -> m ()
 setOptionalTraceContextAt ctx value = updateAt ctx (Update.setOptionalTraceContext value)
 
--- | Apply 'Update.alterAppContext' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterAppContext' to the given scope.
 alterAppContext :: (MonadIO m) => Scope -> (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> m ()
 alterAppContext scope f = Update.apply scope (Update.alterAppContext f)
 
--- | Apply 'Update.alterAppContext' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterAppContext' to the isolation scope on the given context.
 alterAppContextAt :: (MonadIO m) => Context -> (Maybe Sentry.AppContext.AppContext -> Maybe Sentry.AppContext.AppContext) -> m ()
 alterAppContextAt ctx f = updateAt ctx (Update.alterAppContext f)
 
--- | Apply 'Update.alterOsContext' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterOsContext' to the given scope.
 alterOsContext :: (MonadIO m) => Scope -> (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> m ()
 alterOsContext scope f = Update.apply scope (Update.alterOsContext f)
 
--- | Apply 'Update.alterOsContext' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterOsContext' to the isolation scope on the given context.
 alterOsContextAt :: (MonadIO m) => Context -> (Maybe Sentry.OsContext.OsContext -> Maybe Sentry.OsContext.OsContext) -> m ()
 alterOsContextAt ctx f = updateAt ctx (Update.alterOsContext f)
 
--- | Apply 'Update.alterRuntimeContext' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterRuntimeContext' to the given scope.
 alterRuntimeContext :: (MonadIO m) => Scope -> (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> m ()
 alterRuntimeContext scope f = Update.apply scope (Update.alterRuntimeContext f)
 
--- | Apply 'Update.alterRuntimeContext' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterRuntimeContext' to the isolation scope on the given
+-- context.
 alterRuntimeContextAt :: (MonadIO m) => Context -> (Maybe Sentry.RuntimeContext.RuntimeContext -> Maybe Sentry.RuntimeContext.RuntimeContext) -> m ()
 alterRuntimeContextAt ctx f = updateAt ctx (Update.alterRuntimeContext f)
 
--- | Apply 'Update.alterBrowserContext' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterBrowserContext' to the given scope.
 alterBrowserContext :: (MonadIO m) => Scope -> (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> m ()
 alterBrowserContext scope f = Update.apply scope (Update.alterBrowserContext f)
 
--- | Apply 'Update.alterBrowserContext' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterBrowserContext' to the isolation scope on the given context.
 alterBrowserContextAt :: (MonadIO m) => Context -> (Maybe Sentry.BrowserContext.BrowserContext -> Maybe Sentry.BrowserContext.BrowserContext) -> m ()
 alterBrowserContextAt ctx f = updateAt ctx (Update.alterBrowserContext f)
 
--- | Apply 'Update.alterDeviceContext' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterDeviceContext' to the given scope.
 alterDeviceContext :: (MonadIO m) => Scope -> (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> m ()
 alterDeviceContext scope f = Update.apply scope (Update.alterDeviceContext f)
 
--- | Apply 'Update.alterDeviceContext' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterDeviceContext' to the isolation scope on the given
+-- context.
 alterDeviceContextAt :: (MonadIO m) => Context -> (Maybe Sentry.DeviceContext.DeviceContext -> Maybe Sentry.DeviceContext.DeviceContext) -> m ()
 alterDeviceContextAt ctx f = updateAt ctx (Update.alterDeviceContext f)
 
--- | Apply 'Update.alterTraceContext' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterTraceContext' to the given scope.
 alterTraceContext :: (MonadIO m) => Scope -> (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> m ()
 alterTraceContext scope f = Update.apply scope (Update.alterTraceContext f)
 
--- | Apply 'Update.alterTraceContext' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterTraceContext' to the isolation scope on the given
+-- context.
 alterTraceContextAt :: (MonadIO m) => Context -> (Maybe Sentry.TraceContext.TraceContext -> Maybe Sentry.TraceContext.TraceContext) -> m ()
 alterTraceContextAt ctx f = updateAt ctx (Update.alterTraceContext f)
 
--- | Apply 'Update.modifyExistingContextValue' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.modifyExistingContextValue' to given scope.
 modifyExistingContextValue :: (MonadIO m) => Scope -> Text -> Text -> (Aeson.Value -> Aeson.Value) -> m ()
 modifyExistingContextValue scope key field f = Update.apply scope (Update.modifyExistingContextValue key field f)
 
--- | Apply 'Update.modifyExistingContextValue' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.modifyExistingContextValue' to the isolation scope on the
+-- given context.
 modifyExistingContextValueAt :: (MonadIO m) => Context -> Text -> Text -> (Aeson.Value -> Aeson.Value) -> m ()
 modifyExistingContextValueAt ctx key field f = updateAt ctx (Update.modifyExistingContextValue key field f)
 
--- | Apply 'Update.alterContextValue' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.alterContextValue' to the given scope.
 alterContextValue :: (MonadIO m) => Scope -> Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> m ()
 alterContextValue scope key field f = Update.apply scope (Update.alterContextValue key field f)
 
--- | Apply 'Update.alterContextValue' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.alterContextValue' to the isolation scope on the given
+-- context.
 alterContextValueAt :: (MonadIO m) => Context -> Text -> Text -> (Maybe Aeson.Value -> Maybe Aeson.Value) -> m ()
 alterContextValueAt ctx key field f = updateAt ctx (Update.alterContextValue key field f)
 
--- | Apply 'Update.filterFingerprint' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.filterFingerprint' to given scope.
 filterFingerprint :: (MonadIO m) => Scope -> (Text -> Bool) -> m ()
 filterFingerprint scope predicate = Update.apply scope (Update.filterFingerprint predicate)
 
--- | Apply 'Update.filterFingerprint' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.filterFingerprint' to the isolation scope on the given context.
 filterFingerprintAt :: (MonadIO m) => Context -> (Text -> Bool) -> m ()
 filterFingerprintAt ctx predicate = updateAt ctx (Update.filterFingerprint predicate)
 
--- | Apply 'Update.filterBreadcrumbs' to the explicit scope, without requiring initialization.
+-- | Apply 'Update.filterBreadcrumbs' to the given scope.
 filterBreadcrumbs :: (MonadIO m) => Scope -> (Patrol.Breadcrumb -> Bool) -> m ()
 filterBreadcrumbs scope predicate = Update.apply scope (Update.filterBreadcrumbs predicate)
 
--- | Apply 'Update.filterBreadcrumbs' to isolation in the context; absent targets are unchanged.
+-- | Apply 'Update.filterBreadcrumbs' to the isolation scope on the given context.
 filterBreadcrumbsAt :: (MonadIO m) => Context -> (Patrol.Breadcrumb -> Bool) -> m ()
 filterBreadcrumbsAt ctx predicate = updateAt ctx (Update.filterBreadcrumbs predicate)

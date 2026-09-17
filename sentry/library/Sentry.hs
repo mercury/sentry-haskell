@@ -26,6 +26,9 @@ module Sentry
 
     -- * Everything else, unchanged, from "Sentry.Core"
     module Sentry.Core,
+
+    -- * Scope-propagating spawn helpers
+    module Sentry.Async,
   )
 where
 
@@ -33,6 +36,7 @@ import Control.Applicative ((<|>))
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Default (def)
+import Sentry.Async
 import Sentry.Core hiding (acquireClient, init, withScopedClient, withSentry)
 import Sentry.Core qualified as Core
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor

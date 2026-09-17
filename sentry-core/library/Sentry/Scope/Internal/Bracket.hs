@@ -1,5 +1,4 @@
 -- | Internal scope acquisition and exception-annotation plumbing.
--- Call acquisition and release under the masking supplied by a bracket.
 module Sentry.Scope.Internal.Bracket
   ( acquireCurrent,
     acquireIsolation,
@@ -15,25 +14,8 @@ import Data.Maybe (isJust)
 import Data.Typeable (cast)
 import OpenTelemetry.Context.ThreadLocal qualified as ThreadLocal
 import Sentry.Client (Client)
-import Sentry.Scope.Operations (Scope, ScopeData)
+import Sentry.Scope.Operations (Scope, ScopeData, acquireCurrent, releaseCurrent)
 import Sentry.Scope.Operations qualified as Scope
-
--- | Clone the current layer and return its parent together with the child.
-acquireCurrent :: IO (Maybe Scope, Scope)
-acquireCurrent = do
-  context <- ThreadLocal.getContext
-  scope <- case Scope.lookupCurrent context of
-    Nothing -> Scope.create Scope.Current
-    Just s -> Scope.clone s
-  let parentScope = Scope.lookupCurrent context
-  ThreadLocal.adjustContext (Scope.insertCurrent scope)
-  pure (parentScope, scope)
-
--- | Restore only the current key in the latest context.
-releaseCurrent :: (Maybe Scope, Scope) -> IO ()
-releaseCurrent (parentScope, _) =
-  ThreadLocal.adjustContext \ctx ->
-    maybe (Scope.removeCurrent ctx) (`Scope.insertCurrent` ctx) parentScope
 
 -- | Clone both layers, optionally prepare a client binding, then install once.
 acquireIsolation :: Maybe Client -> IO (Maybe Scope, Maybe Scope, Scope)

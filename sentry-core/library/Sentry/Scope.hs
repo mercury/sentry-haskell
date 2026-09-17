@@ -39,6 +39,7 @@ module Sentry.Scope
     removeIsolation,
     resolveMutationScope,
     resolveBreadcrumbScope,
+    propagateScope,
 
     -- * Global scope
     getGlobal,
@@ -164,5 +165,5 @@ module Sentry.Scope
   )
 where
 
-import Sentry.Scope.Operations (Scope, ScopeData (..), ScopeType (..), applyToEvent, bindClient, clone, configureGlobal, create, getCurrentScope, getGlobal, getIsolationScope, insertCurrent, insertIsolation, lookupClient, lookupClientAt, lookupCurrent, lookupIsolation, readMergedScope, readScopeAt, readScopeRef, removeCurrent, removeIsolation, resolveBreadcrumbScope, resolveClient, resolveClientAt, resolveMutationScope)
+import Sentry.Scope.Operations (Scope, ScopeData (..), ScopeType (..), applyToEvent, bindClient, clone, configureGlobal, create, getCurrentScope, getGlobal, getIsolationScope, insertCurrent, insertIsolation, lookupClient, lookupClientAt, lookupCurrent, lookupIsolation, propagateScope, readMergedScope, readScopeAt, readScopeRef, removeCurrent, removeIsolation, resolveBreadcrumbScope, resolveClient, resolveClientAt, resolveMutationScope)
 import Sentry.Scope.Update hiding (apply)
