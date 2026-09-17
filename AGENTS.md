@@ -309,24 +309,30 @@ Asynchronous envelope delivery using dedicated worker threads (mirrors sentry-ru
 
 ### Transport Rate Limiter
 
-**File**: `sentry/library/Sentry/Transport/Executor/RateLimiter.hs`
+Rate limiting is split between protocol interpretation and bookkeeping.
 
-Server-side rate limit enforcement per Sentry protocol (compliant with official spec):
+**`sentry/library/Sentry/Transport/HTTP/Delivery.hs`** parses what an HTTP
+response announced into `Delivery.RateLimit` values:
 
-**Supported headers:**
-- `X-Sentry-Rate-Limits` - Per-category rate limits
-- `Retry-After` - Global rate limit (numeric seconds or HTTP-date)
-- HTTP 429 - Defaults to 60-second rate limit
+- `X-Sentry-Rate-Limits` - per-category deadlines, via `sentryHeader`
+- `Retry-After` - an all-category deadline, via `retryAfter` (numeric seconds
+  or HTTP-date)
+- HTTP 429 - a sixty-second all-category fallback
 
-**Rate limit categories:**
-- `Error`, `Session`, `Transaction`, `Attachment`, `LogItem`, `Any` (global)
+`interpret` applies the SDK's policy to a status and headers; `interpretNow`
+dates the deadlines from the response, which a relative `Retry-After`
+requires.
 
-**Key operations:**
-- `updateFrom429` - Handle HTTP 429 responses
-- `updateFromRetryAfter` - Parse `Retry-After` headers
-- `updateFromSentryHeader` - Parse `X-Sentry-Rate-Limits`
-- `isEnabled` - Check if category can send now
-- `filterEnvelope` - Remove rate-limited items from payload
+**`sentry/library/Sentry/Transport/Executor/RateLimiter.hs`** holds the
+deadlines and answers questions about them, with no protocol knowledge:
+
+- `apply` - merge announced deadlines, never shortening an existing one
+- `isEnabled` / `isDisabledUntil` / `isDisabledFor` - check a category
+- `filterEnvelope` - drop rate-limited items from a payload
+
+Categories are patrol's `DataCategory`, the same vocabulary used for
+client-report discard accounting. A restriction either names a category or
+covers all of them (`Delivery.RateLimitScope`).
 
 **Threading model:**
 - Pure functional updates (immutable `RateLimiter` value)
@@ -347,7 +353,8 @@ Server-side rate limit enforcement per Sentry protocol (compliant with official 
 | `sentry-core/library/Sentry/Scope/Update.hs` | Composable atomic scope updates (`ScopeUpdate`) |
 | `sentry/library/Sentry/Transport/Encoding.hs` | Envelope serialization and compression (`EncodedBody`) |
 | `sentry/library/Sentry/Transport/Executor/Async.hs` | Async executor with worker threads |
-| `sentry/library/Sentry/Transport/Executor/RateLimiter.hs` | Rate limiting implementation |
+| `sentry/library/Sentry/Transport/Executor/RateLimiter.hs` | Rate-limit deadline bookkeeping |
+| `sentry/library/Sentry/Transport/HTTP/Delivery.hs` | HTTP results and their delivery policy |
 | `cabal.project` | Workspace package list |
 | `flake.nix` | Development environment definition |
 | `justfile` | Common build/test commands |

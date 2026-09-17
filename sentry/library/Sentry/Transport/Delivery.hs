@@ -1,51 +1,110 @@
--- | Transport-agnostic result of an envelope delivery attempt.
+-- | What the SDK does about an envelope delivery attempt.
 --
--- Both the HTTP\/1.1 and HTTP\/2 transport backends produce an 'Outcome' from
--- their send operations, allowing the rate limiter and client-report logic to
--- be shared across backends without coupling them to a specific HTTP library.
+-- A sender translates whatever its protocol reported into these types, and the
+-- executor acts on them; "Sentry.Transport.HTTP.Delivery" translates between
+-- HTTP responses and these types.
 --
 -- Designed to be imported qualified:
 --
+-- > import Sentry.ClientReport qualified as ClientReport
 -- > import Sentry.Transport.Delivery qualified as Delivery
 -- >
--- > foo :: … -> Delivery.Outcome
--- > reason = Delivery.discardReason outcome
+-- > sender envelope = do
+-- >   ok <- mySend envelope
+-- >   pure $ if ok then Delivery.accepted else Delivery.rejected ClientReport.NetworkError
 module Sentry.Transport.Delivery
-  ( -- * Delivery outcome
-    Outcome (..),
-
-    -- * Interpreting outcomes
+  ( Outcome (..),
+    Disposition (..),
+    DiscardAccounting (..),
+    RateLimit (..),
+    RateLimitScope (..),
     discardReason,
-  )
-where
+    recordOutcome,
 
+    -- * Smart constructors
+    accepted,
+    acceptedWith,
+    rejected,
+    throttled,
+    allCategoriesUntil,
+    categoryUntil,
+  ) where
+
+import Data.Foldable (for_)
 import Data.Kind (Type)
-import Data.Text (Text)
-import Network.HTTP.Types (ResponseHeaders, Status, statusCode, tooManyRequests429)
-import Sentry.ClientReport (DiscardReason)
+import Data.Time.Clock (UTCTime)
+import Patrol qualified
+import Patrol.Type.DataCategory (DataCategory)
+import Sentry.ClientReport (ClientReports, DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
 
--- | Transport-agnostic outcome of an envelope send attempt.
+-- | Delivery disposition and explicit limits learned during the attempt.
 type Outcome :: Type
-data Outcome
-  = -- | Network or transport-level failure.
-    NetworkFailure Text
-  | -- | A response was received.
-    Responded Status ResponseHeaders
-  deriving stock (Show)
+data Outcome = Outcome {disposition :: Disposition, rateLimits :: [RateLimit]}
+  deriving stock (Eq, Show)
 
--- | Map an 'Outcome' to the 'DiscardReason' that should be recorded for the
--- envelope's items, if any.
---
--- * A successful send (2xx) records nothing.
--- * HTTP 429 records nothing: upstream accounts for the rejected items.
---   Discard without retrying; later local suppression is ratelimit_backoff.
--- * Any other non-2xx status is a 'ClientReport.SendError'.
--- * A network failure is a 'ClientReport.NetworkError'.
+-- | Acceptance transfers responsibility under the sender's own contract.
+-- 
+-- It does not guarantee eventual storage by Sentry.
+type Disposition :: Type
+data Disposition = Accepted | Rejected DiscardAccounting
+  deriving stock (Eq, Show)
+
+-- | Whether the SDK should record a rejection in its client reports.
+type DiscardAccounting :: Type
+data DiscardAccounting = RecordLocally DiscardReason | AccountedUpstream
+  deriving stock (Eq, Show)
+
+-- | An absolute restriction deadline for a category or all categories.
+type RateLimit :: Type
+data RateLimit = RateLimit {scope :: RateLimitScope, expiresAt :: UTCTime}
+  deriving stock (Eq, Show)
+
+-- | The scope of an explicit delivery restriction.
+type RateLimitScope :: Type
+data RateLimitScope = AllCategories | Category DataCategory
+  deriving stock (Eq, Show)
+
+-- | The reason an attempt was rejected.
 discardReason :: Outcome -> Maybe DiscardReason
-discardReason = \case
-  Responded status _
-    | status == tooManyRequests429 -> Nothing
-    | let sc = statusCode status in 200 <= sc && sc < 300 -> Nothing
-    | otherwise -> Just ClientReport.SendError
-  NetworkFailure _ -> Just ClientReport.NetworkError
+discardReason outcome = case outcome.disposition of
+  Accepted -> Nothing
+  Rejected AccountedUpstream -> Nothing
+  Rejected (RecordLocally reason) -> Just reason
+
+-- | Record a rejected attempt against the envelope's items, once per attempt.
+--
+-- Client-report items carry no data category, so 'ClientReport.recordEnvelopeDrop'
+-- skips them and a failed report never reports itself.
+recordOutcome :: Maybe ClientReports -> Patrol.Envelope -> Outcome -> IO ()
+recordOutcome reports envelope outcome =
+  for_ reports \cr -> for_ (discardReason outcome) \reason ->
+    ClientReport.recordEnvelopeDrop cr reason envelope
+
+-- | An attempt the sender took responsibility for, with no rate limits
+-- announced.
+accepted :: Outcome
+accepted = acceptedWith []
+
+-- | An accepted attempt that also announced rate limits, such as a successful
+-- response that still carries @X-Sentry-Rate-Limits@.
+acceptedWith :: [RateLimit] -> Outcome
+acceptedWith rateLimits = Outcome Accepted rateLimits
+
+-- | A rejected attempt this SDK should account for locally, with no rate
+-- limits announced.
+rejected :: DiscardReason -> Outcome
+rejected reason = Outcome (Rejected (RecordLocally reason)) []
+
+-- | A rejected attempt Sentry has already accounted for, such as a 429
+-- response, carrying the rate limits it announced.
+throttled :: [RateLimit] -> Outcome
+throttled rateLimits = Outcome (Rejected AccountedUpstream) rateLimits
+
+-- | A restriction covering every category, expiring at the given instant.
+allCategoriesUntil :: UTCTime -> RateLimit
+allCategoriesUntil expiresAt = RateLimit AllCategories expiresAt
+
+-- | A restriction covering a single category, expiring at the given instant.
+categoryUntil :: DataCategory -> UTCTime -> RateLimit
+categoryUntil category expiresAt = RateLimit (Category category) expiresAt

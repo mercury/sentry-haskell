@@ -14,6 +14,7 @@ import Sentry.Init qualified as Init
 import Sentry.Scope.Monad qualified as Scoped
 import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async qualified as Executor
 import Sentry.Transport.HTTP.Sync qualified as Sync
 import System.Timeout (timeout)
@@ -27,9 +28,9 @@ spec_ownedCapture =
         let dsn = Sink.dsnFor sink "1"
         manager <- Http.newManager $ mkManagerSettings (TLSSettingsSimple True False False def) Nothing
         sync <- Sync.build def Nothing manager dsn
-        let sendFn envelope rl = do
+        let sendFn envelope = do
               Transport.send sync envelope `shouldReturn` Transport.SendProcessed
-              pure rl
+              pure Delivery.accepted
         bracket (Executor.new 32 Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0) \executor -> do
           let opts =
                 (Options.defaultClientOptions)

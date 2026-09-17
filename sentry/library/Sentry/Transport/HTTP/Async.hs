@@ -15,27 +15,21 @@ module Sentry.Transport.HTTP.Async
   )
 where
 
-import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Client.TLS (getGlobalManager)
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
-import Patrol.Type.Envelope qualified as Patrol.Envelope
-import Patrol.Type.Headers qualified as Patrol.Headers
-import Patrol.Type.Item qualified as Patrol.Item
-import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
-import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Encoding (Compression (..))
-import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
+import Sentry.Transport.Executor.Async (AsyncExecutor)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
-import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
+import Sentry.Transport.HTTP.Delivery qualified as HTTPDelivery
 import Sentry.Transport.HTTP.Request qualified as Request
-import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope, toOutcome)
+import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope)
 
 -- | An asynchronous HTTP transport backed by an 'AsyncExecutor'.
 type AsyncHttpTransport :: Type
@@ -72,23 +66,12 @@ build ::
   Patrol.Dsn ->
   IO AsyncHttpTransport
 build opts clientReports queueSize manager dsn = do
-  let toEnvelope report =
-        Patrol.Envelope.Envelope
-          { Patrol.Envelope.headers =
-              Patrol.Headers.empty{Patrol.Headers.dsn = Just dsn},
-            Patrol.Envelope.items =
-              Patrol.Items.EnvelopeItems [Patrol.Item.ClientReport report]
-          }
-      reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
+  let reportConfig = fmap (\cr -> AsyncExecutor.clientReportConfig cr dsn) clientReports
       template = Request.prepare dsn
-      sendFn envelope rateLimiter = do
+      sendFn envelope = do
         now <- getCurrentTime
-        outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template opts.compression envelope
-        -- Record failures; upstream accounts for HTTP 429 rejections.
-        for_ (Delivery.discardReason outcome) \reason ->
-          for_ (fmap (.accumulator) reportConfig) \cr ->
-            ClientReport.recordEnvelopeDrop cr reason envelope
-        pure $ RateLimiter.updateFromResponse rateLimiter now outcome
+        outcome <- sendEnvelope manager opts.instrumentation template opts.compression envelope
+        pure $ HTTPDelivery.interpret now outcome
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
   pure AsyncHttpTransport{executor}
 

@@ -2,9 +2,11 @@ module RateLimiterTest where
 
 import Control.Exception (toException)
 import Data.ByteString (ByteString)
+import Data.Map.Strict qualified as Map
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..), addUTCTime, secondsToDiffTime)
 import Data.Time.Clock.System (systemEpochDay)
+import Network.HTTP.Types qualified as Http
 import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory qualified as DataCategory
@@ -13,7 +15,9 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Headers qualified as Patrol.Headers
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
+import Sentry.Transport.HTTP.Delivery qualified as HTTP
 import System.IO.Unsafe (unsafePerformIO)
 import Test.Hspec
 
@@ -21,7 +25,7 @@ spec_updateFromRetryAfter :: Spec
 spec_updateFromRetryAfter = describe "updateFromRetryAfter" do
   it "sets global rate limits" do
     let startTime = UTCTime systemEpochDay 0
-        rl = RateLimiter.updateFromRetryAfter RateLimiter.new startTime "60"
+        rl = updateFromRetryAfter RateLimiter.new startTime "60"
     RateLimiter.isDisabledUntil rl Nothing
       `shouldBe` (Just $ 60 `addUTCTime` startTime)
     RateLimiter.isDisabledFor startTime Nothing rl
@@ -29,7 +33,7 @@ spec_updateFromRetryAfter = describe "updateFromRetryAfter" do
 
   it "preserves fractional seconds" do
     let startTime = UTCTime systemEpochDay 0
-        rl = RateLimiter.updateFromRetryAfter RateLimiter.new startTime "2.5"
+        rl = updateFromRetryAfter RateLimiter.new startTime "2.5"
     RateLimiter.isDisabledFor startTime Nothing rl
       `shouldBe` Just 2.5
 
@@ -39,7 +43,7 @@ spec_updateFromRetryAfter = describe "updateFromRetryAfter" do
     let startTime = UTCTime systemEpochDay 0
         expiresAt = UTCTime (fromGregorian 2015 10 21) (secondsToDiffTime (7 * 3600 + 28 * 60))
         rl =
-          RateLimiter.updateFromRetryAfter
+          updateFromRetryAfter
             RateLimiter.new
             startTime
             "Wed, 21 Oct 2015 07:28:00 GMT"
@@ -48,7 +52,7 @@ spec_updateFromRetryAfter = describe "updateFromRetryAfter" do
 
   it "falls back to 60 seconds for unparseable values" do
     let startTime = UTCTime systemEpochDay 0
-        rl = RateLimiter.updateFromRetryAfter RateLimiter.new startTime "not-a-date"
+        rl = updateFromRetryAfter RateLimiter.new startTime "not-a-date"
     RateLimiter.isDisabledFor startTime Nothing rl
       `shouldBe` Just 60
 
@@ -57,7 +61,7 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
   it "updates per-category rate limits" do
     let startTime = UTCTime systemEpochDay 0
         header0 = "120:error:project:reason, 60:session:foo" :: ByteString
-        rl0 = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header0
+        rl0 = updateFromSentryHeader RateLimiter.new startTime header0
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl0
       `shouldBe` Just 120
     RateLimiter.isDisabledFor startTime (Just DataCategory.Session) rl0
@@ -67,7 +71,7 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
     RateLimiter.isDisabledFor startTime Nothing rl0
       `shouldBe` Nothing
     let header1 = "30::,\n120:invalid:invalid,\n4711:foo;bar;baz;security:project" :: ByteString
-        rl1 = RateLimiter.updateFromSentryHeader rl0 startTime header1
+        rl1 = updateFromSentryHeader rl0 startTime header1
 
     RateLimiter.isDisabledFor startTime Nothing rl1
       `shouldBe` Just 30
@@ -80,21 +84,21 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
 
   it "parses fractional durations" do
     let startTime = UTCTime systemEpochDay 0
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime "2.5:error:project"
+        rl = updateFromSentryHeader RateLimiter.new startTime "2.5:error:project"
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl
       `shouldBe` Just 2.5
 
   it "ignores trailing scope, reason, and namespace fields" do
     let startTime = UTCTime systemEpochDay 0
         header = "2700:error:organization:quota_exceeded:custom" :: ByteString
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header
+        rl = updateFromSentryHeader RateLimiter.new startTime header
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl
       `shouldBe` Just 2700
 
   it "ignores whitespace after the comma separator" do
     let startTime = UTCTime systemEpochDay 0
         header = "60:error:project, 30:session:project" :: ByteString
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header
+        rl = updateFromSentryHeader RateLimiter.new startTime header
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl
       `shouldBe` Just 60
     RateLimiter.isDisabledFor startTime (Just DataCategory.Session) rl
@@ -103,14 +107,14 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
   it "retains the maximum duration when a category repeats" do
     let startTime = UTCTime systemEpochDay 0
         header = "60:error:project,120:error:project" :: ByteString
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header
+        rl = updateFromSentryHeader RateLimiter.new startTime header
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl
       `shouldBe` Just 120
 
   it "recognizes the log_item and trace_metric categories" do
     let startTime = UTCTime systemEpochDay 0
         header = "60:log_item:project,90:trace_metric:organization" :: ByteString
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header
+        rl = updateFromSentryHeader RateLimiter.new startTime header
     RateLimiter.isDisabledFor startTime (Just DataCategory.LogItem) rl
       `shouldBe` Just 60
     RateLimiter.isDisabledFor startTime (Just DataCategory.TraceMetric) rl
@@ -119,7 +123,7 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
   it "skips a group with an unparseable duration without limiting it" do
     let startTime = UTCTime systemEpochDay 0
         header = "abc:error:project" :: ByteString
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header
+        rl = updateFromSentryHeader RateLimiter.new startTime header
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl
       `shouldBe` Nothing
     RateLimiter.isDisabledFor startTime Nothing rl
@@ -128,7 +132,7 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
   it "skips a malformed group but keeps well-formed ones in the same header" do
     let startTime = UTCTime systemEpochDay 0
         header = "abc:error:project,60:session:project" :: ByteString
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime header
+        rl = updateFromSentryHeader RateLimiter.new startTime header
     RateLimiter.isDisabledFor startTime (Just DataCategory.Error) rl
       `shouldBe` Nothing
     RateLimiter.isDisabledFor startTime (Just DataCategory.Session) rl
@@ -138,7 +142,7 @@ spec_updateFrom429 :: Spec
 spec_updateFrom429 = describe "updateFrom429" do
   it "the HTTP 429 status code helper adds a 60 second delay" do
     let startTime = UTCTime systemEpochDay 0
-        rl = RateLimiter.updateFrom429 RateLimiter.new startTime
+        rl = updateFrom429 RateLimiter.new startTime
     RateLimiter.isDisabledFor startTime Nothing rl
       `shouldBe` Just 60
 
@@ -148,7 +152,7 @@ spec_filterEnvelope = describe "filterEnvelope" do
     let startTime = UTCTime systemEpochDay 0
         -- Limit the Error category only; the global limit stays clear, so the
         -- category-less client-report item survives while the event is dropped.
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime "60:error:project"
+        rl = updateFromSentryHeader RateLimiter.new startTime "60:error:project"
         envelope = mkEnvelope [eventItem, reportItem]
         filtered = RateLimiter.filterEnvelope rl startTime envelope
     filtered.dropped `shouldBe` [eventItem]
@@ -157,7 +161,7 @@ spec_filterEnvelope = describe "filterEnvelope" do
 
   it "drops every item and keeps nothing when all are rate limited" do
     let startTime = UTCTime systemEpochDay 0
-        rl = RateLimiter.updateFromSentryHeader RateLimiter.new startTime "60:error:project"
+        rl = updateFromSentryHeader RateLimiter.new startTime "60:error:project"
         filtered = RateLimiter.filterEnvelope rl startTime (mkEnvelope [eventItem])
     filtered.dropped `shouldBe` [eventItem]
     filtered.kept `shouldBe` Nothing
@@ -194,3 +198,39 @@ reportItem =
 errorEvent :: Patrol.Event
 errorEvent = unsafePerformIO . Patrol.Event.fromSomeException . toException $ userError "boom"
 {-# NOINLINE errorEvent #-}
+
+updateFromRetryAfter :: RateLimiter.RateLimiter -> UTCTime -> ByteString -> RateLimiter.RateLimiter
+updateFromRetryAfter rl now value = RateLimiter.apply rl (HTTP.retryAfter now value)
+
+updateFromSentryHeader :: RateLimiter.RateLimiter -> UTCTime -> ByteString -> RateLimiter.RateLimiter
+updateFromSentryHeader rl now value = RateLimiter.apply rl (HTTP.sentryHeader now value)
+
+updateFrom429 :: RateLimiter.RateLimiter -> UTCTime -> RateLimiter.RateLimiter
+updateFrom429 rl now = RateLimiter.apply rl (HTTP.interpret now (HTTP.Responded Http.tooManyRequests429 [])).rateLimits
+
+spec_mergeDeadlines :: Spec
+spec_mergeDeadlines = describe "explicit restriction merging" do
+  let now = UTCTime (fromGregorian 2025 1 1) 0
+      later = addUTCTime 300 now
+      sooner = addUTCTime 10 now
+  it "never shortens global or per-category deadlines" do
+    let initial =
+          RateLimiter.apply
+            RateLimiter.new
+            [Delivery.RateLimit Delivery.AllCategories later, Delivery.RateLimit (Delivery.Category DataCategory.Error) later]
+        merged =
+          RateLimiter.apply
+            initial
+            [Delivery.RateLimit Delivery.AllCategories sooner, Delivery.RateLimit (Delivery.Category DataCategory.Error) sooner]
+    merged.global `shouldBe` Just later
+    Map.lookup DataCategory.Error merged.categories `shouldBe` Just later
+  it "does not let the 429 fallback shorten an existing global restriction" do
+    let initial = RateLimiter.apply RateLimiter.new [Delivery.RateLimit Delivery.AllCategories later]
+    (updateFrom429 initial now).global `shouldBe` Just later
+  it "keeps category restrictions independent of the global restriction" do
+    let merged =
+          RateLimiter.apply
+            RateLimiter.new
+            [Delivery.RateLimit Delivery.AllCategories sooner, Delivery.RateLimit (Delivery.Category DataCategory.Error) later]
+    RateLimiter.isDisabledUntil merged (Just DataCategory.Error) `shouldBe` Just later
+    RateLimiter.isDisabledUntil merged (Just DataCategory.Session) `shouldBe` Just sooner

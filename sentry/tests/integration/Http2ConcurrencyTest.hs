@@ -14,8 +14,8 @@ import Data.Default (def)
 import Network.HTTP.Types qualified as Http
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Sink qualified as Sink
-import Sentry.Transport.Delivery (Outcome (..))
 import Sentry.Transport.Encoding (Compression (Gzip))
+import Sentry.Transport.HTTP.Delivery (Outcome (..))
 import Sentry.Transport.HTTP2.Connection (ReconnectDecision (..))
 import Sentry.Transport.HTTP2.Connection qualified as Connection
 import Test.Hspec

@@ -70,9 +70,9 @@ import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Sentry.Sdk qualified
-import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Encoding (Compression)
 import Sentry.Transport.Encoding qualified as Encoding
+import Sentry.Transport.HTTP.Delivery qualified as HTTPDelivery
 import UnliftIO.Exception (catchAny, finally, mask, onException)
 import Witch qualified
 
@@ -436,10 +436,10 @@ runHttp2 tgt validateCert http2s client =
 -- Any exception during the send is caught and returned as a 'NetworkFailure'
 -- for /this/ envelope only; it does not tear down the shared connection (a
 -- connection-level failure is handled centrally by the runner-exit reset).
-sendEnvelope :: Manager -> Patrol.Envelope -> IO Delivery.Outcome
+sendEnvelope :: Manager -> Patrol.Envelope -> IO HTTPDelivery.Outcome
 sendEnvelope mgr envelope =
   acquire mgr >>= \case
-    Left err -> pure (Delivery.NetworkFailure err)
+    Left err -> pure $ HTTPDelivery.NetworkFailure err
     Right conn -> sendOn mgr conn envelope
 
 -- | Acquire a live connection, single-flighting a connect when necessary.
@@ -517,7 +517,7 @@ runConnect mgr policy = (`onException` resetClaim) $ mask $ \restore -> do
 -- continuation on success, or the handler on failure) before we read it below.
 --
 -- A failure here is reported as a 'NetworkFailure' for this envelope only.
-sendOn :: Manager -> Active -> Patrol.Envelope -> IO Delivery.Outcome
+sendOn :: Manager -> Active -> Patrol.Envelope -> IO HTTPDelivery.Outcome
 sendOn mgr conn envelope = do
   outcomeRef <- newIORef Nothing
   let body = Encoding.bytes (Encoding.encode mgr.target.compression envelope)
@@ -533,18 +533,18 @@ sendOn mgr conn envelope = do
       let headers = toResponseHeaders (HTTP2.responseHeaders resp)
           outcome = case HTTP2.responseStatus resp of
             Nothing ->
-              Delivery.NetworkFailure "HTTP/2 response missing :status pseudo-header"
+              HTTPDelivery.NetworkFailure "HTTP/2 response missing :status pseudo-header"
             Just status ->
-              Delivery.Responded status headers
+              HTTPDelivery.Responded status headers
       writeIORef outcomeRef (Just outcome)
     )
     `catchAny` \e ->
-      writeIORef outcomeRef (Just . Delivery.NetworkFailure . Text.pack $ show e)
+      writeIORef outcomeRef (Just . HTTPDelivery.NetworkFailure . Text.pack $ show e)
   readIORef outcomeRef >>= \case
     Just outcome -> pure outcome
     -- Unreachable given the synchronicity guarantee above; kept as a defensive
     -- total fallback rather than an 'error'.
-    Nothing -> pure $ Delivery.NetworkFailure "HTTP/2 send completed without response"
+    Nothing -> pure $ HTTPDelivery.NetworkFailure "HTTP/2 send completed without response"
 
 -- | Drain the HTTP\/2 response body chunks until EOF.
 --

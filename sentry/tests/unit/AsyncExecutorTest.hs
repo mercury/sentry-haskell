@@ -11,9 +11,12 @@ import Control.Exception qualified as Exception
 import Control.Monad (replicateM_, void)
 import Control.Monad.STM (atomically)
 import Data.Foldable (for_)
-import Data.Time.Clock (getCurrentTime)
+import Data.Text (Text)
+import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Patrol qualified
+import Patrol.Type.ClientReport qualified
 import Patrol.Type.DataCategory qualified as DataCategory
+import Patrol.Type.DiscardedEvent qualified
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
 import Patrol.Type.Event qualified as Patrol.Event
@@ -26,10 +29,10 @@ import Sentry.ClientReport qualified as ClientReport
 import Sentry.Init qualified as Init
 import Sentry.Test qualified as Test
 import Sentry.Transport qualified as Transport
+import Sentry.Transport.Delivery (accepted)
+import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.Async.Internal qualified as Internal
-import Sentry.Transport.Executor.RateLimiter (RateLimiter)
-import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Test.Hspec
@@ -41,7 +44,7 @@ spec_send = parallel $ describe "sending envelopes" do
     q <- newTQueueIO
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
-    let sendFn env rl = readMVar var *> testSendFn q id env rl
+    let sendFn env = readMVar var *> testSendFn q accepted env
     executor <- AsyncExecutor.new 1 Nothing sendFn
     -- verify that the send was processed
     res <- Transport.send executor testEnvelope
@@ -56,7 +59,7 @@ spec_send = parallel $ describe "sending envelopes" do
     it ("enforces exact queue capacity " <> show capacity) $ boundedLifecycle do
       entered <- newEmptyMVar
       release <- newEmptyMVar
-      withExecutor capacity (\_ rl -> void (tryPutMVar entered ()) >> readMVar release >> pure rl) \executor -> do
+      withExecutor capacity (\_ -> void (tryPutMVar entered ()) >> readMVar release >> pure accepted) \executor -> do
         Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
         readMVar entered
         replicateM_ capacity $ Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
@@ -67,11 +70,11 @@ spec_send = parallel $ describe "sending envelopes" do
 
   for_ [0, -1, minBound] \capacity ->
     it ("rejects invalid queue capacity " <> show capacity) do
-      AsyncExecutor.new capacity Nothing (\_ -> pure) `shouldThrow` anyIOException
+      AsyncExecutor.new capacity Nothing (\_ -> pure accepted) `shouldThrow` anyIOException
 
   it "is subject to filtering for valid envelope types" do
     q <- newTQueueIO
-    let sendFn = testSendFn q id
+    let sendFn = testSendFn q accepted
     executor <- AsyncExecutor.new 2 Nothing sendFn
     -- verify that the send was processed
     sendRes <- Transport.send executor emptyEnvelope
@@ -86,7 +89,7 @@ spec_send = parallel $ describe "sending envelopes" do
     q <- newTQueueIO
     -- construct a send function that applies a 1 minute rate limit after send
     now <- getCurrentTime
-    let sendFn = testSendFn q (flip RateLimiter.updateFrom429 now)
+    let sendFn = testSendFn q (Delivery.acceptedWith [Delivery.allCategoriesUntil (addUTCTime 60 now)])
     executor <- AsyncExecutor.new 1 Nothing sendFn
     -- verify that the send was processed
     res0 <- Transport.send executor testEnvelope
@@ -109,7 +112,7 @@ spec_flush = parallel $ describe "flushing the executor" do
     q <- newTQueueIO
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
-    let sendFn env rl = readMVar var *> testSendFn q id env rl
+    let sendFn env = readMVar var *> testSendFn q accepted env
     executor <- AsyncExecutor.new 3 Nothing sendFn
     -- enqueues two messages to be sent despite the function blocking
     sendRes0 <- Transport.send executor testEnvelope
@@ -131,7 +134,7 @@ spec_flush = parallel $ describe "flushing the executor" do
 spec_shutdown :: Spec
 spec_shutdown = parallel $ describe "shutting the executor down" do
   it "rejects sends, flushes and repeat shutdowns once gracefully closed" do
-    executor <- AsyncExecutor.new 1 Nothing (\_ rl -> pure rl)
+    executor <- AsyncExecutor.new 1 Nothing (\_ -> pure accepted)
     Transport.shutdown executor 1 `shouldReturn` Transport.ShutdownSucceeded
     Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
     Transport.flush executor 1 `shouldReturn` Transport.FlushFailed_Shutdown
@@ -141,7 +144,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
     entered <- newEmptyMVar
     stopped <- newEmptyMVar
     never <- newEmptyMVar @()
-    let sender _ rl = (putMVar entered () >> readMVar never >> pure rl) `finally` putMVar stopped ()
+    let sender _ = (putMVar entered () >> readMVar never >> pure accepted) `finally` putMVar stopped ()
     withExecutor 1 sender \executor -> do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar entered
@@ -154,7 +157,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
       entered <- newEmptyMVar
       never <- newEmptyMVar @()
       stopped <- newEmptyMVar
-      let sendFn _ rl = (putMVar entered () >> readMVar never >> pure rl) `finally` putMVar stopped ()
+      let sendFn _ = (putMVar entered () >> readMVar never >> pure accepted) `finally` putMVar stopped ()
       executor <- AsyncExecutor.new 1 Nothing sendFn
       let opts =
             (Options.defaultClientOptions)
@@ -178,7 +181,7 @@ spec_resilience = parallel $ describe "worker resilience" do
   it "survives a sendFn that throws" do
     -- A throwing sendFn (e.g. an unhandled network exception) must not kill the
     -- worker thread and turn the executor into a black hole.
-    let sendFn _ _ = throwIO (userError "boom") :: IO RateLimiter
+    let sendFn _ = throwIO (userError "boom") :: IO Delivery.Outcome
     executor <- AsyncExecutor.new 3 Nothing sendFn
     -- The envelope is accepted; its send throws on the worker thread.
     res <- Transport.send executor testEnvelope
@@ -198,11 +201,11 @@ spec_shutdownDrain = describe "shutting down with a saturated queue" do
     q <- newTQueueIO
     started <- newEmptyMVar
     block <- newEmptyMVar
-    let sendFn env rl = do
+    let sendFn env = do
           void $ tryPutMVar started ()
           readMVar block
           atomically $ writeTQueue q env
-          pure rl
+          pure accepted
     withExecutor 1 sendFn \executor -> do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar started
@@ -227,10 +230,10 @@ spec_flushClientReports = describe "flushing with client reports" do
             }
         reports = AsyncExecutor.ClientReportConfig{AsyncExecutor.accumulator = cr, AsyncExecutor.toEnvelope}
         -- Every send records the envelope and imposes a fresh global limit.
-        sendFn env rl = do
+        sendFn env = do
           now <- getCurrentTime
           atomically $ writeTQueue q env
-          pure $ RateLimiter.updateFrom429 rl now
+          pure $ Delivery.acceptedWith [Delivery.allCategoriesUntil (addUTCTime 60 now)]
     executor <- AsyncExecutor.new 3 (Just reports) sendFn
     -- The flush drains the report; sendFn returns a globally rate-limited state.
     Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
@@ -243,10 +246,10 @@ spec_flushClientReports = describe "flushing with client reports" do
 
 -- | Stub function for sending an 'Patrol.Type.Envelope.Envelope', which adds
 -- it to a queue that can be inspected from the test case.
-testSendFn :: TQueue Patrol.Envelope -> (RateLimiter -> RateLimiter) -> Patrol.Envelope -> RateLimiter -> IO RateLimiter
-testSendFn q fn env rl = do
+testSendFn :: TQueue Patrol.Envelope -> Delivery.Outcome -> Patrol.Envelope -> IO Delivery.Outcome
+testSendFn q outcome env = do
   atomically $ writeTQueue q env
-  pure $ fn rl
+  pure outcome
 
 -- | An empty envelope; no headers means it should be filtered out.
 emptyEnvelope :: Patrol.Envelope
@@ -285,7 +288,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
   it "acknowledges an admitted flush before graceful shutdown completes" $ boundedLifecycle do
     entered <- newEmptyMVar
     proceed <- newEmptyMVar
-    withExecutor 4 (\_ rl -> putMVar entered () >> readMVar proceed >> pure rl) \executor -> do
+    withExecutor 4 (\_ -> putMVar entered () >> readMVar proceed >> pure accepted) \executor -> do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar entered
       Async.withAsync (Transport.flush executor 2) \flushing -> do
@@ -298,7 +301,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
 
   it "runs callbacks unmasked when constructed under masking" $ boundedLifecycle do
     observed <- newEmptyMVar
-    executor <- mask_ $ AsyncExecutor.new 2 Nothing (\_ rl -> getMaskingState >>= putMVar observed >> pure rl)
+    executor <- mask_ $ AsyncExecutor.new 2 Nothing (\_ -> getMaskingState >>= putMVar observed >> pure accepted)
     flip finally (void $ Transport.shutdown executor 0) do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar observed `shouldReturn` Unmasked
@@ -307,7 +310,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
   it "reports asynchronous callback failure and rejects subsequent sends" $ boundedLifecycle do
     entered <- newEmptyMVar
     release <- newEmptyMVar
-    withExecutor 4 (\_ _ -> putMVar entered () >> readMVar release >> Exception.throwIO Async.AsyncCancelled) \executor -> do
+    withExecutor 4 (\_ -> putMVar entered () >> readMVar release >> Exception.throwIO Async.AsyncCancelled) \executor -> do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar entered
       putMVar release ()
@@ -317,7 +320,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
   it "wakes a concurrent flush when the worker is cancelled" $ boundedLifecycle do
     worker <- newEmptyMVar
     never <- newEmptyMVar @()
-    withExecutor 4 (\_ rl -> myThreadId >>= putMVar worker >> readMVar never >> pure rl) \executor -> do
+    withExecutor 4 (\_ -> myThreadId >>= putMVar worker >> readMVar never >> pure accepted) \executor -> do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       thread <- readMVar worker
       Async.withAsync (Transport.flush executor 2) \flushing -> do
@@ -333,7 +336,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
   it "reports worker failure while shutdown waits on a full queue" $ boundedLifecycle do
     worker <- newEmptyMVar
     never <- newEmptyMVar @()
-    withExecutor 1 (\_ rl -> myThreadId >>= putMVar worker >> readMVar never >> pure rl) \executor -> do
+    withExecutor 1 (\_ -> myThreadId >>= putMVar worker >> readMVar never >> pure accepted) \executor -> do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       thread <- readMVar worker
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
@@ -347,8 +350,8 @@ spec_admissionLifecycle = describe "admission lifecycle" do
     observed <- newEmptyMVar
     stopped <- newEmptyMVar
     never <- newEmptyMVar @()
-    let sendFn _ rl =
-          (getMaskingState >>= putMVar observed >> readMVar never >> pure rl)
+    let sendFn _ =
+          (getMaskingState >>= putMVar observed >> readMVar never >> pure accepted)
             `finally` putMVar stopped ()
         factory _ _ = do
           executor <- AsyncExecutor.new 2 Nothing sendFn
@@ -371,7 +374,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
       readMVar stopped
 
   it "treats negative timeouts as immediate and saturates huge durations" $ boundedLifecycle do
-    withExecutor 2 (\_ -> pure) \executor -> do
+    withExecutor 2 (\_ -> pure accepted) \executor -> do
       Transport.flush executor (-1) `shouldReturn` Transport.FlushFailed_TimedOut (-1)
       Transport.flush executor (10 ^ (30 :: Int)) `shouldReturn` Transport.FlushSucceeded
       Transport.shutdown executor (-1) `shouldReturn` Transport.ShutdownFailed_TimedOut (-1)
@@ -380,7 +383,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
 boundedLifecycle :: IO () -> IO ()
 boundedLifecycle action = timeout 10_000_000 action `shouldReturn` Just ()
 
-withExecutor :: Int -> (Patrol.Envelope -> RateLimiter -> IO RateLimiter) -> (AsyncExecutor.AsyncExecutor -> IO a) -> IO a
+withExecutor :: Int -> (Patrol.Envelope -> IO Delivery.Outcome) -> (AsyncExecutor.AsyncExecutor -> IO a) -> IO a
 withExecutor size sendFn = bracket (AsyncExecutor.new size Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0)
 
 -- | Block until the executor's task queue closes.
@@ -395,3 +398,55 @@ awaitClosed executor = atomically $ TBM.isClosedTBMQueue (Internal.taskQueue exe
 -- queued marker cannot be consumed before we observe it.
 awaitQueued :: AsyncExecutor.AsyncExecutor -> IO ()
 awaitQueued executor = atomically $ TBM.isEmptyTBMQueue (Internal.taskQueue executor) >>= check . not
+
+spec_genericAccounting :: Spec
+spec_genericAccounting = describe "protocol-independent delivery accounting" do
+  for_ [Delivery.Accepted, Delivery.Rejected Delivery.AccountedUpstream, Delivery.Rejected (Delivery.RecordLocally ClientReport.SendError)] \disposition ->
+    it ("accounts exactly once for " <> show disposition <> " without HTTP values") $ boundedLifecycle do
+      reports <- ClientReport.new
+      attempts <- newTQueueIO
+      let sender envelope = atomically (writeTQueue attempts envelope) >> pure (Delivery.Outcome disposition [])
+      bracket
+        (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) sender)
+        (\executor -> void $ Transport.shutdown executor 0)
+        \executor -> do
+          -- An existing report must never count as another lost error item.
+          now <- getCurrentTime
+          ClientReport.record reports ClientReport.BeforeSend DataCategory.Error 7
+          Just report <- ClientReport.takePending reports now True
+          Transport.send executor (ClientReport.attach report testEnvelope) `shouldReturn` Transport.SendProcessed
+          Transport.shutdown executor 2 `shouldReturn` Transport.ShutdownSucceeded
+          drops <- reportedDrops <$> atomically (flushTQueue attempts)
+          drops
+            `shouldBe` ( [("before_send", 7)] <> case disposition of
+                           Delivery.Rejected (Delivery.RecordLocally _) -> [("send_error", 1)]
+                           _ -> []
+                       )
+          ClientReport.takePending reports now True `shouldReturn` Nothing
+
+  it "accounts unexpected callback exceptions as internal SDK failures" $ boundedLifecycle do
+    reports <- ClientReport.new
+    attempts <- newTQueueIO
+    let sender envelope = case envelope.items of
+          Patrol.Items.EnvelopeItems [Patrol.Item.ClientReport _] ->
+            atomically (writeTQueue attempts envelope) >> pure accepted
+          _ -> throwIO (userError "custom sender failed")
+    bracket
+      (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) sender)
+      (\executor -> void $ Transport.shutdown executor 0)
+      \executor -> do
+        Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+        Transport.shutdown executor 2 `shouldReturn` Transport.ShutdownSucceeded
+        drops <- reportedDrops <$> atomically (flushTQueue attempts)
+        drops `shouldBe` [("internal_sdk_error", 1)]
+
+-- | Project the reason and quantity of every client-report discard carried by
+-- the given envelopes, in the order the envelopes were attempted.
+reportedDrops :: [Patrol.Envelope] -> [(Text, Int)]
+reportedDrops envelopes =
+  [ (entry.reason, entry.quantity)
+  | envelope <- envelopes,
+    Patrol.Items.EnvelopeItems items <- [envelope.items],
+    Patrol.Item.ClientReport report <- items,
+    entry <- report.discardedEvents
+  ]

@@ -36,6 +36,7 @@ import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Async qualified as Async
+import Sentry.Transport.HTTP.Delivery qualified as HTTP
 import Sentry.Transport.HTTP.Sync qualified as Sync
 import Sentry.Transport.HTTP2.Async qualified as Http2
 import System.Timeout (timeout)
@@ -111,7 +112,7 @@ spec_networkFailure = describe "synchronous injected network failures" do
     bounded $ withTransport "sync" \sink reports _ -> do
       limiter <- newIORef RateLimiter.new
       attempted <- newIORef []
-      let transport = Sync.SyncHttpTransport limiter (\attempt -> modifyIORef' attempted (attempt :) *> pure (Left Http.ConnectionTimeout)) (Just reports)
+      let transport = Sync.SyncHttpTransport limiter (\attempt -> modifyIORef' attempted (attempt :) *> pure (HTTP.NetworkFailure "timeout")) (Just reports)
           envelope = Gen.sampleEnvelope (Sink.dsnFor sink "1")
       Reports.record reports Reports.BeforeSend Category.Error 2
       Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other
@@ -128,14 +129,14 @@ spec_networkFailure = describe "synchronous injected network failures" do
       allDrops sink reports `shouldReturn` []
   it "works with reports disabled" do
     limiter <- newIORef RateLimiter.new
-    let transport = Sync.SyncHttpTransport limiter (const $ pure $ Left Http.ConnectionTimeout) Nothing
+    let transport = Sync.SyncHttpTransport limiter (const $ pure $ HTTP.NetworkFailure "timeout") Nothing
     Transport.send transport (Gen.sampleEnvelope Test.TEST_DSN) `shouldReturn` Transport.SendFailed_Other
   it "counts locally suppressed events separately when the remaining report fails" $
     bounded $ withTransport "sync" \sink reports _ -> do
       now <- getCurrentTime
-      limiter <- newIORef (RateLimiter.updateFromSentryHeader RateLimiter.new now "60:error:organization")
+      limiter <- newIORef (RateLimiter.apply RateLimiter.new (HTTP.sentryHeader now "60:error:organization"))
       attempted <- newIORef []
-      let transport = Sync.SyncHttpTransport limiter (\e -> modifyIORef' attempted (e :) *> pure (Left Http.ConnectionTimeout)) (Just reports)
+      let transport = Sync.SyncHttpTransport limiter (\e -> modifyIORef' attempted (e :) *> pure (HTTP.NetworkFailure "timeout")) (Just reports)
           report = Report.ClientReport Nothing []
           envelope = Reports.attach report (Gen.sampleEnvelope (Sink.dsnFor sink "1"))
       Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other
