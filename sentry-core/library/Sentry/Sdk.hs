@@ -5,6 +5,7 @@
 -- (@sentry.rust@, @sentry.python@, …).
 module Sentry.Sdk
   ( sdkInfo,
+    userAgent,
   )
 where
 
@@ -25,6 +26,14 @@ import Sentry.Integration qualified as Integration
 sdkVersion :: Text
 sdkVersion = Text.pack $ showVersion Paths_sentry_core.version
 
+-- | The name used to identify this SDK in events and outgoing requests.
+sdkName :: Text
+sdkName = "sentry.haskell"
+
+-- | The SDK identity sent in the @User-Agent@ header by HTTP transports.
+userAgent :: Text
+userAgent = sdkName <> "/" <> sdkVersion
+
 -- | Construct the 'ClientSdkInfo' for this SDK.
 --
 -- * @name@ is @"sentry.haskell"@ (Sentry's dotted SDK naming convention).
@@ -37,7 +46,7 @@ sdkVersion = Text.pack $ showVersion Paths_sentry_core.version
 sdkInfo :: Vector SomeIntegration -> ClientSdkInfo
 sdkInfo integrations =
   ClientSdkInfo.empty
-    { ClientSdkInfo.name = "sentry.haskell",
+    { ClientSdkInfo.name = sdkName,
       ClientSdkInfo.version = sdkVersion,
       ClientSdkInfo.packages = [corePackage],
       ClientSdkInfo.integrations = sort $ map Integration.name (toList integrations)

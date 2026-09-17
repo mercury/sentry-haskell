@@ -69,6 +69,7 @@ import Network.Socket (PortNumber, SocketOption (NoDelay))
 import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
+import Sentry.Sdk qualified
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.HTTP.Request (Compression)
 import Sentry.Transport.HTTP.Request qualified as Request
@@ -108,7 +109,7 @@ mkEndpoint compression dsn =
       path = Encoding.encodeUtf8 $ dsn.path <> "api/" <> dsn.projectId <> "/envelope/",
       headers =
         [ ("content-type", Patrol.Constant.applicationXSentryEnvelope),
-          ("user-agent", Encoding.encodeUtf8 Patrol.Constant.userAgent),
+          ("user-agent", Encoding.encodeUtf8 Sentry.Sdk.userAgent),
           ("x-sentry-auth", Patrol.Dsn.intoAuthorization dsn)
         ]
           <> case compression of

@@ -27,6 +27,7 @@ import Patrol qualified
 import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
+import Sentry.Sdk qualified
 
 -- | How to encode the request body on the wire.
 --
@@ -63,7 +64,7 @@ prepare compression dsn =
             dsn.path <> "api/" <> dsn.projectId <> "/envelope/",
         HttpClient.requestHeaders =
           [ (HttpTypes.hContentType, Patrol.Constant.applicationXSentryEnvelope),
-            (HttpTypes.hUserAgent, Encoding.encodeUtf8 Patrol.Constant.userAgent),
+            (HttpTypes.hUserAgent, Encoding.encodeUtf8 Sentry.Sdk.userAgent),
             (Patrol.Constant.xSentryAuth, Patrol.Dsn.intoAuthorization dsn)
           ]
             <> case compression of
