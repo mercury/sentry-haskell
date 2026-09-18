@@ -1,0 +1,6 @@
+common rts-threaded
+  import: defaults
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N

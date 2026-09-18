@@ -40,6 +40,9 @@ common defaults
     -Wno-prepositive-qualified-module
     -Wno-unsafe
 
+  build-depends: base
+
+-- cabal-gild: fragment ../cabal/rts-threaded.fragment
 common rts-threaded
   import: defaults
   ghc-options:
@@ -47,17 +50,24 @@ common rts-threaded
     -rtsopts
     -with-rtsopts=-N
 
+-- cabal-gild: fragment ../cabal/test.fragment
 common test
   import: rts-threaded
   build-tool-depends: tasty-discover:tasty-discover
   build-depends:
+    hspec,
     tasty,
     tasty-hspec >=1.2,
 
-common rts-bench-space
+common weigh-workloads
+  import: defaults
   ghc-options:
     -rtsopts
     -with-rtsopts=-A32m
+
+  build-depends:
+    weigh,
+    workloads,
 
 library workloads
   import: defaults
@@ -66,7 +76,6 @@ library workloads
   exposed-modules: Sentry.Workload.Capture
   build-depends:
     aeson,
-    base,
     data-default,
     patrol ^>=1.3,
     sentry-core,
@@ -132,7 +141,6 @@ library
     aeson,
     annotated-exception,
     atomic-primops,
-    base,
     containers,
     data-default,
     exceptions,
@@ -190,11 +198,9 @@ test-suite unit
     aeson,
     annotated-exception,
     atomic-primops,
-    base,
     containers,
     data-default,
     hs-opentelemetry-api,
-    hspec,
     mtl,
     patrol,
     safe-exceptions,
@@ -209,14 +215,10 @@ test-suite unit
 -- Hand-written main rather than tasty-discover: weigh re-execs this binary
 -- once per case, so a tasty wrapper would re-run the whole suite 5 times.
 test-suite allocations
-  import: defaults, rts-bench-space
+  import: weigh-workloads
   type: exitcode-stdio-1.0
   hs-source-dirs: tests/allocations
   main-is: Main.hs
-  build-depends:
-    base,
-    weigh,
-    workloads,
 
 benchmark time
   import: defaults
@@ -225,18 +227,13 @@ benchmark time
   main-is: Main.hs
   ghc-options: -with-rtsopts=-A32m
   build-depends:
-    base,
-    tasty-bench,
+    tasty-bench
 
 benchmark space
-  import: defaults, rts-bench-space
+  import: weigh-workloads
   type: exitcode-stdio-1.0
   hs-source-dirs: benchmarks/space
   main-is: Main.hs
-  build-depends:
-    base,
-    weigh,
-    workloads,
 
 -- Retention checks with live scopes and unforced user/custom-context maps.
 test-suite residency
@@ -250,7 +247,6 @@ test-suite residency
 
   build-depends:
     aeson,
-    base,
     containers,
     sentry-core,
     text,

@@ -1,0 +1,7 @@
+common test
+  import: rts-threaded
+  build-tool-depends: tasty-discover:tasty-discover
+  build-depends:
+    hspec,
+    tasty,
+    tasty-hspec >=1.2,

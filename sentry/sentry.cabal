@@ -49,24 +49,26 @@ common defaults
     -Wno-prepositive-qualified-module
     -Wno-unsafe
 
+  build-depends: base
+
+-- cabal-gild: fragment ../cabal/rts-threaded.fragment
 common rts-threaded
   import: defaults
   ghc-options:
     -threaded
     -rtsopts
-
-common rts-threaded-n
-  import: rts-threaded
-  ghc-options: -with-rtsopts=-N
+    -with-rtsopts=-N
 
 common rts-threaded-a32m
   import: rts-threaded
   ghc-options: "-with-rtsopts=-A32M -N"
 
+-- cabal-gild: fragment ../cabal/test.fragment
 common test
-  import: rts-threaded-n
+  import: rts-threaded
   build-tool-depends: tasty-discover:tasty-discover
   build-depends:
+    hspec,
     tasty,
     tasty-hspec >=1.2,
 
@@ -94,7 +96,6 @@ library
     async,
     atomic-primops,
     attoparsec,
-    base,
     bytestring,
     containers,
     data-default,
@@ -131,7 +132,6 @@ library testkit
   build-depends:
     aeson,
     async,
-    base,
     bytestring,
     directory,
     file-embed,
@@ -157,7 +157,6 @@ executable sentry-profile
   hs-source-dirs: profile
   main-is: Main.hs
   build-depends:
-    base,
     crypton-connection,
     data-default,
     http-client,
@@ -178,8 +177,7 @@ executable sentry-sink
   hs-source-dirs: sink
   main-is: Main.hs
   build-depends:
-    base,
-    testkit,
+    testkit
 
 test-suite unit
   import: test
@@ -200,11 +198,9 @@ test-suite unit
   build-depends:
     aeson,
     async,
-    base,
     bytestring,
     containers,
     data-default,
-    hspec,
     http-types,
     patrol,
     sentry,
@@ -232,11 +228,9 @@ test-suite integration
   build-depends:
     aeson,
     async,
-    base,
     bytestring,
     crypton-connection,
     data-default,
-    hspec,
     http-client,
     http-client-tls,
     http-types,
@@ -268,9 +262,7 @@ test-suite kent
 
   build-depends:
     aeson,
-    base,
     data-default,
-    hspec,
     patrol ^>=1.3,
     sentry,
     sentry-core,
@@ -286,7 +278,6 @@ benchmark time
   hs-source-dirs: benchmarks
   main-is: Main.hs
   build-depends:
-    base,
     patrol ^>=1.3,
     sentry,
     sentry-core,
