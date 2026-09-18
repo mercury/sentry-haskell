@@ -1,4 +1,11 @@
 -- | Asynchronous HTTP\/2 transport for Sentry.
+-- 
+-- A single long-lived HTTP\/2 TLS connection is maintained for the life of the
+-- transport; it is is established when the first envelope is sent, and
+-- reconnected transparently if the server closes it.
+--
+-- TLS certificate validation is enabled by default and can be disabled via
+-- 'Http2TransportOptions.validateCert' **for testing only**.
 --
 -- @stability: experimental@
 --
@@ -9,13 +16,6 @@
 -- Prefer the HTTP\/1.1 transport unless you specifically want a single
 -- multiplexed connection, for example to minimise sockets and handshakes on
 -- bursty, high-RTT links.
---
--- A single long-lived HTTP\/2 TLS connection is maintained for the life of the
--- transport; it is is established when the first envelope is sent, and
--- reconnected transparently if the server closes it.
---
--- TLS certificate validation is enabled by default and can be disabled via
--- 'Http2TransportOptions.validateCert' **for testing only**.
 module Sentry.Transport.HTTP2.Async
   {-# WARNING in "x-sentry-experimental" "The HTTP/2 transport is experimental and it makes no API or runtime stability guarantees, please use the HTTP/1.1 transport instead. Silence with -Wno-x-sentry-experimental." #-}
   ( -- * Async HTTP\/2 Transport
@@ -35,7 +35,7 @@ module Sentry.Transport.HTTP2.Async
   )
 where
 
-import Control.Exception (finally)
+import Control.Exception (finally, mask_, onException)
 import Data.Default (Default (def))
 import Data.Foldable (for_)
 import Data.Kind (Type)
@@ -72,30 +72,24 @@ data Http2TransportOptions = Http2TransportOptions
     compression :: Compression,
     -- | Whether to validate the TLS server certificate.
     --
-    -- Defaults to @True@.  Set to @False@ only for development against
-    -- self-signed certificates.
+    -- __NOTE__: Only disable this when locally developing against self-signed
+    -- certificates.
     validateCert :: Bool,
-    -- | How long to wait for the HTTP\/2 handshake (TCP connect + server
-    -- SETTINGS frame) before giving up, in microseconds.
+    -- | How long to wait for the HTTP\/2 handshake before giving up, in
+    -- microseconds.
     --
     -- Defaults to 30 seconds.
     connectTimeout :: Int,
     -- | Policy to apply after a failed connection attempt.
     --
     -- The policy is an @'IO' 'ReconnectDecision'@ action that /describes/ how
-    -- long to back off ('ReconnectAfter') or whether to give up
-    -- ('DontReconnect').
+    -- long to back off or whether to give up.
     --
-    -- Defaults to @pure 'DontReconnect'@: give up after the first failure
-    -- so the transport never silently hammers an unreachable endpoint.
-    --
-    -- Use 'reconnectAfter' or 'exponentialBackoff' for retry behavior.
+    -- Gives up after the first failure by default; use the 'reconnectAfter' or
+    -- 'exponentialBackoff' smart constructors for retry behavior.
     reconnectPolicy :: IO ReconnectDecision,
     -- | HTTP\/2 protocol-level settings (flow-control windows, rate-limit
     -- overrides, TCP_NODELAY).
-    --
-    -- Defaults to 'def': TCP_NODELAY enabled, ping rate limit raised to
-    -- 100\/s, all other knobs at @http2-tls@ library defaults.
     http2Settings :: Http2Settings
   }
 
@@ -134,7 +128,7 @@ build ::
   Int ->
   Patrol.Dsn ->
   IO AsyncHttp2Transport
-build opts clientReports queueSize dsn = do
+build opts clientReports queueSize dsn = mask_ do
   let toEnvelope report =
         Patrol.Envelope.Envelope
           { Patrol.Envelope.headers =
@@ -152,7 +146,11 @@ build opts clientReports queueSize dsn = do
           for_ (fmap (.accumulator) reportConfig) \cr ->
             ClientReport.recordEnvelopeDrop cr reason envelope
         pure $ RateLimiter.updateFromResponse rateLimiter now outcome
-  executor <- AsyncExecutor.new queueSize reportConfig sendFn
+  -- Clean up the manager if `AsyncExecutor.new` throws an exception on
+  -- non-positive queue size.
+  executor <-
+    AsyncExecutor.new queueSize reportConfig sendFn
+      `onException` Connection.closeManager manager
   pure AsyncHttp2Transport{executor, manager}
 
 instance Transport AsyncHttp2Transport where
