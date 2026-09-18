@@ -9,15 +9,12 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import Data.Vector qualified as Vector
-import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Breadcrumbs qualified as Patrol.Breadcrumbs
 import Patrol.Type.DataCategory (DataCategory (..))
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
-import Patrol.Type.User qualified as Patrol.User
 import Sentry.Capture (captureEvent, captureException, captureExceptionWith, captureMessage, captureUnhandledException)
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
@@ -30,6 +27,7 @@ import Sentry.Scope.Operations (ScopeData (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Scope.Update qualified as Scope.Update
 import Sentry.Test qualified as Test
+import Test.Fixtures (crumb, testUser)
 import Test.Hspec
 
 -- | A test integration that unconditionally drops every event.
@@ -203,22 +201,6 @@ spec_captureDrop = describe "drop-site instrumentation" do
       result `shouldBe` Nothing
       drops <- liftIO $ Test.fetchAndClearDrops transport
       drops `shouldBe` [(EventProcessor, Error, 1)]
-
-crumb :: Text -> Patrol.Breadcrumb
-crumb msg = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = msg}
-
-testUser :: Patrol.User
-testUser =
-  Patrol.User.User
-    { data_ = mempty,
-      email = "alice@example.com",
-      geo = Nothing,
-      id = "user-1",
-      ipAddress = "",
-      name = "Alice",
-      segment = "",
-      username = "alice"
-    }
 
 -- | Capture owns notifications even when the transport is prebuilt.
 spec_discardCallback :: Spec

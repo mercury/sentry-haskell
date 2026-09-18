@@ -1,15 +1,12 @@
 module AtomicsExtraTest where
 
-import Control.Concurrent (forkFinally, killThread)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
-import Control.Exception (SomeException, evaluate, finally, throwIO, try)
+import Control.Exception (SomeException, evaluate, try)
 import Control.Monad (replicateM_, unless)
 import Data.Atomics (casIORef, peekTicket, readForCAS)
 import Data.Atomics.Extra (atomicModifyIORefCAS'_)
 import Data.Either (isLeft, isRight)
-import Data.Foldable (for_)
 import Data.IORef (atomicModifyIORef, newIORef, readIORef)
-import System.Timeout (timeout)
+import Test.Concurrent (concurrentlyBounded)
 import Test.Hspec
 
 spec_atomicModifyIORefCAS' :: Spec
@@ -58,22 +55,3 @@ spec_atomicModifyIORefCAS' = describe "atomicModifyIORefCAS'_" do
     fixedOutcome <- try (atomicModifyIORefCAS'_ fixedRef poison) :: IO (Either SomeException ())
     fixedOutcome `shouldSatisfy` isLeft -- raises at the call site instead of deferring
     readIORef fixedRef `shouldReturn` budget -- and never installs the poison
-
--- | Run each action concurrently, propagating the first exception any of them
--- raises and failing if they don't all finish within 5 seconds.
-concurrentlyBounded :: [IO ()] -> IO ()
-concurrentlyBounded actions = do
-  start <- newEmptyMVar
-  workers <-
-    traverse
-      ( \action -> do
-          done <- newEmptyMVar
-          tid <- forkFinally (readMVar start >> action) (putMVar done)
-          pure (tid, done)
-      )
-      actions
-  let wait = do
-        putMVar start ()
-        for_ workers \(_, done) -> takeMVar done >>= either throwIO pure
-  completed <- timeout 5_000_000 wait `finally` for_ workers (killThread . fst)
-  completed `shouldBe` Just ()

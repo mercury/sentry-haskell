@@ -6,7 +6,6 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Types qualified as Aeson.Types
 import Data.Default (def)
 import Patrol.Type.Event qualified as Patrol.Event
-import Patrol.Type.Exception qualified as Patrol.Exception
 import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.Mechanism qualified as Patrol.Mechanism
@@ -16,16 +15,8 @@ import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations (ScopeData (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
+import Test.Event (lastMechanism)
 import Test.Hspec
-
--- | The 'Patrol.Mechanism' attached to the last exception value in an event,
--- if any.
-lastMechanism :: Patrol.Event.Event -> Maybe Patrol.Mechanism.Mechanism
-lastMechanism event = do
-  exceptions <- event.exception
-  case Patrol.Exceptions.values exceptions of
-    [] -> Nothing
-    excs -> Patrol.Exception.mechanism (last excs)
 
 spec_captureMechanism :: Spec
 spec_captureMechanism = describe "mechanism.handled" do

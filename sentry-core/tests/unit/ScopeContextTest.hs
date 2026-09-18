@@ -6,10 +6,8 @@ import Data.Default (def)
 import Data.Foldable (toList, traverse_)
 import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
-import Data.Text (Text)
 import OpenTelemetry.Context (Context)
 import OpenTelemetry.Context qualified as Context
-import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Context qualified as Patrol.Context
 import Sentry.AppContext qualified
@@ -23,6 +21,7 @@ import Sentry.Scope.Internal qualified as Internal
 import Sentry.Scope.Operations (Scope, ScopeData (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
+import Test.Fixtures (crumb)
 import Test.Hspec
 
 -- | The three scope handles installed on a hand-built 'Context', plus the
@@ -97,10 +96,6 @@ allLayers = do
         isolation = Just i,
         current = Just c
       }
-
--- | Minimal breadcrumb with a distinguishable message.
-crumb :: Text -> Patrol.Breadcrumb
-crumb msg = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = msg}
 
 -- | 'Scope.resolveClientAt' monomorphized to 'IO', so call sites don't need
 -- their own type annotation to pin down the ambiguous 'MonadIO' instance.

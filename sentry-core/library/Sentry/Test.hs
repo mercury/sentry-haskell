@@ -1,5 +1,3 @@
-{-# LANGUAGE PatternSynonyms #-}
-
 module Sentry.Test
   ( -- * Test DSN
     pattern TEST_DSN,

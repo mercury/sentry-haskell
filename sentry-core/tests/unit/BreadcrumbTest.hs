@@ -4,7 +4,6 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
 import Data.Foldable (toList, traverse_)
 import Data.Sequence qualified as Seq
-import Data.Text (Text)
 import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.BreadcrumbType qualified as Patrol.BreadcrumbType
@@ -18,6 +17,7 @@ import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations (ScopeData (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
+import Test.Fixtures (crumb)
 import Test.Hspec
 import Witch qualified
 
@@ -129,10 +129,6 @@ spec_breadcrumbs = do
       scopeData.breadcrumbs `shouldBe` mempty
 
 -- Helpers
-
--- | Minimal breadcrumb with a distinguishable message.
-crumb :: Text -> Patrol.Breadcrumb
-crumb msg = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = msg}
 
 -- | 'Scope.addBreadcrumb' accepts field updates, not just a whole record, so
 -- that it reads like every other establishing operation.

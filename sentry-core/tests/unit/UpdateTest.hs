@@ -1,13 +1,12 @@
 module UpdateTest where
 
-import Control.Concurrent (forkFinally, killThread)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
-import Control.Exception (evaluate, finally, throwIO)
+import Control.Exception (evaluate)
 import Control.Monad (replicateM_)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Default (def)
 import Data.Foldable (for_)
+import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Time.Clock (UTCTime)
@@ -48,7 +47,7 @@ import Sentry.Test qualified as Test
 import Sentry.TraceContext qualified
 import Sentry.Update qualified
 import Sentry.User qualified
-import System.Timeout (timeout)
+import Test.Concurrent (concurrentlyBounded)
 import Test.Hspec
 import Witch qualified
 
@@ -489,24 +488,6 @@ hasUserKey :: Sentry.Event -> Bool
 hasUserKey event = case Aeson.toJSON event of
   Aeson.Object o -> KeyMap.member "user" o
   _ -> False
-
--- Start workers together, propagate their exceptions, and bound completion.
-concurrentlyBounded :: [IO ()] -> IO ()
-concurrentlyBounded actions = do
-  start <- newEmptyMVar
-  workers <-
-    traverse
-      ( \action -> do
-          done <- newEmptyMVar
-          tid <- forkFinally (readMVar start >> action) (putMVar done)
-          pure (tid, done)
-      )
-      actions
-  let wait = do
-        putMVar start ()
-        for_ workers \(_, done) -> takeMVar done >>= either throwIO pure
-  completed <- timeout 5000000 wait `finally` for_ workers (killThread . fst)
-  completed `shouldBe` Just ()
 
 spec_updateScope :: Spec
 spec_updateScope = describe "atomic public scope edits" do
@@ -1160,6 +1141,7 @@ spec_optionalEdges = describe "optional assignment edge cases" do
     result.fingerprint `shouldBe` Just []
 
 -- | Transactions target current; other ambient metadata targets isolation.
+type RoutingTarget :: Type
 data RoutingTarget = IsolationTarget | CurrentTarget
 
 -- | Exercise ambient assignment, contextual removal, explicit restoration,
@@ -1188,7 +1170,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalLevel (Just Sentry.Warning))
-      (\context -> Scope.setOptionalLevelAt context Nothing)
+      (\ctx -> Scope.setOptionalLevelAt ctx Nothing)
       (\scope -> Scope.setOptionalLevel scope (Just Sentry.Warning))
       (\result -> result.level)
       (Just Sentry.Warning)
@@ -1199,7 +1181,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalUser (Just Sentry.User.empty))
-      (\context -> Scope.setOptionalUserAt context Nothing)
+      (\ctx -> Scope.setOptionalUserAt ctx Nothing)
       (\scope -> Scope.setOptionalUser scope (Just Sentry.User.empty))
       (\result -> result.user)
       (Just Sentry.User.empty)
@@ -1210,7 +1192,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalFingerprint (Just ["group"]))
-      (\context -> Scope.setOptionalFingerprintAt context Nothing)
+      (\ctx -> Scope.setOptionalFingerprintAt ctx Nothing)
       (\scope -> Scope.setOptionalFingerprint scope (Just ["group"]))
       (\result -> result.fingerprint)
       (Just ["group"])
@@ -1221,7 +1203,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       CurrentTarget
       (Sentry.setOptionalTransaction (Just "value"))
-      (\context -> Scope.setOptionalTransactionAt context Nothing)
+      (\ctx -> Scope.setOptionalTransactionAt ctx Nothing)
       (\scope -> Scope.setOptionalTransaction scope (Just "value"))
       (\result -> result.transaction)
       (Just "value")
@@ -1232,7 +1214,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalTag "key" (Just "value"))
-      (\context -> Scope.setOptionalTagAt context "key" Nothing)
+      (\ctx -> Scope.setOptionalTagAt ctx "key" Nothing)
       (\scope -> Scope.setOptionalTag scope "key" (Just "value"))
       (Map.lookup "key" . (.tags))
       (Just "value")
@@ -1243,7 +1225,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalExtra "key" (Just (Aeson.String "value")))
-      (\context -> Scope.setOptionalExtraAt context "key" Nothing)
+      (\ctx -> Scope.setOptionalExtraAt ctx "key" Nothing)
       (\scope -> Scope.setOptionalExtra scope "key" (Just (Aeson.String "value")))
       (Map.lookup "key" . (.extras))
       (Just (Aeson.String "value"))
@@ -1254,7 +1236,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalContext "key" (Just (Patrol.Context.Other Map.empty)))
-      (\context -> Scope.setOptionalContextAt context "key" Nothing)
+      (\ctx -> Scope.setOptionalContextAt ctx "key" Nothing)
       (\scope -> Scope.setOptionalContext scope "key" (Just (Patrol.Context.Other Map.empty)))
       (Map.lookup "key" . (.contexts))
       (Just (Patrol.Context.Other Map.empty))
@@ -1265,7 +1247,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalRuntimeContext (Just Sentry.RuntimeContext.empty))
-      (\context -> Scope.setOptionalRuntimeContextAt context Nothing)
+      (\ctx -> Scope.setOptionalRuntimeContextAt ctx Nothing)
       (\scope -> Scope.setOptionalRuntimeContext scope (Just Sentry.RuntimeContext.empty))
       (Map.lookup "runtime" . (.contexts))
       (Just (Patrol.Context.Runtime Sentry.RuntimeContext.empty))
@@ -1276,7 +1258,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalContextValues "key" (Just [("field", Aeson.String "value")]))
-      (\context -> Scope.setOptionalContextValuesAt context "key" Nothing)
+      (\ctx -> Scope.setOptionalContextValuesAt ctx "key" Nothing)
       (\scope -> Scope.setOptionalContextValues scope "key" (Just [("field", Aeson.String "value")]))
       (Map.lookup "key" . (.contexts))
       (Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value"))))
@@ -1287,7 +1269,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalContextValue "key" "field" (Just (Aeson.String "value")))
-      (\context -> Scope.setOptionalContextValueAt context "key" "field" Nothing)
+      (\ctx -> Scope.setOptionalContextValueAt ctx "key" "field" Nothing)
       (\scope -> Scope.setOptionalContextValue scope "key" "field" (Just (Aeson.String "value")))
       (Map.lookup "key" . (.contexts))
       (Just (Patrol.Context.Other (Map.singleton "field" (Aeson.String "value"))))
@@ -1298,7 +1280,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalOsContext (Just Sentry.OsContext.empty))
-      (\context -> Scope.setOptionalOsContextAt context Nothing)
+      (\ctx -> Scope.setOptionalOsContextAt ctx Nothing)
       (\scope -> Scope.setOptionalOsContext scope (Just Sentry.OsContext.empty))
       (Map.lookup "os" . (.contexts))
       (Just (Patrol.Context.Os Sentry.OsContext.empty))
@@ -1309,7 +1291,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalAppContext (Just Sentry.AppContext.empty))
-      (\context -> Scope.setOptionalAppContextAt context Nothing)
+      (\ctx -> Scope.setOptionalAppContextAt ctx Nothing)
       (\scope -> Scope.setOptionalAppContext scope (Just Sentry.AppContext.empty))
       (Map.lookup "app" . (.contexts))
       (Just (Patrol.Context.App Sentry.AppContext.empty))
@@ -1320,7 +1302,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalBrowserContext (Just Sentry.BrowserContext.empty))
-      (\context -> Scope.setOptionalBrowserContextAt context Nothing)
+      (\ctx -> Scope.setOptionalBrowserContextAt ctx Nothing)
       (\scope -> Scope.setOptionalBrowserContext scope (Just Sentry.BrowserContext.empty))
       (Map.lookup "browser" . (.contexts))
       (Just (Patrol.Context.Browser Sentry.BrowserContext.empty))
@@ -1331,7 +1313,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalDeviceContext (Just Sentry.DeviceContext.empty))
-      (\context -> Scope.setOptionalDeviceContextAt context Nothing)
+      (\ctx -> Scope.setOptionalDeviceContextAt ctx Nothing)
       (\scope -> Scope.setOptionalDeviceContext scope (Just Sentry.DeviceContext.empty))
       (Map.lookup "device" . (.contexts))
       (Just (Patrol.Context.Device Sentry.DeviceContext.empty))
@@ -1342,7 +1324,7 @@ spec_optionalRouting = describe "optional scope routing" do
     optionalRouting
       IsolationTarget
       (Sentry.setOptionalTraceContext (Just Sentry.TraceContext.empty))
-      (\context -> Scope.setOptionalTraceContextAt context Nothing)
+      (\ctx -> Scope.setOptionalTraceContextAt ctx Nothing)
       (\scope -> Scope.setOptionalTraceContext scope (Just Sentry.TraceContext.empty))
       (Map.lookup "trace" . (.contexts))
       (Just (Patrol.Context.Trace Sentry.TraceContext.empty))

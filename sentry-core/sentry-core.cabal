@@ -17,6 +17,7 @@ common defaults
     BlockArguments
     DeriveAnyClass
     DerivingStrategies
+    DerivingVia
     ImportQualifiedPost
     MultiWayIf
     OverloadedRecordDot
@@ -24,6 +25,7 @@ common defaults
     PatternSynonyms
     ScopedTypeVariables
     StrictData
+    ViewPatterns
 
   ghc-options:
     -g
@@ -184,6 +186,9 @@ test-suite unit
     ScopePropagationTest
     ScopeTest
     StacktraceTest
+    Test.Concurrent
+    Test.Event
+    Test.Fixtures
     UpdateTest
 
   build-depends:

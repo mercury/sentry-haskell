@@ -23,7 +23,7 @@ import Sentry.Transport.HTTP2.Async (AsyncHttp2Transport (..), Http2Settings (..
 import Sentry.Transport.HTTP2.Async qualified as Http2
 import Sentry.Transport.HTTP2.Connection (applyHttp2Settings)
 import Sentry.Transport.HTTP2.Connection qualified as HTTP2
-import System.Timeout (timeout)
+import Test.Assertions (assertOK, bounded)
 import Test.Hspec
 
 -- | Transport options for all specs: disable cert validation so the embedded
@@ -235,15 +235,7 @@ withBlockedTransport sink action = do
     (\transport -> HTTP2.closeManager transport.manager)
     (action entered)
 
-assertOK :: Delivery.Outcome -> IO ()
-assertOK = \case
-  Delivery.Responded _ status _ -> status `shouldBe` Http.status200
-  Delivery.NetworkFailure err -> expectationFailure (show err)
-
 assertNetworkFailure :: Delivery.Outcome -> IO ()
 assertNetworkFailure = \case
   Delivery.NetworkFailure _ -> pure ()
   Delivery.Responded _ status _ -> expectationFailure ("unexpected response: " <> show status)
-
-bounded :: IO () -> IO ()
-bounded action = timeout 15_000_000 action `shouldReturn` Just ()

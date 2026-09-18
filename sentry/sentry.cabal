@@ -26,6 +26,7 @@ common defaults
     BlockArguments
     DeriveAnyClass
     DerivingStrategies
+    DerivingVia
     ImportQualifiedPost
     MultiWayIf
     OverloadedRecordDot
@@ -33,6 +34,7 @@ common defaults
     PatternSynonyms
     ScopedTypeVariables
     StrictData
+    ViewPatterns
 
   ghc-options:
     -g
@@ -225,6 +227,7 @@ test-suite integration
     Http2CaptureTest
     Http2ConcurrencyTest
     PublicComponentsTest
+    Test.Assertions
 
   build-depends:
     aeson,

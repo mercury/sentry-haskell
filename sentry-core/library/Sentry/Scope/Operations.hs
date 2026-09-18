@@ -1,5 +1,3 @@
-{-# LANGUAGE ViewPatterns #-}
-
 -- | Thread-local scope metadata management for tags, breadcrumbs, and user
 -- information attached to captured events.
 --

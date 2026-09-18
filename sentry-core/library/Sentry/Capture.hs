@@ -1,5 +1,3 @@
-{-# LANGUAGE ViewPatterns #-}
-
 -- | Capture an 'Patrol.Event' and dispatch it through a 'Client'.
 module Sentry.Capture
   ( -- * Capture overrides

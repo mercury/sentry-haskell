@@ -1,8 +1,3 @@
-{-# LANGUAGE GHC2024 #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module CaptureOutcomeTest where
 
 import Control.Exception (toException)

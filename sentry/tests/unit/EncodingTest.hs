@@ -1,7 +1,3 @@
-{-# LANGUAGE GHC2024 #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module EncodingTest where
 
 import Control.Exception (evaluate)

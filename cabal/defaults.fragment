@@ -4,6 +4,7 @@ common defaults
     BlockArguments
     DeriveAnyClass
     DerivingStrategies
+    DerivingVia
     ImportQualifiedPost
     MultiWayIf
     OverloadedRecordDot
@@ -11,6 +12,7 @@ common defaults
     PatternSynonyms
     ScopedTypeVariables
     StrictData
+    ViewPatterns
 
   ghc-options:
     -g

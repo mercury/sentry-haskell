@@ -1,6 +1,3 @@
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE RoleAnnotations #-}
-
 -- | The one composition idiom for pure metadata changes.
 --
 -- An @'Update' a@ is a pending change to an @a@: a wrapped endomorphism that

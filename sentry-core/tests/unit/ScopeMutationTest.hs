@@ -7,10 +7,8 @@ import Data.Map.Strict qualified as Map
 import Patrol qualified
 import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Context qualified as Patrol.Context
-import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.RuntimeContext qualified as Patrol.RuntimeContext
-import Patrol.Type.User qualified as Patrol.User
 import Sentry.Event (fromMessage)
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
@@ -18,21 +16,9 @@ import Sentry.Scope.Operations (ScopeData (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Scope.Update qualified as Update
 import Sentry.Update (Update (..), runUpdate)
+import Test.Fixtures (testUser)
 import Test.Hspec
 import Witch qualified
-
-testUser :: Patrol.User
-testUser =
-  Patrol.User.User
-    { data_ = mempty,
-      email = "alice@example.com",
-      geo = Nothing,
-      id = "user-1",
-      ipAddress = "",
-      name = "Alice",
-      segment = "",
-      username = "alice"
-    }
 
 testContext :: Patrol.Context
 testContext = Patrol.Context.Other (Map.singleton "name" (Aeson.toJSON ("Firefox" :: String)))

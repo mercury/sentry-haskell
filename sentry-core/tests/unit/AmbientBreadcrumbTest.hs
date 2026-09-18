@@ -20,6 +20,7 @@ import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Sentry.Transport (SomeTransport (..))
+import Test.Fixtures (crumb)
 import Test.Hspec
 import Witch qualified
 
@@ -28,9 +29,6 @@ freshContext :: IO a -> IO a
 freshContext action = bracket ThreadLocal.getContext (\old -> ThreadLocal.adjustContext (const old)) \_ -> do
   ThreadLocal.adjustContext (Scope.removeIsolation . Scope.removeCurrent)
   Test.withGlobalScope action
-
-crumb :: String -> Breadcrumb.Breadcrumb
-crumb msg = Breadcrumb.empty{Breadcrumb.message = Witch.from msg}
 
 messages :: IO [String]
 messages = map (Witch.from . (.message)) . toList . (.breadcrumbs) <$> Scope.readMergedScope

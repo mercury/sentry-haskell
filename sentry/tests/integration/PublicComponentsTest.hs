@@ -36,7 +36,7 @@ import Sentry.Transport.HTTP.Sync qualified as HTTP1
 import Sentry.Transport.HTTP2.Async qualified as Async2
 import Sentry.Transport.HTTP2.Connection qualified as HTTP2
 import Sentry.Transport.Instrument qualified as Instrument
-import System.Timeout (timeout)
+import Test.Assertions (assertOK, bounded)
 import Test.Hspec
 
 spec_publicBodies :: Spec
@@ -71,14 +71,6 @@ spec_publicBodies = describe "public encoded bodies and native requests" do
 withHTTP1 :: (HTTP.Manager -> IO a) -> IO a
 withHTTP1 action =
   HTTP.newManager (mkManagerSettings (TLSSettingsSimple True False False def) Nothing) >>= action
-
-assertOK :: Delivery.Outcome -> IO ()
-assertOK = \case
-  Delivery.Responded _ status _ -> status `shouldBe` Status.status200
-  Delivery.NetworkFailure err -> expectationFailure (show err)
-
-bounded :: IO () -> IO ()
-bounded action = timeout 15_000_000 action `shouldReturn` Just ()
 
 -- | Standard builders preserve instrumentation through filtering and reports.
 spec_builderObservation :: Spec

@@ -1,7 +1,3 @@
-{-# LANGUAGE GHC2024 #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE OverloadedStrings #-}
 -- Explicit manager cleanup keeps test resources bounded despite deprecated closeManager.
 {-# OPTIONS_GHC -Wno-x-sentry-experimental -Wno-deprecations #-}
 
@@ -42,7 +38,7 @@ import Sentry.Transport.HTTP.Async qualified as Async
 import Sentry.Transport.HTTP.Delivery qualified as HTTP
 import Sentry.Transport.HTTP.Sync qualified as Sync
 import Sentry.Transport.HTTP2.Async qualified as Http2
-import System.Timeout (timeout)
+import Test.Assertions (bounded)
 import Test.Hspec
 
 spec_outcomes :: Spec
@@ -94,9 +90,6 @@ allDrops sink reports = do
 -- | Expected wire entry, compared as generic JSON without a protocol parser.
 discard :: Text -> Int -> Aeson.Value
 discard reason quantity = Aeson.object ["reason" .= reason, "category" .= ("error" :: Text), "quantity" .= quantity]
-
-bounded :: IO () -> IO ()
-bounded action = timeout 15_000_000 action `shouldReturn` Just ()
 
 withTransport :: String -> (Sink.SinkHandle -> Reports.ClientReports -> Transport.SomeTransport -> IO ()) -> IO ()
 withTransport backend action = Sink.withSink \sink ->

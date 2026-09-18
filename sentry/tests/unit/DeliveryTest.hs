@@ -1,7 +1,3 @@
-{-# LANGUAGE GHC2024 #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module DeliveryTest where
 
 import Data.Foldable (for_)

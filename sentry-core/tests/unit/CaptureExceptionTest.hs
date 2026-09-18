@@ -11,7 +11,6 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Exception qualified as Patrol.Exception
 import Patrol.Type.Exceptions qualified as Patrol.Exceptions
 import Patrol.Type.Level qualified as Patrol.Level
-import Patrol.Type.Mechanism qualified as Patrol.Mechanism
 import Sentry.Capture (captureException)
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
@@ -21,6 +20,7 @@ import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations (ScopeData (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
+import Test.Event (lastMechanism)
 import Test.Hspec
 
 spec_captureException :: Spec
@@ -136,12 +136,3 @@ spec_captureException = describe "captureException" do
     case events of
       [event] -> lastMechanism event `shouldBe` Just Mechanism.generic
       _ -> expectationFailure $ "expected one event, got " <> show (length events)
-
--- | The 'Patrol.Mechanism' attached to the last exception value in an event,
--- if any.
-lastMechanism :: Patrol.Event.Event -> Maybe Patrol.Mechanism.Mechanism
-lastMechanism event = do
-  excs <- event.exception
-  case Patrol.Exceptions.values excs of
-    [] -> Nothing
-    xs -> Patrol.Exception.mechanism (last xs)

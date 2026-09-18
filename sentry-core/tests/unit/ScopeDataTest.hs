@@ -4,9 +4,7 @@ import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
-import Data.Text (Text)
 import Patrol qualified
-import Patrol.Type.Breadcrumb qualified as Patrol.Breadcrumb
 import Patrol.Type.Context qualified as Patrol.Context
 import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
@@ -19,6 +17,7 @@ import Sentry.Scope.Operations (ScopeData (..), ScopeType (..))
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
 import Sentry.User qualified
+import Test.Fixtures (crumb)
 import Test.Hspec
 import Witch qualified
 
@@ -146,10 +145,6 @@ spec_ScopeData_Monoid = describe "ScopeData Monoid" do
     lhs.tags `shouldBe` rhs.tags
 
 -- Helpers
-
--- | Minimal breadcrumb with a distinguishable message.
-crumb :: Text -> Patrol.Breadcrumb
-crumb msg = Patrol.Breadcrumb.empty{Patrol.Breadcrumb.message = msg}
 
 testUser1 :: Patrol.User
 testUser1 =

@@ -1,5 +1,3 @@
-{-# LANGUAGE NumericUnderscores #-}
-
 -- | The 'AsyncExecutor' constructor and its task queue, exposed for tests
 -- that need to synchronize on queue state directly.
 module Sentry.Transport.Executor.Async.Internal
