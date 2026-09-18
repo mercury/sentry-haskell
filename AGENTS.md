@@ -321,7 +321,9 @@ response announced into `Delivery.RateLimit` values:
 
 `interpret` applies the SDK's policy to a status and headers; `interpretNow`
 dates the deadlines from the response, which a relative `Retry-After`
-requires.
+requires. Limits are read in the precedence Sentry's specification gives,
+independently of the status: `X-Sentry-Rate-Limits`, then `Retry-After`, then
+the sixty-second fallback for a 429 that announced neither.
 
 **`sentry/library/Sentry/Transport/Executor/RateLimiter.hs`** holds the
 deadlines and answers questions about them, with no protocol knowledge:

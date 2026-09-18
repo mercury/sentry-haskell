@@ -25,17 +25,30 @@ data Outcome = NetworkFailure Text | Responded HttpTypes.Status HttpTypes.Respon
   deriving stock (Show)
 
 -- | Interpret an HTTP result as SDK delivery policy.
+--
+-- Rate limits are read in the precedence Sentry specifies, independently of
+-- the status, because their rate limiting header may appear on any response:
+--
+--   1. @X-Sentry-Rate-Limits@, if it yields at least one limit.
+--   2. @Retry-After@, applied to all categories.
+--   3. On a @429@ with neither, a sixty-second limit on all categories.
+--
+-- See <https://develop.sentry.dev/sdk/expected-features/rate-limiting/>.
 interpret :: UTCTime -> Outcome -> Delivery.Outcome
 interpret now = \case
   NetworkFailure _ -> Delivery.rejected ClientReport.NetworkError
-  Responded status headers
-    | status == HttpTypes.tooManyRequests429 ->
-        Delivery.throttled [Delivery.allCategoriesUntil (addUTCTime defaultDelay now)]
-    | let code = HttpTypes.statusCode status in 200 <= code && code < 300 ->
-        Delivery.acceptedWith $
-          maybe [] (sentryHeader now) (lookup "X-Sentry-Rate-Limits" headers)
-            <> maybe [] (retryAfter now) (lookup "Retry-After" headers)
-    | otherwise -> Delivery.rejected ClientReport.SendError
+  Responded status headers -> Delivery.Outcome (disposition status) (limits status headers)
+  where
+    disposition status
+      | status == HttpTypes.tooManyRequests429 = Delivery.Rejected Delivery.AccountedUpstream
+      | let code = HttpTypes.statusCode status in 200 <= code && code < 300 = Delivery.Accepted
+      | otherwise = Delivery.Rejected (Delivery.RecordLocally ClientReport.SendError)
+
+    limits status headers
+      | announced@(_ : _) <- maybe [] (sentryHeader now) (lookup "X-Sentry-Rate-Limits" headers) = announced
+      | Just value <- lookup "Retry-After" headers = retryAfter now value
+      | status == HttpTypes.tooManyRequests429 = [Delivery.allCategoriesUntil (addUTCTime defaultDelay now)]
+      | otherwise = []
 
 -- | Interpret a response, computing rate-limit deadlines from a timestamp
 -- taken after the response arrives.
