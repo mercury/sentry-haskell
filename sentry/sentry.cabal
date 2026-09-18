@@ -76,6 +76,7 @@ library
     Sentry
     Sentry.Async
     Sentry.Transport.Delivery
+    Sentry.Transport.Encoding
     Sentry.Transport.Executor.Async
     Sentry.Transport.Executor.RateLimiter
     Sentry.Transport.HTTP.Async
@@ -185,6 +186,7 @@ test-suite unit
     AsyncExecutorTest
     AsyncScopeTest
     DeliveryTest
+    EncodingTest
     RateLimiterTest
     ScopeMetadataTest
 

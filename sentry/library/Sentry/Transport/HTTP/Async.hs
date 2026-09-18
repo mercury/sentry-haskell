@@ -30,10 +30,10 @@ import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport.Delivery qualified as Delivery
+import Sentry.Transport.Encoding (Compression (..))
 import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP.Request qualified as Request
 import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope, toOutcome)
 
@@ -80,10 +80,10 @@ build opts clientReports queueSize manager dsn = do
               Patrol.Items.EnvelopeItems [Patrol.Item.ClientReport report]
           }
       reportConfig = fmap (\cr -> ClientReportConfig{accumulator = cr, toEnvelope}) clientReports
-      template = Request.prepare opts.compression dsn
+      template = Request.prepare dsn
       sendFn envelope rateLimiter = do
         now <- getCurrentTime
-        outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template envelope
+        outcome <- toOutcome <$> sendEnvelope manager opts.instrumentation template opts.compression envelope
         -- Record failures; upstream accounts for HTTP 429 rejections.
         for_ (Delivery.discardReason outcome) \reason ->
           for_ (fmap (.accumulator) reportConfig) \cr ->

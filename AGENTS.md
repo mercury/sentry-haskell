@@ -345,6 +345,7 @@ Server-side rate limit enforcement per Sentry protocol (compliant with official 
 | `sentry-core/library/Sentry/User.hs` | The user record plus its field builders (same shape: `Geo`, `Breadcrumb`, `Event`, `RuntimeContext`, `Request`, `OsContext`, `AppContext`, `Mechanism`) |
 | `sentry-core/library/Sentry/Event/Captured.hs` | `CapturedEvent`, the in-flight capture wrapper |
 | `sentry-core/library/Sentry/Scope/Update.hs` | Composable atomic scope updates (`ScopeUpdate`) |
+| `sentry/library/Sentry/Transport/Encoding.hs` | Envelope serialization and compression (`EncodedBody`) |
 | `sentry/library/Sentry/Transport/Executor/Async.hs` | Async executor with worker threads |
 | `sentry/library/Sentry/Transport/Executor/RateLimiter.hs` | Rate limiting implementation |
 | `cabal.project` | Workspace package list |

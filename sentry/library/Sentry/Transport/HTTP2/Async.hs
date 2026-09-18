@@ -1,5 +1,5 @@
 -- | Asynchronous HTTP\/2 transport for Sentry.
--- 
+--
 -- A single long-lived HTTP\/2 TLS connection is maintained for the life of the
 -- transport; it is is established when the first envelope is sent, and
 -- reconnected transparently if the server closes it.
@@ -50,10 +50,10 @@ import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport.Delivery qualified as Delivery
+import Sentry.Transport.Encoding (Compression (..))
 import Sentry.Transport.Executor.Async (AsyncExecutor, ClientReportConfig (..))
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import Sentry.Transport.HTTP.Request (Compression (..))
 import Sentry.Transport.HTTP2.Connection (Http2Settings (..), ReconnectDecision (..), exponentialBackoff, reconnectAfter)
 import Sentry.Transport.HTTP2.Connection qualified as Connection
 

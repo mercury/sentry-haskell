@@ -45,9 +45,11 @@ import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Delivery qualified as Delivery
+import Sentry.Transport.Encoding (Compression (..))
+import Sentry.Transport.Encoding qualified as Encoding
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
-import Sentry.Transport.HTTP.Request (Compression (..), PreparedRequest)
+import Sentry.Transport.HTTP.Request (PreparedRequest)
 import Sentry.Transport.HTTP.Request qualified as Request
 import UnliftIO.Exception (handle, toException)
 import Witch qualified
@@ -67,7 +69,7 @@ data SyncHttpTransport = SyncHttpTransport
 --
 -- > SyncHttpTransport.new def
 -- > SyncHttpTransport.new (Witch.from manager)
--- > SyncHttpTransport.new def{compression = NoCompression}
+-- > SyncHttpTransport.new def{compression = None}
 -- > AsyncHttpTransport.new def AsyncExecutor.defaultQueueSize
 type HttpTransportOptions :: Type
 data HttpTransportOptions = HttpTransportOptions
@@ -120,8 +122,8 @@ build ::
   IO SyncHttpTransport
 build opts clientReports manager dsn = do
   rateLimiter <- newIORef RateLimiter.new
-  let template = Request.prepare opts.compression dsn
-      sendFn = sendEnvelope manager opts.instrumentation template
+  let template = Request.prepare dsn
+      sendFn = sendEnvelope manager opts.instrumentation template opts.compression
   pure SyncHttpTransport{rateLimiter, sendFn, clientReports}
 
 -- | Send an envelope via HTTP, returning the response.
@@ -133,9 +135,10 @@ sendEnvelope ::
   HttpClient.Manager ->
   HttpClientInstrumentationConfig ->
   PreparedRequest ->
+  Compression ->
   Patrol.Envelope ->
   m (Either HttpClient.HttpExceptionContent (HttpClient.Response ()))
-sendEnvelope manager otelConfig prepared envelope =
+sendEnvelope manager otelConfig prepared compression envelope =
   -- Network-level failures (connection refused, DNS, timeout, TLS) throw an
   -- 'HttpException'; fold them into the 'Left' branch so callers (notably the
   -- async worker thread) never see a thrown exception.
@@ -143,7 +146,7 @@ sendEnvelope manager otelConfig prepared envelope =
   -- Status-code errors are already values because the prepared request sets
   -- @http-client@'s status-code check to a no-op.
   liftIO . handle (pure . Left . exceptionContent) $ do
-    let request = Request.attach prepared envelope
+    let request = Request.attach prepared (Encoding.encode compression envelope)
     response <- HttpClient.httpLbs' otelConfig request manager
     let status = HttpTypes.statusCode . HttpClient.responseStatus $ response
         responseNoBody = void response

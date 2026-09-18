@@ -59,7 +59,7 @@ import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Text.Encoding qualified as Encoding
+import Data.Text.Encoding qualified as Text.Encoding
 import Network.HTTP.Semantics qualified as HTTPSemantics
 import Network.HTTP.Types (RequestHeaders, ResponseHeaders, methodPost)
 import Network.HTTP2.Client qualified as HTTP2
@@ -71,8 +71,8 @@ import Patrol.Constant qualified as Patrol.Constant
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Sentry.Sdk qualified
 import Sentry.Transport.Delivery qualified as Delivery
-import Sentry.Transport.HTTP.Request (Compression)
-import Sentry.Transport.HTTP.Request qualified as Request
+import Sentry.Transport.Encoding (Compression)
+import Sentry.Transport.Encoding qualified as Encoding
 import UnliftIO.Exception (catchAny, finally, mask, onException)
 import Witch qualified
 
@@ -106,15 +106,15 @@ mkEndpoint compression dsn =
   Endpoint
     { host = Text.unpack dsn.host,
       port = maybe 443 fromIntegral dsn.port,
-      path = Encoding.encodeUtf8 $ dsn.path <> "api/" <> dsn.projectId <> "/envelope/",
+      path = Text.Encoding.encodeUtf8 $ dsn.path <> "api/" <> dsn.projectId <> "/envelope/",
       headers =
         [ ("content-type", Patrol.Constant.applicationXSentryEnvelope),
-          ("user-agent", Encoding.encodeUtf8 Sentry.Sdk.userAgent),
+          ("user-agent", Text.Encoding.encodeUtf8 Sentry.Sdk.userAgent),
           ("x-sentry-auth", Patrol.Dsn.intoAuthorization dsn)
         ]
           <> case compression of
-            Request.None -> []
-            Request.Gzip -> [("content-encoding", "gzip")],
+            Encoding.None -> []
+            Encoding.Gzip -> [("content-encoding", "gzip")],
       compression
     }
 
@@ -520,7 +520,7 @@ runConnect mgr policy = (`onException` resetClaim) $ mask $ \restore -> do
 sendOn :: Manager -> Active -> Patrol.Envelope -> IO Delivery.Outcome
 sendOn mgr conn envelope = do
   outcomeRef <- newIORef Nothing
-  let body = Request.serializeBody mgr.target.compression envelope
+  let body = Encoding.bytes (Encoding.encode mgr.target.compression envelope)
       req =
         HTTP2.requestStreaming
           methodPost

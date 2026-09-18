@@ -3,7 +3,6 @@ packages:
   , sentry-core
 
 tests: True
-
 -- Pin the Hackage snapshot while allowing each compiler to resolve dependencies.
 index-state: 2026-09-17T18:01:45Z
 
