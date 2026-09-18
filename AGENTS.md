@@ -271,13 +271,13 @@ Rules worth preserving:
 - **Type-safe configuration**: `ClientOptions` record with strongly-typed fields
 - **Existential wrappers**: Enable storing different transport/integration implementations together (similar to trait objects in Rust)
 - **Plugin architecture**: Integrations act as both event sources AND processors
-- **Concurrent-safe**: Uses `IORef`, `stm-containers`, `unagi-chan` for thread safety
+- **Concurrent-safe**: Uses `IORef`, `stm-containers`, `stm-chans` for thread safety
 
 #### Concurrency Patterns
 
 The SDK uses several Haskell concurrency primitives for thread-safe operation:
 
-- **Bounded channels** (`unagi-chan`): Lock-free producer-consumer queues for task distribution
+- **Bounded channels** (`stm-chans`): A `TBMQueue` for task distribution, closed to signal shutdown
 - **TVar** (`stm`): Software transactional memory for shutdown coordination
 - **MVar**: Point-to-point synchronization for flush operations
 - **Async**: Lightweight thread management for dedicated workers
@@ -292,7 +292,7 @@ This approach minimizes contention while maintaining type safety and preventing 
 Asynchronous envelope delivery using dedicated worker threads (mirrors sentry-rust's executor pattern):
 
 **Architecture:**
-- **Bounded task queue** (default 30 items, configurable) using `unagi-chan`
+- **Bounded task queue** (default 30 items, configurable) using `stm-chans`' `TBMQueue`
 - **Dedicated worker thread** processes tasks asynchronously via `async`
 - **Rate limiter integration** filters envelopes before sending
 - **Non-blocking semantics**: Queue-full events are dropped (prevents blocking callers)
@@ -369,11 +369,11 @@ Server-side rate limit enforcement per Sentry protocol (compliant with official 
 **Core runtime** (sentry-core):
 - `patrol`: Sentry protocol types (external package)
 - `witch`: Type conversions
-- `stm-containers`, `unagi-chan`: Concurrent data structures
+- `stm-containers`: Concurrent data structures
 - `text`, `time`, `vector`: Standard utilities
 
 **sentry runtime** (extends sentry-core):
-- `async`, `stm`, `unagi-chan`, `unliftio`: Concurrency primitives
+- `async`, `stm`, `stm-chans`, `unliftio`: Concurrency primitives
 - `http-client`: HTTP transport client
 - `aeson`, `bytestring`: JSON parsing and binary data
 - `extra`: Utility functions

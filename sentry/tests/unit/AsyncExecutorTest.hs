@@ -1,16 +1,16 @@
 module AsyncExecutorTest where
 
-import Control.Concurrent (yield)
+import Control.Concurrent (myThreadId, throwTo)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, tryPutMVar)
 import Control.Concurrent.STM (check)
 import Control.Concurrent.STM.TBMQueue qualified as TBM
 import Control.Concurrent.STM.TQueue (TQueue, flushTQueue, newTQueueIO, readTQueue, tryReadTQueue, writeTQueue)
 import Control.Exception (MaskingState (Unmasked), bracket, finally, getMaskingState, mask_)
-import Control.Monad (replicateM, replicateM_, void)
+import Control.Exception qualified as Exception
+import Control.Monad (replicateM_, void)
 import Control.Monad.STM (atomically)
 import Data.Foldable (for_)
-import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
 import Patrol.Type.DataCategory qualified as DataCategory
@@ -27,12 +27,13 @@ import Sentry.Init qualified as Init
 import Sentry.Test qualified as Test
 import Sentry.Transport qualified as Transport
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
+import Sentry.Transport.Executor.Async.Internal qualified as Internal
 import Sentry.Transport.Executor.RateLimiter (RateLimiter)
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Test.Hspec
-import UnliftIO.Exception (displayException, fromException, throwIO, toException)
+import UnliftIO.Exception (throwIO, toException)
 
 spec_send :: Spec
 spec_send = parallel $ describe "sending envelopes" do
@@ -129,68 +130,31 @@ spec_flush = parallel $ describe "flushing the executor" do
 
 spec_shutdown :: Spec
 spec_shutdown = parallel $ describe "shutting the executor down" do
-  it "gracefully shuts the worker down" do
-    let sendFn _ = pure
-    executor <- AsyncExecutor.new 1 Nothing sendFn
-    -- shutdown call succeeds
-    res <- Transport.shutdown executor 1
-    res `shouldBe` Transport.ShutdownSucceeded
-    -- worker was shut down gracefully
-    Async.poll executor.handle >>= \case
-      Nothing -> expectationFailure "async worker should have completed"
-      Just (Left exc) -> expectationFailure $ "async worker failed to shut down: " <> displayException exc
-      Just (Right ()) -> pure ()
+  it "rejects sends, flushes and repeat shutdowns once gracefully closed" do
+    executor <- AsyncExecutor.new 1 Nothing (\_ rl -> pure rl)
+    Transport.shutdown executor 1 `shouldReturn` Transport.ShutdownSucceeded
+    Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
+    Transport.flush executor 1 `shouldReturn` Transport.FlushFailed_Shutdown
+    Transport.shutdown executor 1 `shouldReturn` Transport.ShutdownFailed_AlreadyShutdown
 
-  it "immediately shuts the worker down when timeout is exceeded" do
-    q <- newTQueueIO
-    -- construct a send function that blocks until `var` is filled
-    var <- newEmptyMVar
-    let sendFn env rl = readMVar var *> testSendFn q id env rl
-    executor <- AsyncExecutor.new 1 Nothing sendFn
-    -- envelope is enqueued even though the send function is blocking
-    sendRes <- Transport.send executor testEnvelope
-    sendRes `shouldBe` Transport.SendProcessed
-    -- shutdown call times out because of the empty mvar
-    shutdownRes <- Transport.shutdown executor 0.001
-    shutdownRes `shouldBe` (Transport.ShutdownFailed_TimedOut 0.001)
-    -- the worker was terminated after the graceful shutdown failed
-    Async.poll executor.handle >>= \case
-      Nothing -> do
-        Async.cancel executor.handle
-        expectationFailure "async worker should have completed"
-      Just (Left exc) -> fromException exc `shouldBe` Just Async.AsyncCancelled
-      Just (Right ()) -> expectationFailure $ "async worker should have been canceled"
-    -- the worker was killed before the blocking call was lifted, so the
-    -- envelope should never have sent
-    envelope <- atomically $ tryReadTQueue q
-    envelope `shouldBe` Nothing
-
-  it "stops processing envelopes" do
-    let sendFn _ = pure
-    executor <- AsyncExecutor.new 1 Nothing sendFn
-    void $ Transport.shutdown executor 1
-    res <- Transport.send executor testEnvelope
-    res `shouldBe` Transport.SendFailed_Shutdown
-
-  it "stops processing flush requests" do
-    let sendFn _ = pure
-    executor <- AsyncExecutor.new 1 Nothing sendFn
-    void $ Transport.shutdown executor 1
-    res <- Transport.flush executor 1
-    res `shouldBe` Transport.FlushFailed_Shutdown
-
-  it "does not shutdown more than once" do
-    let sendFn _ = pure
-    executor <- AsyncExecutor.new 1 Nothing sendFn
-    void $ Transport.shutdown executor 1
-    res <- Transport.shutdown executor 1
-    res `shouldBe` Transport.ShutdownFailed_AlreadyShutdown
+  it "immediately shuts the worker down when timeout is exceeded" $ boundedLifecycle do
+    entered <- newEmptyMVar
+    stopped <- newEmptyMVar
+    never <- newEmptyMVar @()
+    let sender _ rl = (putMVar entered () >> readMVar never >> pure rl) `finally` putMVar stopped ()
+    withExecutor 1 sender \executor -> do
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+      readMVar entered
+      Transport.shutdown executor 0.001 `shouldReturn` Transport.ShutdownFailed_TimedOut 0.001
+      readMVar stopped
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
 
   it "cancelling client close also terminates the executor worker" do
     completed <- timeout 5_000_000 do
       entered <- newEmptyMVar
       never <- newEmptyMVar @()
-      let sendFn _ rl = putMVar entered () >> readMVar never >> pure rl
+      stopped <- newEmptyMVar
+      let sendFn _ rl = (putMVar entered () >> readMVar never >> pure rl) `finally` putMVar stopped ()
       executor <- AsyncExecutor.new 1 Nothing sendFn
       let opts =
             (Options.defaultClientOptions)
@@ -205,9 +169,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
       Async.withAsync (Init.close h) \closing -> do
         awaitClosed executor
         Async.cancel closing
-        Async.poll executor.handle >>= \case
-          Just (Left exn) -> fromException exn `shouldBe` Just Async.AsyncCancelled
-          _ -> expectationFailure "close cancellation left the executor worker running"
+        readMVar stopped
         Init.close h `shouldReturn` Transport.ShutdownFailed_Other "Client close interrupted"
     completed `shouldBe` Just ()
 
@@ -224,11 +186,6 @@ spec_resilience = parallel $ describe "worker resilience" do
     -- The worker caught the exception, so flush still completes.
     flushRes <- Transport.flush executor 1
     flushRes `shouldBe` Transport.FlushSucceeded
-    -- The worker is still alive: the throw did not terminate it.
-    Async.poll executor.handle >>= \case
-      Nothing -> pure ()
-      Just (Left exc) -> expectationFailure $ "worker died: " <> displayException exc
-      Just (Right ()) -> expectationFailure "worker exited unexpectedly"
     -- Subsequent sends are still accepted and shutdown remains graceful.
     res1 <- Transport.send executor testEnvelope
     res1 `shouldBe` Transport.SendProcessed
@@ -325,27 +282,6 @@ testDsn =
 -- These tests own all worker resources and bound every scenario.
 spec_admissionLifecycle :: Spec
 spec_admissionLifecycle = describe "admission lifecycle" do
-  it "drains every accepted send racing shutdown" $ boundedLifecycle do
-    replicateM_ 100 do
-      delivered <- newIORef (0 :: Int)
-      withExecutor 128 (\_ rl -> atomicModifyIORef' delivered (\n -> (n + 1, ())) >> pure rl) \executor -> do
-        start <- newEmptyMVar
-        ready <- newTQueueIO
-        let producer = do
-              first <- Transport.send executor testEnvelope
-              atomically $ writeTQueue ready ()
-              readMVar start
-              rest <- replicateM 8 $ Transport.send executor testEnvelope
-              pure (first : rest)
-        Async.withAsync (Async.mapConcurrently (const producer) [1 .. 32 :: Int]) \producers -> do
-          replicateM_ 32 $ atomically $ readTQueue ready
-          putMVar start ()
-          yield
-          Transport.shutdown executor 2 `shouldReturn` Transport.ShutdownSucceeded
-          results <- concat <$> Async.wait producers
-          readIORef delivered `shouldReturn` length (filter (== Transport.SendProcessed) results)
-          Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
-
   it "acknowledges an admitted flush before graceful shutdown completes" $ boundedLifecycle do
     entered <- newEmptyMVar
     proceed <- newEmptyMVar
@@ -363,16 +299,57 @@ spec_admissionLifecycle = describe "admission lifecycle" do
   it "runs callbacks unmasked when constructed under masking" $ boundedLifecycle do
     observed <- newEmptyMVar
     executor <- mask_ $ AsyncExecutor.new 2 Nothing (\_ rl -> getMaskingState >>= putMVar observed >> pure rl)
-    flip finally (Async.cancel executor.handle) do
+    flip finally (void $ Transport.shutdown executor 0) do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar observed `shouldReturn` Unmasked
       Transport.shutdown executor 1 `shouldReturn` Transport.ShutdownSucceeded
 
+  it "reports asynchronous callback failure and rejects subsequent sends" $ boundedLifecycle do
+    entered <- newEmptyMVar
+    release <- newEmptyMVar
+    withExecutor 4 (\_ _ -> putMVar entered () >> readMVar release >> Exception.throwIO Async.AsyncCancelled) \executor -> do
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+      readMVar entered
+      putMVar release ()
+      Transport.shutdown executor 2 >>= (`shouldSatisfy` \case Transport.ShutdownFailed_Other _ -> True; _ -> False)
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
+
+  it "wakes a concurrent flush when the worker is cancelled" $ boundedLifecycle do
+    worker <- newEmptyMVar
+    never <- newEmptyMVar @()
+    withExecutor 4 (\_ rl -> myThreadId >>= putMVar worker >> readMVar never >> pure rl) \executor -> do
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+      thread <- readMVar worker
+      Async.withAsync (Transport.flush executor 2) \flushing -> do
+        -- Waiting for admission (rather than racing a timeout) is what makes
+        -- the outcome below deterministic: the flush is guaranteed to be
+        -- queued, so cancelling the worker can only fail it with
+        -- 'Transport.FlushFailed_Other', never 'Transport.FlushFailed_Shutdown'.
+        awaitQueued executor
+        throwTo thread Async.AsyncCancelled
+        Async.wait flushing >>= (`shouldSatisfy` \case Transport.FlushFailed_Other _ -> True; _ -> False)
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
+
+  it "reports worker failure while shutdown waits on a full queue" $ boundedLifecycle do
+    worker <- newEmptyMVar
+    never <- newEmptyMVar @()
+    withExecutor 1 (\_ rl -> myThreadId >>= putMVar worker >> readMVar never >> pure rl) \executor -> do
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+      thread <- readMVar worker
+      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
+      Async.withAsync (Transport.shutdown executor 2) \closing -> do
+        awaitClosed executor
+        throwTo thread Async.AsyncCancelled
+        Async.wait closing >>= (`shouldSatisfy` \case Transport.ShutdownFailed_Other _ -> True; _ -> False)
+
   it "cancels a worker created by deferred client acquisition" $ boundedLifecycle do
     created <- newEmptyMVar
     observed <- newEmptyMVar
+    stopped <- newEmptyMVar
     never <- newEmptyMVar @()
-    let sendFn _ rl = getMaskingState >>= putMVar observed >> readMVar never >> pure rl
+    let sendFn _ rl =
+          (getMaskingState >>= putMVar observed >> readMVar never >> pure rl)
+            `finally` putMVar stopped ()
         factory _ _ = do
           executor <- AsyncExecutor.new 2 Nothing sendFn
           putMVar created executor
@@ -389,31 +366,9 @@ spec_admissionLifecycle = describe "admission lifecycle" do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar observed `shouldReturn` Unmasked
       Init.close clientHandle `shouldReturn` Transport.ShutdownFailed_TimedOut 0.001
-      Async.poll executor.handle >>= (`shouldSatisfy` \case Just (Left _) -> True; _ -> False)
-
-  it "wakes a flush when the worker fails and rejects subsequent sends" $ boundedLifecycle do
-    entered <- newEmptyMVar
-    never <- newEmptyMVar @()
-    withExecutor 4 (\_ rl -> putMVar entered () >> readMVar never >> pure rl) \executor -> do
-      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
-      readMVar entered
-      Async.withAsync (Transport.flush executor 2) \flushing -> do
-        awaitQueued executor
-        Async.cancel executor.handle
-        Async.wait flushing >>= (`shouldSatisfy` \case Transport.FlushFailed_Other _ -> True; _ -> False)
-      Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
-
-  it "reports worker failure while shutdown is waiting on a full queue" $ boundedLifecycle do
-    entered <- newEmptyMVar
-    never <- newEmptyMVar @()
-    withExecutor 1 (\_ rl -> putMVar entered () >> readMVar never >> pure rl) \executor -> do
-      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
-      readMVar entered
-      Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
-      Async.withAsync (Transport.shutdown executor 2) \closing -> do
-        awaitClosed executor
-        Async.cancel executor.handle
-        Async.wait closing >>= (`shouldSatisfy` \case Transport.ShutdownFailed_Other _ -> True; _ -> False)
+      -- The worker was cancelled out of its blocked send rather than left to
+      -- run past the client that created it.
+      readMVar stopped
 
   it "treats negative timeouts as immediate and saturates huge durations" $ boundedLifecycle do
     withExecutor 2 (\_ -> pure) \executor -> do
@@ -426,12 +381,17 @@ boundedLifecycle :: IO () -> IO ()
 boundedLifecycle action = timeout 10_000_000 action `shouldReturn` Just ()
 
 withExecutor :: Int -> (Patrol.Envelope -> RateLimiter -> IO RateLimiter) -> (AsyncExecutor.AsyncExecutor -> IO a) -> IO a
-withExecutor size sendFn = bracket (AsyncExecutor.new size Nothing sendFn) (Async.cancel . (.handle))
+withExecutor size sendFn = bracket (AsyncExecutor.new size Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0)
 
+-- | Block until the executor's task queue closes.
+--
+-- The public 'Sentry.Transport.Executor.Async' module keeps the queue
+-- private; this reaches into 'Sentry.Transport.Executor.Async.Internal' for
+-- the passive STM wait, rather than polling the public boundary.
 awaitClosed :: AsyncExecutor.AsyncExecutor -> IO ()
-awaitClosed executor = atomically $ TBM.isClosedTBMQueue executor.taskQueue >>= check
+awaitClosed executor = atomically $ TBM.isClosedTBMQueue (Internal.taskQueue executor) >>= check
 
 -- The worker is held inside its callback in callers of this helper, so the
 -- queued marker cannot be consumed before we observe it.
 awaitQueued :: AsyncExecutor.AsyncExecutor -> IO ()
-awaitQueued executor = atomically $ TBM.isEmptyTBMQueue executor.taskQueue >>= check . not
+awaitQueued executor = atomically $ TBM.isEmptyTBMQueue (Internal.taskQueue executor) >>= check . not

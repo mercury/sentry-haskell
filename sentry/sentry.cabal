@@ -78,6 +78,7 @@ library
     Sentry.Transport.Delivery
     Sentry.Transport.Encoding
     Sentry.Transport.Executor.Async
+    Sentry.Transport.Executor.Async.Internal
     Sentry.Transport.Executor.RateLimiter
     Sentry.Transport.HTTP.Async
     Sentry.Transport.HTTP.Request

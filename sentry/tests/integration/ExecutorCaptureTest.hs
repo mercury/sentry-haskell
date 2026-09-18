@@ -1,8 +1,7 @@
 module ExecutorCaptureTest where
 
-import Control.Concurrent.Async qualified as Async
 import Control.Exception (bracket)
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, void)
 import Data.Default (def)
 import Data.Maybe (isJust)
 import Network.Connection (TLSSettings (TLSSettingsSimple))
@@ -31,7 +30,7 @@ spec_ownedCapture =
         let sendFn envelope rl = do
               Transport.send sync envelope `shouldReturn` Transport.SendProcessed
               pure rl
-        bracket (Executor.new 32 Nothing sendFn) (Async.cancel . (.handle)) \executor -> do
+        bracket (Executor.new 32 Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0) \executor -> do
           let opts =
                 (Options.defaultClientOptions)
                   { Options.dsn = Dsn.Explicit dsn,
