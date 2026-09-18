@@ -1,6 +1,9 @@
 module InstrumentTest where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (AsyncCancelled, async, cancel, waitCatch)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (SomeException, fromException)
 import Control.Monad (void)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Foldable (for_)
@@ -11,6 +14,7 @@ import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Encoding qualified as Encoding
 import Sentry.Transport.HTTP.Delivery qualified as HTTPDelivery
 import Sentry.Transport.Instrument qualified as Instrument
+import System.Timeout (timeout)
 import Test.Hspec
 import UnliftIO.Exception (throwIO, tryAny)
 
@@ -23,7 +27,7 @@ spec_observation = describe "observing a delivery attempt" do
       Instrument.observing (writeIORef observed . Just) Encoding.Gzip (\_ -> pure ("sentinel" :: String)) testEnvelope
     result `shouldBe` "sentinel"
     Just attempt <- readIORef observed
-    attempt.outcome `shouldBe` "sentinel"
+    either (const Nothing) Just attempt.outcome `shouldBe` Just "sentinel"
 
   -- The size an observer reports must be the length of the bytes the sender
   -- was handed, which is what 'PublicComponentsTest' shows reaching the wire.
@@ -53,18 +57,69 @@ spec_isolation = describe "observer isolation" do
       Instrument.observing (\_ -> throwIO (userError "metrics backend down")) Encoding.Gzip (\_ -> pure ()) testEnvelope
     result `shouldBe` ()
 
-  it "does not observe an attempt whose sender threw" do
-    called <- newIORef False
+  it "observes a sender exception and preserves it when the observer fails" do
+    observed <- newIORef Nothing
+    let failure = userError "sender failed"
     outcome <-
+      tryAny $
+        Instrument.observing
+          (\attempt -> writeIORef observed (Just attempt) >> throwIO (userError "observer failed"))
+          Encoding.Gzip
+          (\_ -> threadDelay 20_000 >> throwIO failure :: IO ())
+          testEnvelope
+    either fromException (const Nothing) outcome `shouldBe` Just failure
+    Just attempt <- readIORef observed
+    either fromException (const Nothing) attempt.outcome `shouldBe` Just failure
+    attempt.elapsed `shouldSatisfy` (>= 0.02)
+    attempt.size `shouldBe` (Encoding.encode Encoding.Gzip testEnvelope).size
+
+  it "observes cancellation and propagates it" do
+    started <- newEmptyMVar
+    blocked <- newEmptyMVar
+    observed <- newIORef Nothing
+    worker <-
+      async $
+        Instrument.observing
+          (writeIORef observed . Just)
+          Encoding.Gzip
+          (\_ -> putMVar started () >> takeMVar blocked :: IO ())
+          testEnvelope
+    timeout 1_000_000 (takeMVar started) `shouldReturn` Just ()
+    timeout 1_000_000 (cancel worker) `shouldReturn` Just ()
+    result <- waitCatch worker
+    result `shouldSatisfy` isFailure
+    Just attempt <- readIORef observed
+    attempt.outcome `shouldSatisfy` isFailure
+
+  for_ [False, True] \senderFails ->
+    it ("propagates observer cancellation after sender failure: " <> show senderFails) do
+      started <- newEmptyMVar
+      blocked <- newEmptyMVar
+      worker <-
+        async $
+          Instrument.observing
+            (\_ -> putMVar started () >> takeMVar blocked)
+            Encoding.None
+            (\_ -> if senderFails then throwIO (userError "sender failed") else pure ())
+            testEnvelope
+      timeout 1_000_000 (takeMVar started) `shouldReturn` Just ()
+      timeout 1_000_000 (cancel worker) `shouldReturn` Just ()
+      result <- waitCatch worker
+      either (fmap (const True) . fromException @AsyncCancelled) (const Nothing) result `shouldBe` Just True
+
+  it "does not observe encoding failures" do
+    called <- newIORef False
+    _ <-
       tryAny $
         Instrument.observing
           (\_ -> writeIORef called True)
           Encoding.Gzip
-          (\_ -> throwIO (userError "boom") :: IO ())
-          testEnvelope
-    outcome `shouldSatisfy` either (const True) (const False)
-    -- Nothing was reported, because there was no outcome to report.
+          (\_ -> pure ())
+          (error "encoding failed")
     readIORef called `shouldReturn` False
+
+isFailure :: Either SomeException a -> Bool
+isFailure = either (const True) (const False)
 
 -- | One combinator serves every backend, because the outcome type is free.
 --

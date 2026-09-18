@@ -28,7 +28,7 @@ import Sentry.Transport.Executor.Async (AsyncExecutor)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.HTTP.Delivery qualified as HTTPDelivery
 import Sentry.Transport.HTTP.Request qualified as Request
-import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendEnvelope)
+import Sentry.Transport.HTTP.Sync (HttpTransportOptions (..), sendRequest)
 
 -- | An asynchronous HTTP transport backed by an 'AsyncExecutor'.
 type AsyncHttpTransport :: Type
@@ -68,7 +68,7 @@ build opts clientReports queueSize manager dsn = do
   let reportConfig = fmap (\cr -> AsyncExecutor.clientReportConfig cr dsn) clientReports
       template = Request.prepare dsn
       sendFn envelope = do
-        outcome <- sendEnvelope manager opts.instrumentation template opts.compression envelope
+        outcome <- opts.wrapSender opts.compression (sendRequest manager opts.instrumentation . Request.attach template) envelope
         HTTPDelivery.interpretNow outcome
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
   pure AsyncHttpTransport{executor}

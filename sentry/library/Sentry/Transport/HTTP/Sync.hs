@@ -25,6 +25,7 @@ module Sentry.Transport.HTTP.Sync
   )
 where
 
+import Control.Exception (evaluate)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Atomics (atomicModifyIORefCAS_)
 import Data.Default (Default (def))
@@ -78,7 +79,20 @@ data HttpTransportOptions = HttpTransportOptions
     -- | HTTP client connection manager.
     manager :: Maybe HttpClient.Manager,
     -- | OpenTelemetry instrumentation config.
-    instrumentation :: HttpClientInstrumentationConfig
+    instrumentation :: HttpClientInstrumentationConfig,
+    -- | Wrap the outgoing envelope send function produced by this transport.
+    -- 
+    -- The transport applies this after filtering and attaching reports; set it
+    -- to @Instrument.observing report@ to observe delivery attempts.
+    -- 
+    -- Callbacks run on the sending thread and must finish promptly.
+    --
+    -- > def{wrapSender = Instrument.observing report}
+    wrapSender ::
+      Compression ->
+      (Encoding.EncodedBody -> IO HTTPDelivery.Outcome) ->
+      Patrol.Envelope ->
+      IO HTTPDelivery.Outcome
   }
 
 -- | Defaults: 'Gzip' compression, global HTTP manager, no OTel instrumentation.
@@ -87,7 +101,9 @@ instance Default HttpTransportOptions where
     HttpTransportOptions
       { compression = def,
         manager = Nothing,
-        instrumentation = mempty
+        instrumentation = mempty,
+        wrapSender = \compression sender envelope ->
+          evaluate (Encoding.encode compression envelope) >>= sender
       }
 
 -- | Construct 'HttpTransportOptions' from an existing 'HttpClient.Manager'.
@@ -122,7 +138,7 @@ build ::
   IO SyncHttpTransport
 build opts clientReports manager dsn =
   buildWithSender clientReports $
-    sendEnvelope manager opts.instrumentation (Request.prepare dsn) opts.compression
+    opts.wrapSender opts.compression (sendRequest manager opts.instrumentation . Request.attach (Request.prepare dsn))
 
 -- | Build a 'SyncHttpTransport' from the given send function.
 buildWithSender :: Maybe ClientReports -> (Patrol.Envelope -> IO HTTPDelivery.Outcome) -> IO SyncHttpTransport

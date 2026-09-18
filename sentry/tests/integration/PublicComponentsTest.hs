@@ -9,19 +9,32 @@
 module PublicComponentsTest where
 
 import Control.Exception (bracket)
+import Control.Monad (void)
+import Data.ByteString.Lazy qualified as LBS
 import Data.Default (def)
 import Data.Foldable (for_)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Network.Connection (TLSSettings (TLSSettingsSimple))
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS (mkManagerSettings)
 import Network.HTTP.Types qualified as Status
+import Patrol.Type.DataCategory qualified as Category
+import Patrol.Type.Envelope qualified
+import Patrol.Type.Item qualified as Item
+import Patrol.Type.Items qualified as Items
+import Sentry.ClientReport qualified as Reports
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Sink qualified as Sink
+import Sentry.Transport qualified as Transport
 import Sentry.Transport.Encoding qualified as Encoding
+import Sentry.Transport.HTTP.Async qualified as Async
 import Sentry.Transport.HTTP.Delivery qualified as Delivery
 import Sentry.Transport.HTTP.Request qualified as Request
 import Sentry.Transport.HTTP.Sync qualified as HTTP1
+import Sentry.Transport.HTTP2.Async qualified as Async2
 import Sentry.Transport.HTTP2.Connection qualified as HTTP2
+import Sentry.Transport.Instrument qualified as Instrument
 import System.Timeout (timeout)
 import Test.Hspec
 
@@ -65,3 +78,54 @@ assertOK = \case
 
 bounded :: IO () -> IO ()
 bounded action = timeout 15_000_000 action `shouldReturn` Just ()
+
+-- | Standard builders preserve instrumentation through filtering and reports.
+spec_builderObservation :: Spec
+spec_builderObservation = describe "HTTP builder observations" do
+  for_ ["sync", "async", "h2"] \backend ->
+    for_ [200, 500] \code ->
+      it ("observes prepared bodies and returned outcomes: " <> show (backend, code)) $
+        bounded $ Sink.withSink \sink -> withHTTP1 \manager -> do
+          reports <- Reports.new
+          -- Make the async report eligible for piggybacking without a sleep.
+          now <- getCurrentTime
+          Reports.record reports Reports.BeforeSend Category.Error 1
+          void $ Reports.takePending reports (addUTCTime (-60) now) True
+          Reports.record reports Reports.BeforeSend Category.Error 2
+          observed <- newIORef []
+          let report attempt = atomicModifyIORef' observed (\xs -> (xs <> [attempt], ()))
+              opts = def{HTTP1.wrapSender = Instrument.observing report}
+              dsn = Sink.dsnFor sink "1"
+              envelope = Gen.sampleEnvelope dsn
+              build = case backend of
+                "sync" -> Transport.SomeTransport <$> HTTP1.build opts (Just reports) manager dsn
+                "async" -> Transport.SomeTransport <$> Async.build opts (Just reports) 32 manager dsn
+                _ -> Transport.SomeTransport <$> Async2.build def{Async2.validateCert = False, Async2.wrapSender = Instrument.observing report} (Just reports) 32 dsn
+          Sink.setResponder sink \_ _ ->
+            pure
+              Sink.ok
+                { Sink.status = Status.mkStatus code "test",
+                  Sink.responseHeaders = [("Retry-After", "60")]
+                }
+          bracket build (\t -> void $ Transport.shutdown t 5) \transport -> do
+            void $ Transport.send transport envelope
+            Transport.flush transport 5 `shouldReturn` Transport.FlushSucceeded
+            attempts <- readIORef observed
+            requests <- Sink.received sink
+            -- Async may send a standalone report during flush.
+            length attempts `shouldBe` length requests
+            attempts `shouldSatisfy` (not . null)
+            for_ (zip attempts requests) \(attempt, request) -> do
+              attempt.size `shouldBe` LBS.length request.body
+              request.body `shouldBe` Encoding.bytes (Encoding.encode attempt.compression attempt.envelope)
+              case attempt.outcome of
+                Right (Delivery.Responded status _) -> Status.statusCode status `shouldBe` code
+                other -> expectationFailure (show other)
+            let attached = [() | attempt <- attempts, Items.EnvelopeItems items <- [attempt.envelope.items], Item.ClientReport _ <- items]
+            attached `shouldSatisfy` (not . null)
+            void $ Transport.send transport envelope
+            Transport.flush transport 5 `shouldReturn` Transport.FlushSucceeded
+            later <- readIORef observed
+            -- A global limit suppresses events; flush may still send reports.
+            let eventAttempts xs = [() | a <- xs, Items.EnvelopeItems items <- [a.envelope.items], Item.Event _ <- items]
+            eventAttempts later `shouldBe` eventAttempts attempts

@@ -35,7 +35,7 @@ module Sentry.Transport.HTTP2.Async
   )
 where
 
-import Control.Exception (finally, mask_, onException)
+import Control.Exception (evaluate, finally, mask_, onException)
 import Data.Default (Default (def))
 import Data.Kind (Type)
 import Patrol qualified
@@ -44,6 +44,7 @@ import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport.Encoding (Compression (..))
+import Sentry.Transport.Encoding qualified as Encoding
 import Sentry.Transport.Executor.Async (AsyncExecutor)
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.HTTP.Delivery qualified as HTTPDelivery
@@ -83,7 +84,20 @@ data Http2TransportOptions = Http2TransportOptions
     reconnectPolicy :: IO ReconnectDecision,
     -- | HTTP\/2 protocol-level settings (flow-control windows, rate-limit
     -- overrides, TCP_NODELAY).
-    http2Settings :: Http2Settings
+    http2Settings :: Http2Settings,
+    -- | Wrap the outgoing envelope send function produced by this transport.
+    -- 
+    -- The transport applies this after filtering and attaching reports; set it
+    -- to @Instrument.observing report@ to observe delivery attempts.
+    -- 
+    -- Callbacks run on the sending worker thread and must finish promptly.
+    --
+    -- > def{wrapSender = Instrument.observing report}
+    wrapSender ::
+      Compression ->
+      (Encoding.EncodedBody -> IO HTTPDelivery.Outcome) ->
+      Patrol.Envelope ->
+      IO HTTPDelivery.Outcome
   }
 
 -- | Defaults: 'Gzip' compression, TLS certificate validation enabled,
@@ -95,7 +109,9 @@ instance Default Http2TransportOptions where
         validateCert = True,
         connectTimeout = 30_000_000,
         reconnectPolicy = pure DontReconnect,
-        http2Settings = def
+        http2Settings = def,
+        wrapSender = \compression sender envelope ->
+          evaluate (Encoding.encode compression envelope) >>= sender
       }
 
 -- | Create a 'TransportProvider' that will build an 'AsyncHttp2Transport' when
@@ -126,7 +142,7 @@ build opts clientReports queueSize dsn = mask_ do
       endpoint = Connection.mkEndpoint opts.compression dsn
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn envelope = do
-        outcome <- Connection.sendEnvelope manager envelope
+        outcome <- opts.wrapSender opts.compression (Connection.sendRequest manager . Connection.buildRequest endpoint) envelope
         HTTPDelivery.interpretNow outcome
   -- Close the manager if executor creation fails, including when the queue
   -- size is nonpositive.
