@@ -175,6 +175,12 @@ spec_updateFrom429 = describe "updateFrom429" do
 
 spec_filterEnvelope :: Spec
 spec_filterEnvelope = describe "filterEnvelope" do
+  it "keeps nothing for an empty envelope when no limits are stored" do
+    let startTime = UTCTime systemEpochDay 0
+        filtered = RateLimiter.filterEnvelope RateLimiter.new startTime (mkEnvelope [])
+    filtered.dropped `shouldBe` []
+    filtered.kept `shouldBe` Nothing
+
   it "surfaces rate-limited items as dropped while keeping the rest" do
     let startTime = UTCTime systemEpochDay 0
         -- Limit the Error category only; the global limit stays clear, so the

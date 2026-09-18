@@ -136,6 +136,12 @@ filterEnvelope rl now envelope = case envelope.items of
     if isEnabled now Nothing rl
       then FilteredEnvelope{dropped = [], kept = Just envelope}
       else FilteredEnvelope{dropped = [], kept = Nothing}
+  Patrol.Items.EnvelopeItems [] ->
+    FilteredEnvelope{dropped = [], kept = Nothing}
+  Patrol.Items.EnvelopeItems _
+    -- With no stored limits, reuse the envelope without traversing its items.
+    | isNothing rl.global && Map.null rl.categories ->
+        FilteredEnvelope{dropped = [], kept = Just envelope}
   Patrol.Items.EnvelopeItems items ->
     let (keptItems, droppedItems) =
           items & List.partition \item -> isEnabled now (categoryFromItem item) rl
