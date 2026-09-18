@@ -188,9 +188,9 @@ record cr reason category n
 takePending :: ClientReports -> UTCTime -> Bool -> IO (Maybe Patrol.ClientReport.ClientReport)
 takePending cr now force = runMaybeT do
   lastSent <- lift $ readIORef cr.lastSent
-  guard (force || diffUTCTime now lastSent >= piggybackInterval)
+  guard $ force || diffUTCTime now lastSent >= piggybackInterval
   events <- lift $ drain cr
-  guard (not (null events))
+  guard . not $ null events
   lift $ writeIORef cr.lastSent now
   pure
     Patrol.ClientReport.ClientReport

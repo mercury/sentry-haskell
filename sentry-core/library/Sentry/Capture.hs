@@ -87,7 +87,7 @@ captureEvent_ = void . captureEvent
 -- | 'Patrol.Type.Event.Event' overrides for the fields that are associated
 -- with capturing exceptions.
 --
--- Its 'Default' instance apply no overrides at all.
+-- Its 'Default' instance applies no overrides at all.
 type CaptureOverrides :: Type
 data CaptureOverrides = CaptureOverrides
   { -- | The 'Patrol.Mechanism' to attach to the exception, if any.

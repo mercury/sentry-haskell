@@ -1,6 +1,7 @@
 module RateLimiterTest where
 
 import Data.ByteString (ByteString)
+import Data.Foldable (for_)
 import Data.Map.Strict qualified as Map
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..), addUTCTime, secondsToDiffTime)
@@ -135,6 +136,34 @@ spec_updateFromSentryHeader = describe "updateFromSentryHeader" do
       `shouldBe` Nothing
     RateLimiter.isDisabledFor startTime (Just DataCategory.Session) rl
       `shouldBe` Just 60
+
+spec_categoryTokens :: Spec
+spec_categoryTokens = describe "rate-limit category tokens" do
+  let now = UTCTime systemEpochDay 0
+      expiresAt = addUTCTime 60 now
+  it "recognizes ASCII case variants" $
+    HTTP.sentryHeader now "60:ERROR;SeSsIoN:project"
+      `shouldBe` [Delivery.categoryUntil DataCategory.Error expiresAt, Delivery.categoryUntil DataCategory.Session expiresAt]
+  it "ignores non-ASCII tokens while retaining supported categories" $
+    HTTP.sentryHeader now "60:error;\x80;session:project"
+      `shouldBe` [Delivery.categoryUntil DataCategory.Error expiresAt, Delivery.categoryUntil DataCategory.Session expiresAt]
+
+spec_nonFiniteDurations :: Spec
+spec_nonFiniteDurations = describe "non-finite rate-limit durations" do
+  let now = UTCTime systemEpochDay 0
+      fallback = [Delivery.allCategoriesUntil (addUTCTime 60 now)]
+  for_ ["1e999", "1e9999999", "-1e999", "NaN", "Infinity"] \value -> do
+    it ("uses the Retry-After fallback for " <> show value) $
+      HTTP.retryAfter now value `shouldBe` fallback
+    it ("skips an invalid Sentry group and retains its neighbors for " <> show value) $
+      HTTP.sentryHeader now ("30:session:project," <> value <> ":error:project,90:transaction:project")
+        `shouldBe` [Delivery.categoryUntil DataCategory.Session (addUTCTime 30 now), Delivery.categoryUntil DataCategory.Transaction (addUTCTime 90 now)]
+    it ("falls back on a 429 with only an invalid Sentry group for " <> show value) $
+      (HTTP.interpret now (HTTP.Responded Http.tooManyRequests429 [("X-Sentry-Rate-Limits", value <> ":error:project")])).rateLimits
+        `shouldBe` fallback
+    it ("honors Retry-After when the Sentry group is invalid for " <> show value) $
+      (HTTP.interpret now (HTTP.Responded Http.status200 [("X-Sentry-Rate-Limits", value <> ":error:project"), ("Retry-After", "120")])).rateLimits
+        `shouldBe` [Delivery.allCategoriesUntil (addUTCTime 120 now)]
 
 spec_updateFrom429 :: Spec
 spec_updateFrom429 = describe "updateFrom429" do

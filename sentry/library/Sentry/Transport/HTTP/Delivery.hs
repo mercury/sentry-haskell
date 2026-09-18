@@ -1,16 +1,18 @@
 -- | HTTP results and their interpretation as SDK delivery policy.
 module Sentry.Transport.HTTP.Delivery (Outcome (..), interpret, interpretNow, retryAfter, sentryHeader) where
 
+import Control.Monad (guard)
 import Data.Attoparsec.ByteString.Char8 (Parser)
 import Data.Attoparsec.ByteString.Char8 qualified as Atto
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString.Char8
-import Data.Char (toLower)
+import Data.Char (isAscii)
 import Data.Foldable (asum)
 import Data.Kind (Type)
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text.Encoding
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Network.HTTP.Types qualified as HttpTypes
@@ -82,13 +84,20 @@ sentryHeader now value = case Atto.parseOnly rateLimitsParser value of
 parseRetryAfter :: ByteString -> UTCTime -> UTCTime
 parseRetryAfter value now =
   case Atto.parseOnly secondsParser value of
-    Right seconds -> realToFrac seconds `addUTCTime` now
+    Right duration -> duration `addUTCTime` now
     Left _ -> case parseHttpDate (ByteString.Char8.unpack value) of
       Just expiresAt -> expiresAt
       Nothing -> defaultDelay `addUTCTime` now
   where
-    secondsParser :: Parser Double
-    secondsParser = Atto.skipSpace *> Atto.double <* Atto.skipSpace <* Atto.endOfInput
+    secondsParser :: Parser NominalDiffTime
+    secondsParser = Atto.skipSpace *> finiteDuration <* Atto.skipSpace <* Atto.endOfInput
+
+-- | Reject non-finite seconds before converting to 'NominalDiffTime'.
+finiteDuration :: Parser NominalDiffTime
+finiteDuration = do
+  seconds <- Atto.double
+  guard . not $ isNaN seconds || isInfinite seconds
+  pure $ realToFrac seconds
 
 -- | The fallback rate-limit duration applied when a value cannot be parsed or
 -- on a bare HTTP 429 response.
@@ -125,13 +134,13 @@ rateLimitsParser = catMaybes <$> (groupParser `Atto.sepBy` Atto.char ',') <* Att
     groupBody :: Parser (NominalDiffTime, [Maybe DataCategory])
     groupBody = do
       Atto.skipSpace
-      seconds <- Atto.double
+      duration <- finiteDuration
       _ <- Atto.char ':'
       cats <- categoryToken `Atto.sepBy` Atto.char ';'
-      -- Require the scope separator to be present (matching the grammar),
-      -- then ignore the scope, reason, and namespace fields entirely.
+      -- Require the scope separator to be present, then ignore the scope,
+      -- reason, and namespace fields entirely.
       _ <- Atto.char ':'
-      pure (realToFrac seconds, classifyCategories cats)
+      pure (duration, classifyCategories cats)
 
     categoryToken :: Parser ByteString
     categoryToken = Atto.takeWhile \c -> c /= ':' && c /= ';'
@@ -139,11 +148,13 @@ rateLimitsParser = catMaybes <$> (groupParser `Atto.sepBy` Atto.char ',') <* Att
 -- | Resolve raw category tokens to 'DataCategory' values.
 --
 -- An empty token denotes the global catch-all (@Nothing@); unrecognized
--- tokens are dropped.
+-- and non-ASCII tokens are dropped. ASCII case is ignored.
 classifyCategories :: [ByteString] -> [Maybe DataCategory]
 classifyCategories = mapMaybe classify
   where
     classify :: ByteString -> Maybe (Maybe DataCategory)
-    classify token = case ByteString.Char8.unpack (ByteString.Char8.map toLower token) of
-      "" -> Just Nothing -- global catch-all
-      s -> fmap Just $ DataCategory.fromText (Text.pack s)
+    classify token
+      | ByteString.Char8.null token = Just Nothing
+      | otherwise = do
+          guard $ ByteString.Char8.all isAscii token
+          Just <$> DataCategory.fromText (Text.toLower $ Text.Encoding.decodeLatin1 token)
