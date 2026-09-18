@@ -223,7 +223,7 @@ spec_flushClientReports :: Spec
 spec_flushClientReports = describe "flushing with client reports" do
   it "retains a rate limit learned while draining reports" do
     q <- newTQueueIO
-    cr <- ClientReport.new
+    cr <- getCurrentTime >>= ClientReport.new
     -- A pending discard gives the forced drain something to send.
     ClientReport.record cr ClientReport.NetworkError DataCategory.Error 1
     let toEnvelope report =
@@ -383,7 +383,7 @@ spec_genericAccounting :: Spec
 spec_genericAccounting = describe "protocol-independent delivery accounting" do
   for_ [Delivery.Accepted, Delivery.Rejected Delivery.AccountedUpstream, Delivery.Rejected (Delivery.RecordLocally ClientReport.SendError)] \disposition ->
     it ("accounts exactly once for " <> show disposition <> " without HTTP values") $ boundedLifecycle do
-      reports <- ClientReport.new
+      reports <- getCurrentTime >>= ClientReport.new
       attempts <- newTQueueIO
       let sender envelope = atomically (writeTQueue attempts envelope) >> pure (Delivery.Outcome disposition [])
       bracket
@@ -405,7 +405,7 @@ spec_genericAccounting = describe "protocol-independent delivery accounting" do
           ClientReport.takePending reports now True `shouldReturn` Nothing
 
   it "accounts unexpected callback exceptions as internal SDK failures" $ boundedLifecycle do
-    reports <- ClientReport.new
+    reports <- getCurrentTime >>= ClientReport.new
     attempts <- newTQueueIO
     let sender envelope = case envelope.items of
           Patrol.Items.EnvelopeItems [Patrol.Item.ClientReport _] ->
@@ -437,7 +437,7 @@ spec_discardNotifications = describe "transport discard callbacks" do
   for_ [False, True] \enabled -> do
     for_ [False, True] \throws ->
       it ("notifies async delivery loss once: " <> show (enabled, throws)) $ boundedLifecycle do
-        reports <- ClientReport.new
+        reports <- getCurrentTime >>= ClientReport.new
         notifications <- newTQueueIO
         let reportConfig = if enabled then Just (AsyncExecutor.clientReportConfig reports testDsn) else Nothing
             callback reason category quantity = do
@@ -454,7 +454,7 @@ spec_discardNotifications = describe "transport discard callbacks" do
               `shouldReturn` [(if throws then ClientReport.InternalSdkError else ClientReport.NetworkError, DataCategory.Error, 3)]
 
     it ("notifies queue overflow with reports " <> show enabled) $ boundedLifecycle do
-      reports <- ClientReport.new
+      reports <- getCurrentTime >>= ClientReport.new
       started <- newEmptyMVar
       release <- newEmptyMVar
       notifications <- newTQueueIO
@@ -476,7 +476,7 @@ spec_discardNotifications = describe "transport discard callbacks" do
 
     for_ [False, True] \partial ->
       it ("notifies local rate limits with reports and partial envelope " <> show (enabled, partial)) $ boundedLifecycle do
-        reports <- ClientReport.new
+        reports <- getCurrentTime >>= ClientReport.new
         notifications <- newTQueueIO
         attempts <- newTQueueIO
         now <- getCurrentTime
@@ -501,7 +501,7 @@ spec_discardNotifications = describe "transport discard callbacks" do
             sum [length [() | Patrol.Item.Event _ <- items] | e <- sent, Patrol.Items.EnvelopeItems items <- [e.items]] `shouldBe` 0
 
   it "records the complete batch before a callback is cancelled" $ boundedLifecycle do
-    reports <- ClientReport.new
+    reports <- getCurrentTime >>= ClientReport.new
     started <- newEmptyMVar
     release <- newEmptyMVar
     masking <- newEmptyMVar
@@ -528,16 +528,18 @@ spec_discardNotifications = describe "transport discard callbacks" do
               Transport.send transport testEnvelope `shouldReturn` Transport.SendFailed_Other
             else pure ()
           throwIO (userError "ignored callback failure")
-    transport <- Sync.buildWithSender Nothing (Just callback) (const $ pure $ HTTP.Responded Status.status500 [("Retry-After", "60")])
+    receivedAt <- getCurrentTime
+    transport <- Sync.buildWithSender Nothing (Just callback) (const $ pure $ HTTP.Responded receivedAt Status.status500 [("Retry-After", "60")])
     writeIORef holder (Just transport)
     Transport.send transport batchEnvelope `shouldReturn` Transport.SendFailed_Other
     atomically (flushTQueue notifications)
       `shouldReturn` [(ClientReport.SendError, DataCategory.Error, 3), (ClientReport.RatelimitBackoff, DataCategory.Error, 1)]
 
   it "keeps transport recordDiscards bookkeeping-only" $ boundedLifecycle do
-    reports <- ClientReport.new
+    reports <- getCurrentTime >>= ClientReport.new
     let callback _ _ _ = throwIO Async.AsyncCancelled
-    transport <- Sync.buildWithSender (Just reports) (Just callback) (const $ pure $ HTTP.Responded Status.status200 [])
+    receivedAt <- getCurrentTime
+    transport <- Sync.buildWithSender (Just reports) (Just callback) (const $ pure $ HTTP.Responded receivedAt Status.status200 [])
     Transport.recordDiscards transport ClientReport.SampleRate DataCategory.Error 2
     bracket
       (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) (Just callback) (const $ pure accepted))

@@ -18,16 +18,17 @@ module Sentry.Transport.HTTP.Sync
     buildWithSender,
     sendEnvelope,
     sendRequest,
-    fromExceptionContent,
 
     -- * Re-exports
     Compression (..),
   )
 where
 
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, try)
+import Control.Monad (unless, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Atomics (atomicModifyIORefCAS_)
+import Data.ByteString qualified as BS
 import Data.Default (Default (def))
 import Data.Foldable (for_)
 import Data.IORef (IORef, newIORef, readIORef)
@@ -53,7 +54,7 @@ import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Delivery qualified as HTTPDelivery
 import Sentry.Transport.HTTP.Request (PreparedRequest)
 import Sentry.Transport.HTTP.Request qualified as Request
-import UnliftIO.Exception (handle, toException)
+import UnliftIO.Exception (handle)
 import Witch qualified
 
 -- | A synchronous HTTP transport that blocks on each send.
@@ -121,7 +122,7 @@ new httpOpts = DeferredTransport \dsn clientOpts -> do
   manager <- maybe getGlobalManager pure httpOpts.manager
   clientReports <-
     if clientOpts.sendClientReports
-      then Just <$> ClientReport.new
+      then Just <$> (getCurrentTime >>= ClientReport.new)
       else pure Nothing
   SomeTransport <$> build httpOpts clientReports clientOpts.onDiscard manager dsn
 
@@ -166,7 +167,6 @@ sendEnvelope manager otelConfig prepared compression envelope =
   sendRequest manager otelConfig (Request.attach prepared (Encoding.encode compression envelope))
 {-# INLINEABLE sendEnvelope #-}
 
--- | Send a request you built yourself, consuming its response.
 sendRequest ::
   (MonadIO m) =>
   HttpClient.Manager ->
@@ -174,35 +174,33 @@ sendRequest ::
   HttpClient.Request ->
   m HTTPDelivery.Outcome
 sendRequest manager otelConfig request =
-  liftIO . handle (pure . fromExceptionContent . exceptionContent) $ do
-    -- 'httpLbs'' consumes the response before returning, so the outcome is
-    -- complete by the time this returns.
-    --
-    -- A non-2xx status is already a value because the prepared request sets
-    -- @http-client@'s status check to a no-op; a caller-supplied 'checkResponse'
-    -- that throws is folded back into an outcome by 'fromExceptionContent'.
-    response <- HttpClient.httpLbs' otelConfig request manager
-    pure $ HTTPDelivery.Responded (HttpClient.responseStatus response) (HttpClient.responseHeaders response)
+  liftIO $
+    handle handleException $
+      HttpClient.withResponse' otelConfig request manager handleResponse
+  where
+    handleResponse :: HttpClient.Response HttpClient.BodyReader -> IO HTTPDelivery.Outcome
+    handleResponse response = do
+      receivedAt <- getCurrentTime
+      -- Headers determine delivery policy even if an HTTP error interrupts
+      -- draining. Other exceptions propagate; withResponse' closes the response.
+      void $ try @HttpClient.HttpException $ drainBody (HttpClient.responseBody response)
+      pure $ HTTPDelivery.Responded receivedAt (HttpClient.responseStatus response) (HttpClient.responseHeaders response)
+
+    handleException :: HttpClient.HttpException -> IO HTTPDelivery.Outcome
+    handleException = \case
+      HttpClient.HttpExceptionRequest _ (HttpClient.StatusCodeException response _) -> do
+        receivedAt <- getCurrentTime
+        pure $ HTTPDelivery.Responded receivedAt (HttpClient.responseStatus response) (HttpClient.responseHeaders response)
+      HttpClient.HttpExceptionRequest _ content ->
+        pure $ HTTPDelivery.NetworkFailure (Text.pack $ show content)
+      exception@HttpClient.InvalidUrlException{} ->
+        pure $ HTTPDelivery.NetworkFailure (Text.pack $ show exception)
+
+    drainBody :: HttpClient.BodyReader -> IO ()
+    drainBody reader = do
+      chunk <- HttpClient.brRead reader
+      unless (BS.null chunk) (drainBody reader)
 {-# INLINEABLE sendRequest #-}
-
--- | Project an 'HttpException' down to its 'HttpClient.HttpExceptionContent'.
---
--- 'InvalidUrlException' carries no content (it is a configuration error rather
--- than a transport failure), so it is wrapped as an 'HttpClient.InternalException'.
-exceptionContent :: HttpClient.HttpException -> HttpClient.HttpExceptionContent
-exceptionContent = \case
-  HttpClient.HttpExceptionRequest _ content -> content
-  e@HttpClient.InvalidUrlException{} -> HttpClient.InternalException (toException e)
-
--- | Interpret a thrown @http-client@ failure as HTTP delivery metadata.
-fromExceptionContent :: HttpClient.HttpExceptionContent -> HTTPDelivery.Outcome
-fromExceptionContent = \case
-  HttpClient.StatusCodeException response _ ->
-    HTTPDelivery.Responded
-      (HttpClient.responseStatus response)
-      (HttpClient.responseHeaders response)
-  other -> HTTPDelivery.NetworkFailure (Text.pack (show other))
-{-# INLINEABLE fromExceptionContent #-}
 
 instance Transport SyncHttpTransport where
   send transport envelope = do
@@ -224,7 +222,7 @@ instance Transport SyncHttpTransport where
         httpOutcome <- transport.sendFn piggybacked
         -- The deadline for a relative rate-limit header is dated from the
         -- response, not from the pre-send @now@ used for filtering above.
-        outcome <- HTTPDelivery.interpretNow httpOutcome
+        let outcome = HTTPDelivery.interpret httpOutcome
         -- Record failures against attempted items, excluding the piggybacked
         -- report. Upstream accounts for HTTP 429 rejections.
         atomicModifyIORefCAS_ transport.rateLimiter \current ->

@@ -319,9 +319,9 @@ response announced into `Delivery.RateLimit` values:
   or HTTP-date)
 - HTTP 429 - a sixty-second all-category fallback
 
-`interpret` applies the SDK's policy to a status and headers; `interpretNow`
-dates the deadlines from the response, which a relative `Retry-After`
-requires. Limits are read in the precedence Sentry's specification gives,
+`interpret` applies the SDK's policy to a timestamped status and headers.
+Transports timestamp header receipt before draining the body or running delivery
+observers, so neither delays a relative `Retry-After` deadline. Limits are read in the precedence Sentry's specification gives,
 independently of the status: `X-Sentry-Rate-Limits`, then `Retry-After`, then
 the sixty-second fallback for a 429 that announced neither.
 

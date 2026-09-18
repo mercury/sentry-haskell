@@ -62,6 +62,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
+import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Semantics qualified as HTTPSemantics
 import Network.HTTP.Types (RequestHeaders, ResponseHeaders, methodPost)
 import Network.HTTP2.Client qualified as HTTP2
@@ -543,22 +544,28 @@ runConnect mgr policy = (`onException` resetClaim) $ mask $ \restore -> do
 -- synchronously and returns once it has run: the ref is always written (by the
 -- continuation on success, or the handler on failure) before we read it below.
 --
--- A failure here is reported as a 'NetworkFailure' for this envelope only.
+-- Failures before receiving headers become 'NetworkFailure'. Once headers
+-- arrive, their delivery policy survives a failure to drain the unused body.
 sendOn :: Active -> HTTP2.Request -> IO HTTPDelivery.Outcome
 sendOn conn req = do
   outcomeRef <- newIORef Nothing
   ( conn.doSend req $ \resp -> do
-      drainBody resp
+      receivedAt <- getCurrentTime
       let headers = toResponseHeaders (HTTP2.responseHeaders resp)
           outcome = case HTTP2.responseStatus resp of
             Nothing ->
               HTTPDelivery.NetworkFailure "HTTP/2 response missing :status pseudo-header"
             Just status ->
-              HTTPDelivery.Responded status headers
+              HTTPDelivery.Responded receivedAt status headers
       writeIORef outcomeRef (Just outcome)
+      drainBody resp
     )
     `catchAny` \e ->
-      writeIORef outcomeRef (Just . HTTPDelivery.NetworkFailure . Text.pack $ show e)
+      -- Retain a received status and its limits when draining fails. An
+      -- exception before any response is still a network failure.
+      readIORef outcomeRef >>= \case
+        Just _ -> pure ()
+        Nothing -> writeIORef outcomeRef (Just . HTTPDelivery.NetworkFailure . Text.pack $ show e)
   readIORef outcomeRef >>= \case
     Just outcome -> pure outcome
     -- Unreachable given the synchronicity guarantee above; kept as a defensive

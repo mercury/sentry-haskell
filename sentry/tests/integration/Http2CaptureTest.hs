@@ -237,13 +237,13 @@ withBlockedTransport sink action = do
 
 assertOK :: Delivery.Outcome -> IO ()
 assertOK = \case
-  Delivery.Responded status _ -> status `shouldBe` Http.status200
+  Delivery.Responded _ status _ -> status `shouldBe` Http.status200
   Delivery.NetworkFailure err -> expectationFailure (show err)
 
 assertNetworkFailure :: Delivery.Outcome -> IO ()
 assertNetworkFailure = \case
   Delivery.NetworkFailure _ -> pure ()
-  Delivery.Responded status _ -> expectationFailure ("unexpected response: " <> show status)
+  Delivery.Responded _ status _ -> expectationFailure ("unexpected response: " <> show status)
 
 bounded :: IO () -> IO ()
 bounded action = timeout 15_000_000 action `shouldReturn` Just ()

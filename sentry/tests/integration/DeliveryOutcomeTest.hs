@@ -101,7 +101,7 @@ bounded action = timeout 15_000_000 action `shouldReturn` Just ()
 withTransport :: String -> (Sink.SinkHandle -> Reports.ClientReports -> Transport.SomeTransport -> IO ()) -> IO ()
 withTransport backend action = Sink.withSink \sink ->
   bracket (Http.newManager (mkManagerSettings (TLSSettingsSimple True False False def) Nothing)) Http.closeManager \manager -> do
-    reports <- Reports.new
+    reports <- getCurrentTime >>= Reports.new
     let dsn = Sink.dsnFor sink "1"
         build = case backend of
           "sync" -> Transport.SomeTransport <$> Sync.build def (Just reports) Nothing manager dsn
@@ -161,7 +161,8 @@ spec_syncLimitMerging = describe "custom synchronous sender" do
       value <- atomicModifyIORef' retryAfters \case
         v : rest -> (rest, v)
         [] -> ([], "0")
-      pure (HTTP.Responded Status.status200 [("Retry-After", value)])
+      receivedAt <- getCurrentTime
+      pure (HTTP.Responded receivedAt Status.status200 [("Retry-After", value)])
     let envelope = Gen.sampleEnvelope Test.TEST_DSN
     Transport.send transport envelope `shouldReturn` Transport.SendProcessed
     Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other

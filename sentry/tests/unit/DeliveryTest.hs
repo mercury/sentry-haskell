@@ -4,9 +4,8 @@
 
 module DeliveryTest where
 
-import Control.Concurrent (threadDelay)
 import Data.Foldable (for_)
-import Data.Time.Clock (NominalDiffTime, UTCTime (..), addUTCTime, getCurrentTime)
+import Data.Time.Clock (UTCTime (..), addUTCTime)
 import Network.HTTP.Types qualified as Http
 import Patrol.Type.DataCategory qualified as DataCategory
 import Sentry.ClientReport qualified as Report
@@ -18,20 +17,20 @@ spec_classification :: Spec
 spec_classification = describe "delivery discard classification" do
   for_ [200, 201, 204, 299, 429] \code ->
     it ("does not report HTTP " <> show code) $
-      Delivery.discardReason (HTTP.interpret (UTCTime (toEnum 0) 0) $ HTTP.Responded (Http.mkStatus code "test") [])
+      Delivery.discardReason (HTTP.interpret $ HTTP.Responded (UTCTime (toEnum 0) 0) (Http.mkStatus code "test") [])
         `shouldBe` Nothing
   for_ [300, 400, 413, 500] \code ->
     it ("reports HTTP " <> show code <> " as send_error") $
-      Delivery.discardReason (HTTP.interpret (UTCTime (toEnum 0) 0) $ HTTP.Responded (Http.mkStatus code "test") [])
+      Delivery.discardReason (HTTP.interpret $ HTTP.Responded (UTCTime (toEnum 0) 0) (Http.mkStatus code "test") [])
         `shouldBe` Just Report.SendError
   it "reports network failures" $
-    Delivery.discardReason (HTTP.interpret (UTCTime (toEnum 0) 0) $ HTTP.NetworkFailure "connection failed")
+    Delivery.discardReason (HTTP.interpret $ HTTP.NetworkFailure "connection failed")
       `shouldBe` Just Report.NetworkError
 
 spec_policy :: Spec
 spec_policy = describe "HTTP delivery policy" do
   let now = UTCTime (toEnum 0) 0
-      respond status headers = HTTP.interpret now (HTTP.Responded status headers)
+      respond status headers = HTTP.interpret (HTTP.Responded now status headers)
       sentryLimits = ("X-Sentry-Rate-Limits", "120:error:project") :: Http.Header
 
   it "accepts a successful delivery" do
@@ -78,26 +77,13 @@ spec_policy = describe "HTTP delivery policy" do
     (respond (Http.mkStatus 502 "bad gateway") [("Retry-After", "soon")]).rateLimits
       `shouldBe` [Delivery.allCategoriesUntil (addUTCTime 60 now)]
 
--- | Deadlines must be computed from a timestamp taken after the response, not
--- from before the request.
---
--- Under a pre-send timestamp, @Retry-After: 60@ on a send lasting @d@ seconds
--- yields a deadline only @60 - d@ seconds after the response, so the SDK
--- resumes while the server is still asking it to back off.
+-- | Relative deadlines use header receipt time, independently of when the
+-- response is subsequently interpreted.
 spec_deadlineTiming :: Spec
 spec_deadlineTiming = describe "rate-limit deadline timing" do
-  it "does not subtract a slow send's latency from the backoff" do
-    let
-      -- Stand in for a send whose response arrives measurably later than
-      -- the clock jitter around the two timestamps taken below.
-      slowSend = threadDelay 200_000 *> pure (HTTP.Responded Http.status200 [("Retry-After", "60")])
-      margin = 0.1 :: NominalDiffTime
-    sentAt <- getCurrentTime
-    outcome <- slowSend >>= HTTP.interpretNow
-    observedAt <- getCurrentTime
-    case outcome.rateLimits of
-      [limit] -> do
-        limit.expiresAt `shouldSatisfy` (>= addUTCTime (60 + margin) sentAt)
-        -- The deadline is also no later than the interval past the response.
-        limit.expiresAt `shouldSatisfy` (<= addUTCTime 60 observedAt)
-      limits -> expectationFailure $ "expected exactly one rate limit, got " <> show limits
+  for_ [[("Retry-After", "60")], [("X-Sentry-Rate-Limits", "60::project")], []] \headers ->
+    it ("dates the limit from the response timestamp: " <> show headers) do
+      let receivedAt = UTCTime (toEnum 0) 10
+          response = HTTP.Responded receivedAt Http.tooManyRequests429 headers
+      (HTTP.interpret response).rateLimits
+        `shouldBe` [Delivery.allCategoriesUntil (addUTCTime 60 receivedAt)]

@@ -22,7 +22,7 @@ data CapturedEvent = CapturedEvent
     event :: Patrol.Event,
     -- | The exception used to construct the event, with any outer
     -- 'Control.Exception.Annotated.AnnotatedException' wrapper removed.
-    -- 
+    --
     -- Hooks can downcast this value to inspect the application exception.
     unwrappedException :: Maybe SomeException,
     -- | The exception supplied to capture, retaining any annotation wrapper

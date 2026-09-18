@@ -38,6 +38,7 @@ where
 import Control.Exception (evaluate, finally, mask_, onException)
 import Data.Default (Default (def))
 import Data.Kind (Type)
+import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
@@ -124,7 +125,7 @@ new :: Http2TransportOptions -> Int -> TransportProvider
 new http2Opts queueSize = DeferredTransport \dsn clientOpts -> do
   clientReports <-
     if clientOpts.sendClientReports
-      then Just <$> ClientReport.new
+      then Just <$> (getCurrentTime >>= ClientReport.new)
       else pure Nothing
   SomeTransport <$> build http2Opts clientReports clientOpts.onDiscard queueSize dsn
 
@@ -145,7 +146,7 @@ build opts clientReports onDiscard queueSize dsn = mask_ do
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn envelope = do
         outcome <- opts.wrapSender opts.compression (Connection.sendRequest manager . Connection.buildRequest endpoint) envelope
-        HTTPDelivery.interpretNow outcome
+        pure $ HTTPDelivery.interpret outcome
   -- Close the manager if executor creation fails, including when the queue
   -- size is nonpositive.
   executor <-

@@ -39,7 +39,7 @@ import Data.Foldable (for_)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
 import Data.Text (Text)
-import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime)
 import Data.Traversable (for)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
@@ -156,10 +156,9 @@ piggybackInterval :: NominalDiffTime
 piggybackInterval = 30
 
 -- | Create a new, empty 'ClientReports' accumulator, seeding 'lastSent' to
--- the current time so the first piggybacked report waits a full interval.
-new :: IO ClientReports
-new = do
-  now <- getCurrentTime
+-- the supplied time so the first piggybacked report waits a full interval.
+new :: UTCTime -> IO ClientReports
+new now = do
   discarded <- Vector.replicateM (numReasons * numCategories) (newCounter 0)
   lastSent <- newIORef now
   pure ClientReports{discarded, lastSent}

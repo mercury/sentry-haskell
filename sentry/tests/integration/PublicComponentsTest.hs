@@ -8,12 +8,12 @@
 -- real sink and compares what arrived with what was prepared.
 module PublicComponentsTest where
 
-import Control.Exception (bracket)
+import Control.Exception (AsyncException (ThreadKilled), bracket, throwIO, try)
 import Control.Monad (void)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Default (def)
 import Data.Foldable (for_)
-import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Network.Connection (TLSSettings (TLSSettingsSimple))
 import Network.HTTP.Client qualified as HTTP
@@ -27,6 +27,7 @@ import Sentry.ClientReport qualified as Reports
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport qualified as Transport
+import Sentry.Transport.Delivery qualified as Policy
 import Sentry.Transport.Encoding qualified as Encoding
 import Sentry.Transport.HTTP.Async qualified as Async
 import Sentry.Transport.HTTP.Delivery qualified as Delivery
@@ -73,7 +74,7 @@ withHTTP1 action =
 
 assertOK :: Delivery.Outcome -> IO ()
 assertOK = \case
-  Delivery.Responded status _ -> status `shouldBe` Status.status200
+  Delivery.Responded _ status _ -> status `shouldBe` Status.status200
   Delivery.NetworkFailure err -> expectationFailure (show err)
 
 bounded :: IO () -> IO ()
@@ -86,11 +87,9 @@ spec_builderObservation = describe "HTTP builder observations" do
     for_ [200, 500] \code ->
       it ("observes prepared bodies and returned outcomes: " <> show (backend, code)) $
         bounded $ Sink.withSink \sink -> withHTTP1 \manager -> do
-          reports <- Reports.new
           -- Make the async report eligible for piggybacking without a sleep.
           now <- getCurrentTime
-          Reports.record reports Reports.BeforeSend Category.Error 1
-          void $ Reports.takePending reports (addUTCTime (-60) now) True
+          reports <- Reports.new (addUTCTime (-60) now)
           Reports.record reports Reports.BeforeSend Category.Error 2
           observed <- newIORef []
           let report attempt = atomicModifyIORef' observed (\xs -> (xs <> [attempt], ()))
@@ -119,7 +118,7 @@ spec_builderObservation = describe "HTTP builder observations" do
               attempt.size `shouldBe` LBS.length request.body
               request.body `shouldBe` Encoding.bytes (Encoding.encode attempt.compression attempt.envelope)
               case attempt.outcome of
-                Right (Delivery.Responded status _) -> Status.statusCode status `shouldBe` code
+                Right (Delivery.Responded _ status _) -> Status.statusCode status `shouldBe` code
                 other -> expectationFailure (show other)
             let attached = [() | attempt <- attempts, Items.EnvelopeItems items <- [attempt.envelope.items], Item.ClientReport _ <- items]
             attached `shouldSatisfy` (not . null)
@@ -129,3 +128,89 @@ spec_builderObservation = describe "HTTP builder observations" do
             -- A global limit suppresses events; flush may still send reports.
             let eventAttempts xs = [() | a <- xs, Items.EnvelopeItems items <- [a.envelope.items], Item.Event _ <- items]
             eventAttempts later `shouldBe` eventAttempts attempts
+
+-- | The HTTP response callback exposes headers before the first body read.
+-- Injecting the reader failure also verifies that draining is best-effort,
+-- while cancellation remains observable by the caller.
+spec_responseTiming :: Spec
+spec_responseTiming = describe "HTTP response receipt" do
+  it "timestamps headers before draining and retains them if draining fails" $
+    bounded $ Sink.withSink \sink -> do
+      drainingAt <- newIORef Nothing
+      let settings =
+            (mkManagerSettings (TLSSettingsSimple True False False def) Nothing)
+              { HTTP.managerModifyResponse = \response ->
+                  pure
+                    response
+                      { HTTP.responseBody = do
+                          now <- getCurrentTime
+                          writeIORef drainingAt (Just now)
+                          throwIO (HTTP.HttpExceptionRequest HTTP.defaultRequest HTTP.ResponseTimeout)
+                      }
+              }
+      manager <- HTTP.newManager settings
+      Sink.setResponder sink \_ _ -> pure Sink.ok{Sink.status = Status.status429, Sink.responseHeaders = [("Retry-After", "60")], Sink.responseBody = "body"}
+      let dsn = Sink.dsnFor sink "1"
+          request = Request.attach (Request.prepare dsn) (Encoding.encode Encoding.None $ Gen.sampleEnvelope dsn)
+      response <- HTTP1.sendRequest manager mempty request
+      Just bodyReadAt <- readIORef drainingAt
+      case response of
+        Delivery.Responded receivedAt status _ -> do
+          receivedAt `shouldSatisfy` (<= bodyReadAt)
+          status `shouldBe` Status.status429
+          (Delivery.interpret response).rateLimits
+            `shouldBe` [Policy.allCategoriesUntil (addUTCTime 60 receivedAt)]
+        other -> expectationFailure (show other)
+
+  it "propagates unexpected exceptions from the body reader" $
+    bounded $ Sink.withSink \sink -> do
+      let settings =
+            (mkManagerSettings (TLSSettingsSimple True False False def) Nothing)
+              { HTTP.managerModifyResponse = \response ->
+                  pure response{HTTP.responseBody = throwIO (userError "unexpected reader failure")}
+              }
+      manager <- HTTP.newManager settings
+      let dsn = Sink.dsnFor sink "1"
+          request = Request.attach (Request.prepare dsn) (Encoding.encode Encoding.None $ Gen.sampleEnvelope dsn)
+      HTTP1.sendRequest manager mempty request
+        `shouldThrow` (== userError "unexpected reader failure")
+
+  it "does not swallow cancellation while draining" $
+    bounded $ Sink.withSink \sink -> do
+      let settings =
+            (mkManagerSettings (TLSSettingsSimple True False False def) Nothing)
+              { HTTP.managerModifyResponse = \response ->
+                  pure response{HTTP.responseBody = throwIO ThreadKilled}
+              }
+      manager <- HTTP.newManager settings
+      let dsn = Sink.dsnFor sink "1"
+          request = Request.attach (Request.prepare dsn) (Encoding.encode Encoding.None $ Gen.sampleEnvelope dsn)
+      result <- try @AsyncException $ HTTP1.sendRequest manager mempty request
+      case result of
+        Left exception -> exception `shouldBe` ThreadKilled
+        Right response -> expectationFailure ("expected cancellation, got " <> show response)
+
+  for_ ["h1", "h2"] \(backend :: String) ->
+    it ("retains rate-limit headers from a truncated body on " <> backend) $
+      bounded $ Sink.withSink \sink -> do
+        Sink.setResponder sink \_ _ ->
+          pure
+            Sink.ok
+              { Sink.status = Status.status429,
+                Sink.responseHeaders = [("Retry-After", "60"), ("Content-Length", "10")] <> [("Connection", "close") | backend == "h1"],
+                Sink.responseBody = "x"
+              }
+        let dsn = Sink.dsnFor sink "1"
+            body = Encoding.encode Encoding.None (Gen.sampleEnvelope dsn)
+            endpoint = HTTP2.mkEndpoint Encoding.None dsn
+        response <-
+          if backend == "h1"
+            then withHTTP1 \manager -> HTTP1.sendRequest manager mempty (Request.attach (Request.prepare dsn) body)
+            else bracket (HTTP2.newManager endpoint False 5_000_000 def (pure HTTP2.DontReconnect)) HTTP2.closeManager \manager ->
+              HTTP2.sendRequest manager (HTTP2.buildRequest endpoint body)
+        case response of
+          Delivery.Responded receivedAt status _ -> do
+            status `shouldBe` Status.status429
+            (Delivery.interpret response).rateLimits
+              `shouldBe` [Policy.allCategoriesUntil (addUTCTime 60 receivedAt)]
+          other -> expectationFailure (show other)

@@ -273,6 +273,7 @@ test-suite kent
     sentry-core,
     testkit,
     text,
+    time,
     unliftio,
     witch,
 

@@ -7,6 +7,7 @@ import Data.Aeson qualified as Aeson
 import Data.Default (def)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
+import Data.Time.Clock (getCurrentTime)
 import Patrol.Type.Event qualified as Patrol.Event
 import Sentry.Capture (captureEvent)
 import Sentry.Client qualified as Client
@@ -31,7 +32,7 @@ spec_clientReport = describe "client report delivery" do
       let dsn = Kent.dsnFor kent "1"
       -- Client reports enabled on the transport; beforeSend drops every event,
       -- so each capture records a 'before_send' discard but sends no event.
-      clientReports <- ClientReport.new
+      clientReports <- getCurrentTime >>= ClientReport.new
       transport <- AsyncHttpTransport.build def (Just clientReports) Nothing 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
@@ -79,7 +80,7 @@ spec_clientReport = describe "client report delivery" do
     Kent.withKent \kent -> do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
-      reports <- ClientReport.new
+      reports <- getCurrentTime >>= ClientReport.new
       transport <- AsyncHttpTransport.build def (Just reports) Nothing 100 kent.manager dsn
       let opts =
             def

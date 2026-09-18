@@ -8,6 +8,7 @@ import Control.Monad (void)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Foldable (for_)
 import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Time.Clock (UTCTime (..), addUTCTime)
 import Fixtures (testEnvelope)
 import Network.HTTP.Types qualified as Http
 import Sentry.Transport.Delivery qualified as Delivery
@@ -129,13 +130,28 @@ isFailure = either (const True) (const False)
 spec_protocolIndependence :: Spec
 spec_protocolIndependence = describe "outcome type is a parameter" do
   it "instantiates at the HTTP outcome and composes into delivery policy" do
-    let httpOutcome = HTTPDelivery.Responded Http.status200 [("Retry-After", "60")]
+    let httpOutcome = HTTPDelivery.Responded (UTCTime (toEnum 0) 0) Http.status200 [("Retry-After", "60")]
     void $
       Instrument.observing (\_ -> pure ()) Encoding.Gzip (\_ -> pure httpOutcome) testEnvelope
-        >>= HTTPDelivery.interpretNow
+        >>= (pure . HTTPDelivery.interpret)
 
   it "instantiates at the generic outcome with no HTTP values in play" do
     let accepted = Delivery.Outcome Delivery.Accepted []
     outcome <-
       Instrument.observing (\_ -> pure ()) Encoding.None (\_ -> pure accepted) testEnvelope
     outcome `shouldBe` accepted
+
+-- | Observer work cannot move the timestamp carried by the HTTP response.
+spec_responseTiming :: Spec
+spec_responseTiming = describe "response timing through instrumentation" do
+  it "retains the header timestamp when the observer advances time" do
+    let receivedAt = UTCTime (toEnum 0) 0
+    clock <- newIORef receivedAt
+    let sender _ = do
+          now <- readIORef clock
+          pure $ HTTPDelivery.Responded now Http.status200 [("Retry-After", "60")]
+        observe _ = writeIORef clock (addUTCTime 120 receivedAt)
+    response <- Instrument.observing observe Encoding.None sender testEnvelope
+    readIORef clock `shouldReturn` addUTCTime 120 receivedAt
+    (HTTPDelivery.interpret response).rateLimits
+      `shouldBe` [Delivery.allCategoriesUntil (addUTCTime 60 receivedAt)]

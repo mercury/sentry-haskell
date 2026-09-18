@@ -16,6 +16,7 @@ module Sentry.Transport.HTTP.Async
 where
 
 import Data.Kind (Type)
+import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Client.TLS (getGlobalManager)
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
@@ -47,7 +48,7 @@ new httpOpts queueSize = DeferredTransport \dsn clientOpts -> do
   manager <- maybe getGlobalManager pure httpOpts.manager
   clientReports <-
     if clientOpts.sendClientReports
-      then Just <$> ClientReport.new
+      then Just <$> (getCurrentTime >>= ClientReport.new)
       else pure Nothing
   SomeTransport <$> build httpOpts clientReports clientOpts.onDiscard queueSize manager dsn
 
@@ -71,7 +72,7 @@ build opts clientReports onDiscard queueSize manager dsn = do
       template = Request.prepare dsn
       sendFn envelope = do
         outcome <- opts.wrapSender opts.compression (sendRequest manager opts.instrumentation . Request.attach template) envelope
-        HTTPDelivery.interpretNow outcome
+        pure $ HTTPDelivery.interpret outcome
   executor <- AsyncExecutor.new queueSize reportConfig onDiscard sendFn
   pure AsyncHttpTransport{executor}
 

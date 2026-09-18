@@ -1,5 +1,5 @@
 -- | HTTP results and their interpretation as SDK delivery policy.
-module Sentry.Transport.HTTP.Delivery (Outcome (..), interpret, interpretNow, retryAfter, sentryHeader) where
+module Sentry.Transport.HTTP.Delivery (Outcome (..), interpret, retryAfter, sentryHeader) where
 
 import Control.Monad (guard)
 import Data.Attoparsec.ByteString.Char8 (Parser)
@@ -13,7 +13,7 @@ import Data.Maybe (catMaybes, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
-import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
+import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Network.HTTP.Types qualified as HttpTypes
 import Patrol.Type.DataCategory (DataCategory)
@@ -23,7 +23,11 @@ import Sentry.Transport.Delivery qualified as Delivery
 
 -- | The response metadata or normalized transport failure, available before policy.
 type Outcome :: Type
-data Outcome = NetworkFailure Text | Responded HttpTypes.Status HttpTypes.ResponseHeaders
+data Outcome
+  = NetworkFailure Text
+  | -- | The timestamp records when status and headers became available, before
+    -- draining the response body or running delivery observers.
+    Responded UTCTime HttpTypes.Status HttpTypes.ResponseHeaders
   deriving stock (Show)
 
 -- | Interpret an HTTP result as SDK delivery policy.
@@ -36,26 +40,21 @@ data Outcome = NetworkFailure Text | Responded HttpTypes.Status HttpTypes.Respon
 --   3. On a @429@ with neither, a sixty-second limit on all categories.
 --
 -- See <https://develop.sentry.dev/sdk/expected-features/rate-limiting/>.
-interpret :: UTCTime -> Outcome -> Delivery.Outcome
-interpret now = \case
+interpret :: Outcome -> Delivery.Outcome
+interpret = \case
   NetworkFailure _ -> Delivery.rejected ClientReport.NetworkError
-  Responded status headers -> Delivery.Outcome (disposition status) (limits status headers)
+  Responded receivedAt status headers -> Delivery.Outcome (disposition status) (limits receivedAt status headers)
   where
     disposition status
       | status == HttpTypes.tooManyRequests429 = Delivery.Rejected Delivery.AccountedUpstream
       | let code = HttpTypes.statusCode status in 200 <= code && code < 300 = Delivery.Accepted
       | otherwise = Delivery.Rejected (Delivery.RecordLocally ClientReport.SendError)
 
-    limits status headers
+    limits now status headers
       | announced@(_ : _) <- maybe [] (sentryHeader now) (lookup "X-Sentry-Rate-Limits" headers) = announced
       | Just value <- lookup "Retry-After" headers = retryAfter now value
       | status == HttpTypes.tooManyRequests429 = [Delivery.allCategoriesUntil (addUTCTime defaultDelay now)]
       | otherwise = []
-
--- | Interpret a response, computing rate-limit deadlines from a timestamp
--- taken after the response arrives.
-interpretNow :: Outcome -> IO Delivery.Outcome
-interpretNow outcome = flip interpret outcome <$> getCurrentTime
 
 -- | Interpret a Retry-After value, retaining numeric, HTTP-date, and fallback behavior.
 retryAfter :: UTCTime -> ByteString -> [Delivery.RateLimit]

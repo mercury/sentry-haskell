@@ -159,10 +159,10 @@ spec_nonFiniteDurations = describe "non-finite rate-limit durations" do
       HTTP.sentryHeader now ("30:session:project," <> value <> ":error:project,90:transaction:project")
         `shouldBe` [Delivery.categoryUntil DataCategory.Session (addUTCTime 30 now), Delivery.categoryUntil DataCategory.Transaction (addUTCTime 90 now)]
     it ("falls back on a 429 with only an invalid Sentry group for " <> show value) $
-      (HTTP.interpret now (HTTP.Responded Http.tooManyRequests429 [("X-Sentry-Rate-Limits", value <> ":error:project")])).rateLimits
+      (HTTP.interpret (HTTP.Responded now Http.tooManyRequests429 [("X-Sentry-Rate-Limits", value <> ":error:project")])).rateLimits
         `shouldBe` fallback
     it ("honors Retry-After when the Sentry group is invalid for " <> show value) $
-      (HTTP.interpret now (HTTP.Responded Http.status200 [("X-Sentry-Rate-Limits", value <> ":error:project"), ("Retry-After", "120")])).rateLimits
+      (HTTP.interpret (HTTP.Responded now Http.status200 [("X-Sentry-Rate-Limits", value <> ":error:project"), ("Retry-After", "120")])).rateLimits
         `shouldBe` [Delivery.allCategoriesUntil (addUTCTime 120 now)]
 
 spec_updateFrom429 :: Spec
@@ -228,7 +228,7 @@ updateFromSentryHeader :: RateLimiter.RateLimiter -> UTCTime -> ByteString -> Ra
 updateFromSentryHeader rl now value = RateLimiter.apply rl (HTTP.sentryHeader now value)
 
 updateFrom429 :: RateLimiter.RateLimiter -> UTCTime -> RateLimiter.RateLimiter
-updateFrom429 rl now = RateLimiter.apply rl (HTTP.interpret now (HTTP.Responded Http.tooManyRequests429 [])).rateLimits
+updateFrom429 rl now = RateLimiter.apply rl (HTTP.interpret (HTTP.Responded now Http.tooManyRequests429 [])).rateLimits
 
 spec_mergeDeadlines :: Spec
 spec_mergeDeadlines = describe "explicit restriction merging" do
