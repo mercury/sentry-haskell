@@ -11,9 +11,11 @@ import Control.Exception qualified as Exception
 import Control.Monad (replicateM_, void)
 import Control.Monad.STM (atomically)
 import Data.Foldable (for_)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Fixtures (testDsn, testEnvelope)
+import Network.HTTP.Types qualified as Status
 import Patrol qualified
 import Patrol.Type.ClientReport qualified
 import Patrol.Type.DataCategory qualified as DataCategory
@@ -25,6 +27,7 @@ import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Client.Options qualified as Options
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Init qualified as Init
 import Sentry.Test qualified as Test
 import Sentry.Transport qualified as Transport
@@ -32,6 +35,8 @@ import Sentry.Transport.Delivery (accepted)
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.Async.Internal qualified as Internal
+import Sentry.Transport.HTTP.Delivery qualified as HTTP
+import Sentry.Transport.HTTP.Sync qualified as Sync
 import System.Timeout (timeout)
 import Test.Hspec
 import UnliftIO.Exception (throwIO)
@@ -43,7 +48,7 @@ spec_send = parallel $ describe "sending envelopes" do
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env = readMVar var *> testSendFn q accepted env
-    executor <- AsyncExecutor.new 1 Nothing sendFn
+    executor <- AsyncExecutor.new 1 Nothing Nothing sendFn
     -- verify that the send was processed
     res <- Transport.send executor testEnvelope
     res `shouldBe` Transport.SendProcessed
@@ -68,12 +73,12 @@ spec_send = parallel $ describe "sending envelopes" do
 
   for_ [0, -1, minBound] \capacity ->
     it ("rejects invalid queue capacity " <> show capacity) do
-      AsyncExecutor.new capacity Nothing (\_ -> pure accepted) `shouldThrow` anyIOException
+      AsyncExecutor.new capacity Nothing Nothing (\_ -> pure accepted) `shouldThrow` anyIOException
 
   it "is subject to filtering for valid envelope types" do
     q <- newTQueueIO
     let sendFn = testSendFn q accepted
-    executor <- AsyncExecutor.new 2 Nothing sendFn
+    executor <- AsyncExecutor.new 2 Nothing Nothing sendFn
     -- verify that the send was processed
     sendRes <- Transport.send executor emptyEnvelope
     sendRes `shouldBe` Transport.SendProcessed
@@ -88,7 +93,7 @@ spec_send = parallel $ describe "sending envelopes" do
     -- construct a send function that applies a 1 minute rate limit after send
     now <- getCurrentTime
     let sendFn = testSendFn q (Delivery.acceptedWith [Delivery.allCategoriesUntil (addUTCTime 60 now)])
-    executor <- AsyncExecutor.new 1 Nothing sendFn
+    executor <- AsyncExecutor.new 1 Nothing Nothing sendFn
     -- verify that the send was processed
     res0 <- Transport.send executor testEnvelope
     res0 `shouldBe` Transport.SendProcessed
@@ -111,7 +116,7 @@ spec_flush = parallel $ describe "flushing the executor" do
     -- construct a send function that blocks until `var` is filled
     var <- newEmptyMVar
     let sendFn env = readMVar var *> testSendFn q accepted env
-    executor <- AsyncExecutor.new 3 Nothing sendFn
+    executor <- AsyncExecutor.new 3 Nothing Nothing sendFn
     -- enqueues two messages to be sent despite the function blocking
     sendRes0 <- Transport.send executor testEnvelope
     sendRes0 `shouldBe` Transport.SendProcessed
@@ -132,7 +137,7 @@ spec_flush = parallel $ describe "flushing the executor" do
 spec_shutdown :: Spec
 spec_shutdown = parallel $ describe "shutting the executor down" do
   it "rejects sends, flushes and repeat shutdowns once gracefully closed" do
-    executor <- AsyncExecutor.new 1 Nothing (\_ -> pure accepted)
+    executor <- AsyncExecutor.new 1 Nothing Nothing (\_ -> pure accepted)
     Transport.shutdown executor 1 `shouldReturn` Transport.ShutdownSucceeded
     Transport.send executor testEnvelope `shouldReturn` Transport.SendFailed_Shutdown
     Transport.flush executor 1 `shouldReturn` Transport.FlushFailed_Shutdown
@@ -156,7 +161,7 @@ spec_shutdown = parallel $ describe "shutting the executor down" do
       never <- newEmptyMVar @()
       stopped <- newEmptyMVar
       let sendFn _ = (putMVar entered () >> readMVar never >> pure accepted) `finally` putMVar stopped ()
-      executor <- AsyncExecutor.new 1 Nothing sendFn
+      executor <- AsyncExecutor.new 1 Nothing Nothing sendFn
       let opts =
             (Options.defaultClientOptions)
               { Options.dsn = Dsn.Explicit Test.TEST_DSN,
@@ -180,7 +185,7 @@ spec_resilience = parallel $ describe "worker resilience" do
     -- A throwing sendFn (e.g. an unhandled network exception) must not kill the
     -- worker thread and turn the executor into a black hole.
     let sendFn _ = throwIO (userError "boom") :: IO Delivery.Outcome
-    executor <- AsyncExecutor.new 3 Nothing sendFn
+    executor <- AsyncExecutor.new 3 Nothing Nothing sendFn
     -- The envelope is accepted; its send throws on the worker thread.
     res <- Transport.send executor testEnvelope
     res `shouldBe` Transport.SendProcessed
@@ -232,7 +237,7 @@ spec_flushClientReports = describe "flushing with client reports" do
           now <- getCurrentTime
           atomically $ writeTQueue q env
           pure $ Delivery.acceptedWith [Delivery.allCategoriesUntil (addUTCTime 60 now)]
-    executor <- AsyncExecutor.new 3 (Just reports) sendFn
+    executor <- AsyncExecutor.new 3 (Just reports) Nothing sendFn
     -- The flush drains the report; sendFn returns a globally rate-limited state.
     Transport.flush executor 1 >>= (`shouldBe` Transport.FlushSucceeded)
     -- A subsequent send must be filtered out by the retained limit. If the
@@ -276,7 +281,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
 
   it "runs callbacks unmasked when constructed under masking" $ boundedLifecycle do
     observed <- newEmptyMVar
-    executor <- mask_ $ AsyncExecutor.new 2 Nothing (\_ -> getMaskingState >>= putMVar observed >> pure accepted)
+    executor <- mask_ $ AsyncExecutor.new 2 Nothing Nothing (\_ -> getMaskingState >>= putMVar observed >> pure accepted)
     flip finally (void $ Transport.shutdown executor 0) do
       Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
       readMVar observed `shouldReturn` Unmasked
@@ -329,7 +334,7 @@ spec_admissionLifecycle = describe "admission lifecycle" do
           (getMaskingState >>= putMVar observed >> readMVar never >> pure accepted)
             `finally` putMVar stopped ()
         factory _ _ = do
-          executor <- AsyncExecutor.new 2 Nothing sendFn
+          executor <- AsyncExecutor.new 2 Nothing Nothing sendFn
           putMVar created executor
           pure $ Transport.SomeTransport executor
         opts =
@@ -359,7 +364,7 @@ boundedLifecycle :: IO () -> IO ()
 boundedLifecycle action = timeout 10_000_000 action `shouldReturn` Just ()
 
 withExecutor :: Int -> (Patrol.Envelope -> IO Delivery.Outcome) -> (AsyncExecutor.AsyncExecutor -> IO a) -> IO a
-withExecutor size sendFn = bracket (AsyncExecutor.new size Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0)
+withExecutor size sendFn = bracket (AsyncExecutor.new size Nothing Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0)
 
 -- | Block until the executor's task queue closes.
 --
@@ -382,7 +387,7 @@ spec_genericAccounting = describe "protocol-independent delivery accounting" do
       attempts <- newTQueueIO
       let sender envelope = atomically (writeTQueue attempts envelope) >> pure (Delivery.Outcome disposition [])
       bracket
-        (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) sender)
+        (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) Nothing sender)
         (\executor -> void $ Transport.shutdown executor 0)
         \executor -> do
           -- An existing report must never count as another lost error item.
@@ -407,7 +412,7 @@ spec_genericAccounting = describe "protocol-independent delivery accounting" do
             atomically (writeTQueue attempts envelope) >> pure accepted
           _ -> throwIO (userError "custom sender failed")
     bracket
-      (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) sender)
+      (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) Nothing sender)
       (\executor -> void $ Transport.shutdown executor 0)
       \executor -> do
         Transport.send executor testEnvelope `shouldReturn` Transport.SendProcessed
@@ -425,3 +430,132 @@ reportedDrops envelopes =
     Patrol.Item.ClientReport report <- items,
     entry <- report.discardedEvents
   ]
+
+-- | Discard notification is independent of report transmission and failures.
+spec_discardNotifications :: Spec
+spec_discardNotifications = describe "transport discard callbacks" do
+  for_ [False, True] \enabled -> do
+    for_ [False, True] \throws ->
+      it ("notifies async delivery loss once: " <> show (enabled, throws)) $ boundedLifecycle do
+        reports <- ClientReport.new
+        notifications <- newTQueueIO
+        let reportConfig = if enabled then Just (AsyncExecutor.clientReportConfig reports testDsn) else Nothing
+            callback reason category quantity = do
+              atomically $ writeTQueue notifications (reason, category, quantity)
+              throwIO (userError "observer failed")
+            sender _ = if throws then throwIO (userError "sender failed") else pure (Delivery.rejected ClientReport.NetworkError)
+        bracket
+          (AsyncExecutor.new 4 reportConfig (Just callback) sender)
+          (\e -> void $ Transport.shutdown e 0)
+          \executor -> do
+            Transport.send executor batchEnvelope `shouldReturn` Transport.SendProcessed
+            Transport.shutdown executor 2 `shouldReturn` Transport.ShutdownSucceeded
+            atomically (flushTQueue notifications)
+              `shouldReturn` [(if throws then ClientReport.InternalSdkError else ClientReport.NetworkError, DataCategory.Error, 3)]
+
+    it ("notifies queue overflow with reports " <> show enabled) $ boundedLifecycle do
+      reports <- ClientReport.new
+      started <- newEmptyMVar
+      release <- newEmptyMVar
+      notifications <- newTQueueIO
+      let callback reason category quantity = atomically $ writeTQueue notifications (reason, category, quantity)
+          sender _ = void (tryPutMVar started ()) >> readMVar release >> pure accepted
+          reportConfig = if enabled then Just (AsyncExecutor.clientReportConfig reports testDsn) else Nothing
+      bracket
+        (AsyncExecutor.new 1 reportConfig (Just callback) sender)
+        (\e -> void $ Transport.shutdown e 0)
+        \executor -> do
+          void $ Transport.send executor testEnvelope
+          readMVar started
+          void $ Transport.send executor testEnvelope
+          Transport.send executor batchEnvelope `shouldReturn` Transport.SendFailed_QueueFull
+          atomically (flushTQueue notifications) `shouldReturn` [(ClientReport.QueueOverflow, DataCategory.Error, 3)]
+          putMVar release ()
+          Transport.shutdown executor 2 `shouldReturn` Transport.ShutdownSucceeded
+          atomically (flushTQueue notifications) `shouldReturn` []
+
+    for_ [False, True] \partial ->
+      it ("notifies local rate limits with reports and partial envelope " <> show (enabled, partial)) $ boundedLifecycle do
+        reports <- ClientReport.new
+        notifications <- newTQueueIO
+        attempts <- newTQueueIO
+        now <- getCurrentTime
+        let callback reason category quantity = atomically $ writeTQueue notifications (reason, category, quantity)
+            sender attempted = do
+              atomically $ writeTQueue attempts attempted
+              pure $ Delivery.acceptedWith [Delivery.categoryUntil DataCategory.Error (addUTCTime 60 now)]
+            reportConfig = if enabled then Just (AsyncExecutor.clientReportConfig reports testDsn) else Nothing
+            envelope = if partial then ClientReport.attach (Patrol.Type.ClientReport.ClientReport Nothing []) batchEnvelope else batchEnvelope
+        bracket
+          (AsyncExecutor.new 4 reportConfig (Just callback) sender)
+          (\e -> void $ Transport.shutdown e 0)
+          \executor -> do
+            void $ Transport.send executor testEnvelope
+            Transport.flush executor 2 `shouldReturn` Transport.FlushSucceeded
+            void $ atomically (flushTQueue attempts)
+            void $ Transport.send executor envelope
+            Transport.shutdown executor 2 `shouldReturn` Transport.ShutdownSucceeded
+            atomically (flushTQueue notifications) `shouldReturn` [(ClientReport.RatelimitBackoff, DataCategory.Error, 3)]
+            sent <- atomically $ flushTQueue attempts
+            -- Kept report items and drained reports cannot create notifications.
+            sum [length [() | Patrol.Item.Event _ <- items] | e <- sent, Patrol.Items.EnvelopeItems items <- [e.items]] `shouldBe` 0
+
+  it "records the complete batch before a callback is cancelled" $ boundedLifecycle do
+    reports <- ClientReport.new
+    started <- newEmptyMVar
+    release <- newEmptyMVar
+    masking <- newEmptyMVar
+    let callback _ _ _ = getMaskingState >>= putMVar masking >> putMVar started () >> readMVar release
+    transport <- Sync.buildWithSender (Just reports) (Just callback) (const $ pure $ HTTP.NetworkFailure "timeout")
+    Async.withAsync (Transport.send transport batchEnvelope) \worker -> do
+      readMVar started
+      readMVar masking `shouldReturn` Unmasked
+      now <- getCurrentTime
+      Just report <- ClientReport.takePending reports now True
+      fmap (.quantity) report.discardedEvents `shouldBe` [3]
+      Async.cancel worker
+      result <- Async.waitCatch worker
+      either (fmap (const True) . Exception.fromException @Async.AsyncCancelled) (const Nothing) result `shouldBe` Just True
+
+  it "learns sync limits before notifying about a failed delivery" $ boundedLifecycle do
+    holder <- newIORef Nothing
+    notifications <- newTQueueIO
+    let callback reason category quantity = do
+          atomically $ writeTQueue notifications (reason, category, quantity)
+          if reason == ClientReport.SendError
+            then do
+              Just transport <- readIORef holder
+              Transport.send transport testEnvelope `shouldReturn` Transport.SendFailed_Other
+            else pure ()
+          throwIO (userError "ignored callback failure")
+    transport <- Sync.buildWithSender Nothing (Just callback) (const $ pure $ HTTP.Responded Status.status500 [("Retry-After", "60")])
+    writeIORef holder (Just transport)
+    Transport.send transport batchEnvelope `shouldReturn` Transport.SendFailed_Other
+    atomically (flushTQueue notifications)
+      `shouldReturn` [(ClientReport.SendError, DataCategory.Error, 3), (ClientReport.RatelimitBackoff, DataCategory.Error, 1)]
+
+  it "keeps transport recordDiscards bookkeeping-only" $ boundedLifecycle do
+    reports <- ClientReport.new
+    let callback _ _ _ = throwIO Async.AsyncCancelled
+    transport <- Sync.buildWithSender (Just reports) (Just callback) (const $ pure $ HTTP.Responded Status.status200 [])
+    Transport.recordDiscards transport ClientReport.SampleRate DataCategory.Error 2
+    bracket
+      (AsyncExecutor.new 4 (Just $ AsyncExecutor.clientReportConfig reports testDsn) (Just callback) (const $ pure accepted))
+      (\e -> void $ Transport.shutdown e 0)
+      \executor -> do
+        Transport.recordDiscards executor ClientReport.BeforeSend DataCategory.Error 3
+        now <- getCurrentTime
+        Just report <- ClientReport.takePending reports now True
+        sum (map (.quantity) report.discardedEvents) `shouldBe` 5
+
+  it "ignores nonpositive notification counts and unclassified items" do
+    let callback _ _ _ = expectationFailure "unexpected callback"
+    Discard.notify (Just callback) ClientReport.SendError DataCategory.Error 0
+    Discard.notify (Just callback) ClientReport.SendError DataCategory.Error (-1)
+    Discard.recordItems Nothing (Just callback) ClientReport.SendError [Patrol.Item.Raw, Patrol.Item.ClientReport (Patrol.Type.ClientReport.ClientReport Nothing [])]
+
+-- | Three classified items ensure quantities measure items, not envelopes.
+batchEnvelope :: Patrol.Envelope
+batchEnvelope = case testEnvelope.items of
+  Patrol.Items.EnvelopeItems items -> testEnvelope{Patrol.Envelope.items = Patrol.Items.EnvelopeItems (concat (replicate 3 items))}
+  Patrol.Items.Raw _ -> error "fixture must contain classified items"

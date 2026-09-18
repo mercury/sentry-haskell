@@ -24,6 +24,7 @@ import Patrol qualified
 import Patrol.Type.DataCategory (DataCategory)
 import Sentry.ClientReport (ClientReports, DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Transport qualified as Sentry.Transport
 import UnliftIO.Exception (displayException)
 import UnliftIO.Timeout qualified as UnliftIO (timeout)
@@ -50,7 +51,8 @@ type AsyncExecutor :: Type
 data AsyncExecutor = AsyncExecutor
   { taskQueue :: TBMQueue Task,
     handle :: Async (),
-    clientReports :: Maybe ClientReports
+    clientReports :: Maybe ClientReports,
+    onDiscard :: Maybe Discard.Callback
   }
 
 instance Sentry.Transport.Transport AsyncExecutor where
@@ -61,8 +63,7 @@ instance Sentry.Transport.Transport AsyncExecutor where
       Nothing -> pure Sentry.Transport.SendFailed_Shutdown
       Just True -> pure Sentry.Transport.SendProcessed
       Just False -> do
-        for_ executor.clientReports \cr ->
-          ClientReport.recordEnvelopeDrop cr ClientReport.QueueOverflow envelope
+        Discard.recordEnvelope executor.clientReports executor.onDiscard ClientReport.QueueOverflow envelope
         pure Sentry.Transport.SendFailed_QueueFull
 
   flush :: AsyncExecutor -> NominalDiffTime -> IO Sentry.Transport.FlushResponse

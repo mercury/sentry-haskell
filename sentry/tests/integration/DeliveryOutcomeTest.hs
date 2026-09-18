@@ -29,6 +29,9 @@ import Patrol.Type.DiscardedEvent qualified
 import Patrol.Type.Envelope qualified as Envelope
 import Patrol.Type.Item qualified as Item
 import Patrol.Type.Items qualified as Items
+import Sentry.Client qualified as Client
+import Sentry.Client.Options qualified as Options
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.ClientReport qualified as Reports
 import Sentry.Test qualified as Test
 import Sentry.TestKit.Gen qualified as Gen
@@ -101,9 +104,9 @@ withTransport backend action = Sink.withSink \sink ->
     reports <- Reports.new
     let dsn = Sink.dsnFor sink "1"
         build = case backend of
-          "sync" -> Transport.SomeTransport <$> Sync.build def (Just reports) manager dsn
-          "async" -> Transport.SomeTransport <$> Async.build def (Just reports) 32 manager dsn
-          _ -> Transport.SomeTransport <$> Http2.build def{Http2.validateCert = False} (Just reports) 32 dsn
+          "sync" -> Transport.SomeTransport <$> Sync.build def (Just reports) Nothing manager dsn
+          "async" -> Transport.SomeTransport <$> Async.build def (Just reports) Nothing 32 manager dsn
+          _ -> Transport.SomeTransport <$> Http2.build def{Http2.validateCert = False} (Just reports) Nothing 32 dsn
     bracket build (\transport -> void $ Transport.shutdown transport 5) (action sink reports)
 
 spec_networkFailure :: Spec
@@ -111,7 +114,7 @@ spec_networkFailure = describe "synchronous injected network failures" do
   it "returns the failure and excludes piggybacked reports from attempted counts" $
     bounded $ withTransport "sync" \sink reports _ -> do
       attempted <- newIORef []
-      transport <- Sync.buildWithSender (Just reports) \attempt ->
+      transport <- Sync.buildWithSender (Just reports) Nothing \attempt ->
         modifyIORef' attempted (attempt :) *> pure (HTTP.NetworkFailure "timeout")
       let envelope = Gen.sampleEnvelope (Sink.dsnFor sink "1")
       Reports.record reports Reports.BeforeSend Category.Error 2
@@ -128,14 +131,14 @@ spec_networkFailure = describe "synchronous injected network failures" do
         Transport.send transport reportOnly `shouldReturn` Transport.SendFailed_Other
       allDrops sink reports `shouldReturn` []
   it "works with reports disabled" do
-    transport <- Sync.buildWithSender Nothing (const $ pure $ HTTP.NetworkFailure "timeout")
+    transport <- Sync.buildWithSender Nothing Nothing (const $ pure $ HTTP.NetworkFailure "timeout")
     Transport.send transport (Gen.sampleEnvelope Test.TEST_DSN) `shouldReturn` Transport.SendFailed_Other
   it "counts locally suppressed events separately when the remaining report fails" $
     bounded $ withTransport "sync" \sink reports _ -> do
       now <- getCurrentTime
       limiter <- newIORef (RateLimiter.apply RateLimiter.new (HTTP.sentryHeader now "60:error:organization"))
       attempted <- newIORef []
-      let transport = Sync.SyncHttpTransport limiter (\e -> modifyIORef' attempted (e :) *> pure (HTTP.NetworkFailure "timeout")) (Just reports)
+      let transport = Sync.SyncHttpTransport limiter (\e -> modifyIORef' attempted (e :) *> pure (HTTP.NetworkFailure "timeout")) (Just reports) Nothing
           report = Report.ClientReport Nothing []
           envelope = Reports.attach report (Gen.sampleEnvelope (Sink.dsnFor sink "1"))
       Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other
@@ -154,7 +157,7 @@ spec_syncLimitMerging = describe "custom synchronous sender" do
   it "keeps the longer deadline when a later response asks for less" $ bounded do
     retryAfters <- newIORef ["300", "10"]
     now <- getCurrentTime
-    transport <- Sync.buildWithSender Nothing \_ -> do
+    transport <- Sync.buildWithSender Nothing Nothing \_ -> do
       value <- atomicModifyIORef' retryAfters \case
         v : rest -> (rest, v)
         [] -> ([], "0")
@@ -164,3 +167,36 @@ spec_syncLimitMerging = describe "custom synchronous sender" do
     Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other
     limiter <- readIORef transport.rateLimiter
     fmap (\deadline -> diffUTCTime deadline now >= 300) limiter.global `shouldBe` Just True
+
+-- | Providers forward options to their transports without changing ownership.
+spec_providerDiscard :: Spec
+spec_providerDiscard = describe "provider discard callbacks" do
+  for_ ["sync", "async", "h2"] \backend ->
+    for_ [False, True] \reportsEnabled ->
+      it (backend <> " forwards onDiscard with reports " <> show reportsEnabled) $
+        bounded $ Sink.withSink \sink ->
+          bracket (Http.newManager (mkManagerSettings (TLSSettingsSimple True False False def) Nothing)) Http.closeManager \manager -> do
+            notifications <- newIORef []
+            let callback reason category quantity = atomicModifyIORef' notifications (\xs -> (xs <> [(reason, category, quantity)], ()))
+                provider = case backend of
+                  "sync" -> Sync.new def{Sync.manager = Just manager}
+                  "async" -> Async.new def{Sync.manager = Just manager} 32
+                  _ -> Http2.new def{Http2.validateCert = False} 32
+                dsn = Sink.dsnFor sink "1"
+            client <-
+              Client.new
+                def
+                  { Options.dsn = Dsn.Explicit dsn,
+                    Options.transport = Just provider,
+                    Options.sendClientReports = reportsEnabled,
+                    Options.onDiscard = Just callback
+                  }
+            Just transport <- pure client.transport
+            bracket (pure transport) (\t -> void $ Transport.shutdown t 5) \t -> do
+              Sink.setResponder sink \_ _ -> pure Sink.ok{Sink.status = Status.status500}
+              void $ Transport.send t (Gen.sampleEnvelope dsn)
+              Transport.flush t 5 `shouldReturn` Transport.FlushSucceeded
+              readIORef notifications `shouldReturn` [(Reports.SendError, Category.Error, 1)]
+              -- Sending or losing a standalone report creates no further callback.
+              Transport.flush t 5 `shouldReturn` Transport.FlushSucceeded
+              readIORef notifications `shouldReturn` [(Reports.SendError, Category.Error, 1)]

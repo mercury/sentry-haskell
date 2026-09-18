@@ -22,6 +22,7 @@ import Patrol qualified
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport.Encoding (Compression (..))
 import Sentry.Transport.Executor.Async (AsyncExecutor)
@@ -48,7 +49,7 @@ new httpOpts queueSize = DeferredTransport \dsn clientOpts -> do
     if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  SomeTransport <$> build httpOpts clientReports queueSize manager dsn
+  SomeTransport <$> build httpOpts clientReports clientOpts.onDiscard queueSize manager dsn
 
 -- | Build an 'AsyncHttpTransport' directly, bypassing the 'TransportProvider'.
 --
@@ -60,17 +61,18 @@ new httpOpts queueSize = DeferredTransport \dsn clientOpts -> do
 build ::
   HttpTransportOptions ->
   Maybe ClientReports ->
+  Maybe Discard.Callback ->
   Int ->
   HttpClient.Manager ->
   Patrol.Dsn ->
   IO AsyncHttpTransport
-build opts clientReports queueSize manager dsn = do
+build opts clientReports onDiscard queueSize manager dsn = do
   let reportConfig = fmap (\cr -> AsyncExecutor.clientReportConfig cr dsn) clientReports
       template = Request.prepare dsn
       sendFn envelope = do
         outcome <- opts.wrapSender opts.compression (sendRequest manager opts.instrumentation . Request.attach template) envelope
         HTTPDelivery.interpretNow outcome
-  executor <- AsyncExecutor.new queueSize reportConfig sendFn
+  executor <- AsyncExecutor.new queueSize reportConfig onDiscard sendFn
   pure AsyncHttpTransport{executor}
 
 instance Transport AsyncHttpTransport where

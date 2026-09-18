@@ -10,7 +10,7 @@
 -- a send function that handles envelope delivery:
 --
 -- > sendFn :: Patrol.Envelope -> IO Delivery.Outcome
--- > transport <- Sentry.Transport.Executor.Async.new defaultQueueSize Nothing sendFn
+-- > transport <- Sentry.Transport.Executor.Async.new defaultQueueSize Nothing Nothing sendFn
 --
 -- This allows the same executor to work with different HTTP libraries or
 -- custom delivery mechanisms.
@@ -35,7 +35,6 @@ import Control.Concurrent.STM.TBMQueue qualified as TBM
 import Control.Concurrent.STM.TMVar (tryPutTMVar)
 import Control.Exception (evaluate, finally, mask)
 import Control.Monad (void, when)
-import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
@@ -46,6 +45,7 @@ import Patrol.Type.Item qualified as Item
 import Patrol.Type.Items qualified as Items
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Transport (Transport (..))
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async.Internal (AsyncExecutor (..), Task (..))
@@ -90,23 +90,26 @@ clientReportConfig accumulator dsn =
 new ::
   Int ->
   Maybe ClientReportConfig ->
+  Maybe Discard.Callback ->
   (Patrol.Envelope -> IO Delivery.Outcome) ->
   IO AsyncExecutor
-new queueSize reports sendFn = mask \_ -> do
+new queueSize reports onDiscard sendFn = mask \_ -> do
   when (queueSize <= 0) $ fail "Executor queue size must be positive"
   taskQueue <- TBM.newTBMQueueIO queueSize
   let clientReports = fmap (.accumulator) reports
   handle <- asyncWithUnmask $ \unmask ->
-    unmask (mkWorker taskQueue reports sendFn) `finally` atomically (TBM.closeTBMQueue taskQueue)
-  pure AsyncExecutor{taskQueue, handle, clientReports}
+    unmask (mkWorker taskQueue reports onDiscard sendFn)
+      `finally` atomically (TBM.closeTBMQueue taskQueue)
+  pure AsyncExecutor{taskQueue, handle, clientReports, onDiscard}
 
 -- | Worker thread loop that processes tasks from the queue.
 mkWorker ::
   TBMQueue Task ->
   Maybe ClientReportConfig ->
+  Maybe Discard.Callback ->
   (Patrol.Envelope -> IO Delivery.Outcome) ->
   IO ()
-mkWorker queue reports sendFn = loop RateLimiter.new
+mkWorker queue reports onDiscard sendFn = loop RateLimiter.new
   where
     loop :: RateLimiter -> IO ()
     loop rateLimiter =
@@ -123,8 +126,7 @@ mkWorker queue reports sendFn = loop RateLimiter.new
           let filtered = RateLimiter.filterEnvelope rateLimiter now envelope
           -- Account for every item dropped by rate limiting, whether the whole
           -- envelope was filtered out or only some of its items.
-          for_ (fmap (.accumulator) reports) \cr ->
-            ClientReport.recordItemDrops cr ClientReport.RatelimitBackoff filtered.dropped
+          Discard.recordItems (fmap (.accumulator) reports) onDiscard ClientReport.RatelimitBackoff filtered.dropped
           case filtered.kept of
             Nothing -> loop rateLimiter
             Just filteredEnvelope -> do
@@ -145,15 +147,14 @@ mkWorker queue reports sendFn = loop RateLimiter.new
                 -- into values, so this only catches genuinely unexpected
                 -- errors.
                 deliver piggybacked rateLimiter `catchAny` \_ -> do
-                  for_ (fmap (.accumulator) reports) \cr ->
-                    ClientReport.recordEnvelopeDrop cr ClientReport.InternalSdkError filteredEnvelope
+                  Discard.recordEnvelope (fmap (.accumulator) reports) onDiscard ClientReport.InternalSdkError filteredEnvelope
                   pure rateLimiter
               loop newRateLimiter
 
     deliver envelope rateLimiter = do
       outcome <- sendFn envelope
       updated <- evaluate $ RateLimiter.apply rateLimiter outcome.rateLimits
-      Delivery.recordOutcome (fmap (.accumulator) reports) envelope outcome
+      Delivery.recordOutcome (fmap (.accumulator) reports) onDiscard envelope outcome
       pure updated
 
     -- Force-drain any pending client report, sending it immediately. Returns

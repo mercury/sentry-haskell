@@ -27,11 +27,11 @@ spec_ownedCapture =
       completed <- timeout 15_000_000 $ Sink.withSink \sink -> do
         let dsn = Sink.dsnFor sink "1"
         manager <- Http.newManager $ mkManagerSettings (TLSSettingsSimple True False False def) Nothing
-        sync <- Sync.build def Nothing manager dsn
+        sync <- Sync.build def Nothing Nothing manager dsn
         let sendFn envelope = do
               Transport.send sync envelope `shouldReturn` Transport.SendProcessed
               pure Delivery.accepted
-        bracket (Executor.new 32 Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0) \executor -> do
+        bracket (Executor.new 32 Nothing Nothing sendFn) (\executor -> void $ Transport.shutdown executor 0) \executor -> do
           let opts =
                 (Options.defaultClientOptions)
                   { Options.dsn = Dsn.Explicit dsn,

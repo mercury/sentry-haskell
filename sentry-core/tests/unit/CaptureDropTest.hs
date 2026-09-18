@@ -1,9 +1,11 @@
 module CaptureDropTest where
 
-import Control.Exception (toException)
+import Control.Exception (throwIO, toException)
 import Control.Exception.Annotated (AnnotatedException (..), Annotation (..))
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
+import Data.Foldable (for_)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -18,6 +20,7 @@ import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
 import Sentry.Capture (captureEvent, captureException, captureExceptionWith, captureMessage, captureUnhandledException)
 import Sentry.Client.Options (ClientOptions (..))
+import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.ClientReport (DiscardReason (..))
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
@@ -216,3 +219,35 @@ testUser =
       segment = "",
       username = "alice"
     }
+
+-- | Capture owns notifications even when the transport is prebuilt.
+spec_discardCallback :: Spec
+spec_discardCallback = describe "capture discard callbacks" do
+  for_ [False, True] \reportsEnabled ->
+    for_
+      [ ("scope", EventProcessor, def),
+        ("integration", EventProcessor, def{integrations = Vector.singleton (fromIntegration DroppingIntegration)}),
+        ("beforeSend", BeforeSend, def{beforeSend = Just (const Nothing)}),
+        ("sampling", SampleRate, def{sampleRate = Just 0})
+      ]
+      \(label, reason, options) ->
+        it ("notifies once for " <> label <> " with reports " <> show reportsEnabled) do
+          notifications <- newIORef []
+          let callback why category quantity = do
+                modifyIORef' notifications (<> [(why, category, quantity)])
+                throwIO (userError "ignored observer failure")
+              opts = options{sendClientReports = reportsEnabled, onDiscard = Just callback}
+          (result, transport) <- Test.withCustomClient opts \_ ->
+            Scope.IO.withScope \scope -> do
+              if label == "scope" then Scope.setEventProcessor scope (const Nothing) else pure ()
+              captureEvent Patrol.Event.empty
+          result `shouldBe` Nothing
+          readIORef notifications `shouldReturn` [(reason, Error, 1)]
+          Test.fetchAndClearDrops transport `shouldReturn` [(reason, Error, 1)]
+  it "does not notify for a disabled client, including scope processor drops" do
+    let options = def{dsn = Dsn.Disabled, onDiscard = Just (\_ _ _ -> expectationFailure "disabled notification")}
+    (result, _) <- Test.withCustomClient options \_ ->
+      Scope.IO.withScope \scope -> do
+        Scope.setEventProcessor scope (const Nothing)
+        captureEvent Patrol.Event.empty
+    result `shouldBe` Nothing

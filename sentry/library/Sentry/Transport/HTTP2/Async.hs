@@ -42,6 +42,7 @@ import Patrol qualified
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport.Encoding (Compression (..))
 import Sentry.Transport.Encoding qualified as Encoding
@@ -86,10 +87,10 @@ data Http2TransportOptions = Http2TransportOptions
     -- overrides, TCP_NODELAY).
     http2Settings :: Http2Settings,
     -- | Wrap the outgoing envelope send function produced by this transport.
-    -- 
+    --
     -- The transport applies this after filtering and attaching reports; set it
     -- to @Instrument.observing report@ to observe delivery attempts.
-    -- 
+    --
     -- Callbacks run on the sending worker thread and must finish promptly.
     --
     -- > def{wrapSender = Instrument.observing report}
@@ -125,7 +126,7 @@ new http2Opts queueSize = DeferredTransport \dsn clientOpts -> do
     if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  SomeTransport <$> build http2Opts clientReports queueSize dsn
+  SomeTransport <$> build http2Opts clientReports clientOpts.onDiscard queueSize dsn
 
 -- | Build an 'AsyncHttp2Transport' directly, bypassing the 'TransportProvider'.
 --
@@ -134,10 +135,11 @@ new http2Opts queueSize = DeferredTransport \dsn clientOpts -> do
 build ::
   Http2TransportOptions ->
   Maybe ClientReports ->
+  Maybe Discard.Callback ->
   Int ->
   Patrol.Dsn ->
   IO AsyncHttp2Transport
-build opts clientReports queueSize dsn = mask_ do
+build opts clientReports onDiscard queueSize dsn = mask_ do
   let reportConfig = fmap (\cr -> AsyncExecutor.clientReportConfig cr dsn) clientReports
       endpoint = Connection.mkEndpoint opts.compression dsn
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
@@ -147,7 +149,7 @@ build opts clientReports queueSize dsn = mask_ do
   -- Close the manager if executor creation fails, including when the queue
   -- size is nonpositive.
   executor <-
-    AsyncExecutor.new queueSize reportConfig sendFn
+    AsyncExecutor.new queueSize reportConfig onDiscard sendFn
       `onException` Connection.closeManager manager
   pure AsyncHttp2Transport{executor, manager}
 

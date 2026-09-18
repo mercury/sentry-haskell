@@ -37,7 +37,7 @@ spec_tlsDelivery = describe "h2-TLS delivery (ALPN negotiation)" do
     Sink.withSink \sink -> do
       let dsn = Sink.dsnFor sink "1"
           n = 5 :: Int
-      transport <- Http2.build tlsOpts Nothing 100 dsn
+      transport <- Http2.build tlsOpts Nothing Nothing 100 dsn
       replicateM_ n $ Transport.send transport (Gen.sampleEnvelope dsn)
       flushResult <- Transport.flush transport 10
       flushResult `shouldBe` FlushSucceeded
@@ -55,7 +55,7 @@ spec_rateLimitHttp429 = describe "rate-limit: HTTP 429 suppresses subsequent sen
   it "stops sending after a 429 Retry-After: 60 response" $
     Sink.withSink \sink -> do
       let dsn = Sink.dsnFor sink "1"
-      transport <- Http2.build tlsOpts Nothing 100 dsn
+      transport <- Http2.build tlsOpts Nothing Nothing 100 dsn
 
       -- First send succeeds (default 200 responder).
       _ <- Transport.send transport (Gen.sampleEnvelope dsn)
@@ -94,7 +94,7 @@ spec_rateLimitSentryHeader =
     it "stops sending error events after X-Sentry-Rate-Limits: 60:error:organization" $
       Sink.withSink \sink -> do
         let dsn = Sink.dsnFor sink "1"
-        transport <- Http2.build tlsOpts Nothing 100 dsn
+        transport <- Http2.build tlsOpts Nothing Nothing 100 dsn
 
         -- First send: 200 response carries X-Sentry-Rate-Limits for the error
         -- category with a 60-second window.
@@ -169,7 +169,7 @@ spec_customSettingsDelivery =
                   connectionWindowSize = Just (4 * 1024 * 1024)
                 }
             opts = tlsOpts{http2Settings = customSettings}
-        transport <- Http2.build opts Nothing 100 dsn
+        transport <- Http2.build opts Nothing Nothing 100 dsn
         replicateM_ 3 $ Transport.send transport (Gen.sampleEnvelope dsn)
         flushResult <- Transport.flush transport 10
         flushResult `shouldBe` FlushSucceeded
@@ -231,7 +231,7 @@ withBlockedTransport sink action = do
   never <- newEmptyMVar
   Sink.setResponder sink \_ _ -> putMVar entered () >> readMVar never
   bracket
-    (Http2.build def{Http2.validateCert = False} Nothing 4 (Sink.dsnFor sink "1"))
+    (Http2.build def{Http2.validateCert = False} Nothing Nothing 4 (Sink.dsnFor sink "1"))
     (\transport -> HTTP2.closeManager transport.manager)
     (action entered)
 

@@ -36,7 +36,7 @@ import Data.Time.Clock (UTCTime)
 import Patrol qualified
 import Patrol.Type.DataCategory (DataCategory)
 import Sentry.ClientReport (ClientReports, DiscardReason)
-import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 
 -- | Delivery disposition and explicit limits learned during the attempt.
 type Outcome :: Type
@@ -72,14 +72,15 @@ discardReason outcome = case outcome.disposition of
   Rejected AccountedUpstream -> Nothing
   Rejected (RecordLocally reason) -> Just reason
 
--- | Record a rejected attempt against the envelope's items, once per attempt.
+-- | Record a rejected attempt against its items, then apply the discard
+-- callback once per category.
 --
--- Client-report items carry no data category, so 'ClientReport.recordEnvelopeDrop'
+-- Client-report items carry no data category, so 'Discard.recordEnvelope'
 -- skips them and a failed report never reports itself.
-recordOutcome :: Maybe ClientReports -> Patrol.Envelope -> Outcome -> IO ()
-recordOutcome reports envelope outcome =
-  for_ reports \cr -> for_ (discardReason outcome) \reason ->
-    ClientReport.recordEnvelopeDrop cr reason envelope
+recordOutcome :: Maybe ClientReports -> Maybe Discard.Callback -> Patrol.Envelope -> Outcome -> IO ()
+recordOutcome reports callback envelope outcome =
+  for_ (discardReason outcome) \reason ->
+    Discard.recordEnvelope reports callback reason envelope
 
 -- | An attempt the sender took responsibility for, with no rate limits
 -- announced.

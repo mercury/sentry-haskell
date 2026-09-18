@@ -98,9 +98,9 @@ spec_builderObservation = describe "HTTP builder observations" do
               dsn = Sink.dsnFor sink "1"
               envelope = Gen.sampleEnvelope dsn
               build = case backend of
-                "sync" -> Transport.SomeTransport <$> HTTP1.build opts (Just reports) manager dsn
-                "async" -> Transport.SomeTransport <$> Async.build opts (Just reports) 32 manager dsn
-                _ -> Transport.SomeTransport <$> Async2.build def{Async2.validateCert = False, Async2.wrapSender = Instrument.observing report} (Just reports) 32 dsn
+                "sync" -> Transport.SomeTransport <$> HTTP1.build opts (Just reports) Nothing manager dsn
+                "async" -> Transport.SomeTransport <$> Async.build opts (Just reports) Nothing 32 manager dsn
+                _ -> Transport.SomeTransport <$> Async2.build def{Async2.validateCert = False, Async2.wrapSender = Instrument.observing report} (Just reports) Nothing 32 dsn
           Sink.setResponder sink \_ _ ->
             pure
               Sink.ok

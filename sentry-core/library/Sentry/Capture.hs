@@ -50,6 +50,7 @@ import Sentry.Client.Internal qualified as ClientInternal
 import Sentry.Client.Options (ClientOptions (..))
 import Sentry.ClientReport (DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Event.Captured qualified as Captured
@@ -293,6 +294,9 @@ noteDrop :: (MonadIO m) => Client -> DiscardReason -> Patrol.DataCategory.DataCa
 noteDrop client reason category = liftIO do
   for_ client.transport \t ->
     Transport.recordDiscards t reason category 1
+  case ((ClientInternal.runtimeOptions client).dsn, client.transport) of
+    (Just _, Just _) -> Discard.notify client.options.onDiscard reason category 1
+    _ -> pure ()
   when (ClientInternal.runtimeOptions client).debug $
     hPutStrLn stderr $
       "[sentry] event dropped: " <> Text.unpack (ClientReport.reasonText reason)

@@ -42,6 +42,7 @@ import Patrol.Type.DataCategory (DataCategory)
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports, DiscardReason)
 import Sentry.ClientReport qualified as ClientReport
+import Sentry.Discard qualified as Discard
 import Sentry.Transport (SomeTransport (..), Transport (..))
 import Sentry.Transport qualified as Sentry.Transport
 import Sentry.Transport.Delivery qualified as Delivery
@@ -60,7 +61,8 @@ type SyncHttpTransport :: Type
 data SyncHttpTransport = SyncHttpTransport
   { rateLimiter :: IORef RateLimiter,
     sendFn :: Patrol.Envelope -> IO HTTPDelivery.Outcome,
-    clientReports :: Maybe ClientReports
+    clientReports :: Maybe ClientReports,
+    onDiscard :: Maybe Discard.Callback
   }
 
 -- | Shared configuration options for HTTP transports.
@@ -81,10 +83,10 @@ data HttpTransportOptions = HttpTransportOptions
     -- | OpenTelemetry instrumentation config.
     instrumentation :: HttpClientInstrumentationConfig,
     -- | Wrap the outgoing envelope send function produced by this transport.
-    -- 
+    --
     -- The transport applies this after filtering and attaching reports; set it
     -- to @Instrument.observing report@ to observe delivery attempts.
-    -- 
+    --
     -- Callbacks run on the sending thread and must finish promptly.
     --
     -- > def{wrapSender = Instrument.observing report}
@@ -121,7 +123,7 @@ new httpOpts = DeferredTransport \dsn clientOpts -> do
     if clientOpts.sendClientReports
       then Just <$> ClientReport.new
       else pure Nothing
-  SomeTransport <$> build httpOpts clientReports manager dsn
+  SomeTransport <$> build httpOpts clientReports clientOpts.onDiscard manager dsn
 
 -- | Build a 'SyncHttpTransport' directly, bypassing 'TransportProvider'.
 --
@@ -133,18 +135,23 @@ new httpOpts = DeferredTransport \dsn clientOpts -> do
 build ::
   HttpTransportOptions ->
   Maybe ClientReports ->
+  Maybe Discard.Callback ->
   HttpClient.Manager ->
   Patrol.Dsn ->
   IO SyncHttpTransport
-build opts clientReports manager dsn =
-  buildWithSender clientReports $
+build opts clientReports onDiscard manager dsn =
+  buildWithSender clientReports onDiscard $
     opts.wrapSender opts.compression (sendRequest manager opts.instrumentation . Request.attach (Request.prepare dsn))
 
 -- | Build a 'SyncHttpTransport' from the given send function.
-buildWithSender :: Maybe ClientReports -> (Patrol.Envelope -> IO HTTPDelivery.Outcome) -> IO SyncHttpTransport
-buildWithSender clientReports sendFn = do
+buildWithSender ::
+  Maybe ClientReports ->
+  Maybe Discard.Callback ->
+  (Patrol.Envelope -> IO HTTPDelivery.Outcome) ->
+  IO SyncHttpTransport
+buildWithSender clientReports onDiscard sendFn = do
   rateLimiter <- newIORef RateLimiter.new
-  pure SyncHttpTransport{rateLimiter, sendFn, clientReports}
+  pure SyncHttpTransport{rateLimiter, sendFn, clientReports, onDiscard}
 
 -- | Encode and send an envelope, reporting what HTTP had to say about it.
 sendEnvelope ::
@@ -204,8 +211,7 @@ instance Transport SyncHttpTransport where
     let filtered = RateLimiter.filterEnvelope rl now envelope
     -- Account for every item dropped by rate limiting, whether the whole
     -- envelope was filtered out or only some of its items.
-    for_ transport.clientReports \cr ->
-      ClientReport.recordItemDrops cr ClientReport.RatelimitBackoff filtered.dropped
+    Discard.recordItems transport.clientReports transport.onDiscard ClientReport.RatelimitBackoff filtered.dropped
     case filtered.kept of
       Nothing -> pure Sentry.Transport.SendFailed_Other
       Just filteredEnvelope -> do
@@ -221,9 +227,9 @@ instance Transport SyncHttpTransport where
         outcome <- HTTPDelivery.interpretNow httpOutcome
         -- Record failures against attempted items, excluding the piggybacked
         -- report. Upstream accounts for HTTP 429 rejections.
-        Delivery.recordOutcome transport.clientReports filteredEnvelope outcome
         atomicModifyIORefCAS_ transport.rateLimiter \current ->
           RateLimiter.apply current outcome.rateLimits
+        Delivery.recordOutcome transport.clientReports transport.onDiscard filteredEnvelope outcome
         pure $ case outcome.disposition of
           Delivery.Accepted -> Sentry.Transport.SendProcessed
           Delivery.Rejected _ -> Sentry.Transport.SendFailed_Other

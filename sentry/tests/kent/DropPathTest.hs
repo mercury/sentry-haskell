@@ -23,7 +23,7 @@ deliveredUnder tweak =
   Kent.withKent \kent -> do
     Kent.flushKent kent
     let dsn = Kent.dsnFor kent "1"
-    transport <- AsyncHttpTransport.build def Nothing 100 kent.manager dsn
+    transport <- AsyncHttpTransport.build def Nothing Nothing 100 kent.manager dsn
     let opts =
           tweak
             (def @ClientOptions)

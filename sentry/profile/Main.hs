@@ -126,7 +126,7 @@ runH2 cfg dsn = do
       <> " payloadBytes="
       <> show cfg.payloadBytes
   start <- getCurrentTime
-  transport <- Http2.build opts Nothing cfg.queueSize dsn
+  transport <- Http2.build opts Nothing Nothing cfg.queueSize dsn
   counts <- drive transport cfg.count envelope
   _ <- Transport.flush transport 300
   _ <- Transport.shutdown transport 300
@@ -148,14 +148,14 @@ runH1 cfg manager dsn = do
   start <- getCurrentTime
   counts <- case cfg.mode of
     Sync -> do
-      transport <- SyncHttp.build def Nothing manager dsn
+      transport <- SyncHttp.build def Nothing Nothing manager dsn
       counts <- drive transport cfg.count envelope
       -- Generous timeouts: flush must drain the whole queue through real TLS.
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300
       pure counts
     Async -> do
-      transport <- AsyncHttp.build def Nothing cfg.queueSize manager dsn
+      transport <- AsyncHttp.build def Nothing Nothing cfg.queueSize manager dsn
       counts <- drive transport cfg.count envelope
       _ <- Transport.flush transport 300
       _ <- Transport.shutdown transport 300

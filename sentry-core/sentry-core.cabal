@@ -93,6 +93,7 @@ library
     Sentry.Context.Internal
     Sentry.Core
     Sentry.DeviceContext
+    Sentry.Discard
     Sentry.Event
     Sentry.Event.Captured
     Sentry.Exception

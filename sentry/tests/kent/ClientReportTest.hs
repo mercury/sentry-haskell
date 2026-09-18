@@ -32,7 +32,7 @@ spec_clientReport = describe "client report delivery" do
       -- Client reports enabled on the transport; beforeSend drops every event,
       -- so each capture records a 'before_send' discard but sends no event.
       clientReports <- ClientReport.new
-      transport <- AsyncHttpTransport.build def (Just clientReports) 100 kent.manager dsn
+      transport <- AsyncHttpTransport.build def (Just clientReports) Nothing 100 kent.manager dsn
       let opts =
             (def @ClientOptions)
               { dsn = Dsn.Explicit dsn,
@@ -80,7 +80,7 @@ spec_clientReport = describe "client report delivery" do
       Kent.flushKent kent
       let dsn = Kent.dsnFor kent "1"
       reports <- ClientReport.new
-      transport <- AsyncHttpTransport.build def (Just reports) 100 kent.manager dsn
+      transport <- AsyncHttpTransport.build def (Just reports) Nothing 100 kent.manager dsn
       let opts =
             def
               { dsn = Dsn.Explicit dsn,

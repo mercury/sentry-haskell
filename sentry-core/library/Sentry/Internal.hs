@@ -28,6 +28,7 @@ import Network.URI (URI)
 import Patrol qualified
 import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Sentry.Client.Options.Dsn qualified as Dsn
+import Sentry.Discard qualified as Discard
 import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Transport (SomeTransport)
 import Type.Reflection (SomeTypeRep, Typeable, someTypeRep, typeOf)
@@ -176,7 +177,14 @@ data ClientOptions = ClientOptions
     -- Defaults to @True@.
     --
     -- <https://develop.sentry.dev/sdk/telemetry/client-reports/>
-    sendClientReports :: Bool
+    sendClientReports :: Bool,
+    -- | Notify about locally discarded items independently of client reports.
+    -- 
+    -- Defaults to @Nothing@.
+    -- 
+    -- __NOTE__: Callbacks may run concurrently on application and worker
+    -- threads and must finish promptly.
+    onDiscard :: Maybe Discard.Callback
   }
 
 -- | Unresolved input defaults, suitable for record updates.
@@ -205,7 +213,8 @@ defaultClientOptions =
       beforeBreadcrumb = Nothing,
       transport = Nothing,
       shutdownTimeout = 2, -- seconds
-      sendClientReports = True
+      sendClientReports = True,
+      onDiscard = Nothing
     }
 
 instance Default ClientOptions where
