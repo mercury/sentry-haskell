@@ -61,7 +61,7 @@ scrub ce =
   Just $
     Sentry.Event.apply
       ce.event
-      [ Sentry.Event.setTag "kind" (if isJust ce.exception then "exception" else "message"),
+      [ Sentry.Event.setTag "kind" (if isJust ce.unwrappedException then "exception" else "message"),
         Sentry.Event.removeExtra "authorization",
         Sentry.Event.modifyUser (Sentry.User.setEmail ""),
         Sentry.Event.with \event ->

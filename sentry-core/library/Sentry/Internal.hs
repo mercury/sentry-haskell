@@ -179,9 +179,9 @@ data ClientOptions = ClientOptions
     -- <https://develop.sentry.dev/sdk/telemetry/client-reports/>
     sendClientReports :: Bool,
     -- | Notify about locally discarded items independently of client reports.
-    -- 
+    --
     -- Defaults to @Nothing@.
-    -- 
+    --
     -- __NOTE__: Callbacks may run concurrently on application and worker
     -- threads and must finish promptly.
     onDiscard :: Maybe Discard.Callback

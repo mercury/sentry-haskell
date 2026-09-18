@@ -82,7 +82,7 @@ bounded action = timeout 15_000_000 action `shouldReturn` Just ()
 -- | Standard builders preserve instrumentation through filtering and reports.
 spec_builderObservation :: Spec
 spec_builderObservation = describe "HTTP builder observations" do
-  for_ ["sync", "async", "h2"] \backend ->
+  for_ ["sync", "async", "h2"] \(backend :: String) ->
     for_ [200, 500] \code ->
       it ("observes prepared bodies and returned outcomes: " <> show (backend, code)) $
         bounded $ Sink.withSink \sink -> withHTTP1 \manager -> do

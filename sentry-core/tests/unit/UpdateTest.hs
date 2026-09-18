@@ -395,7 +395,7 @@ spec_hooks = describe "Hooks returning records" do
                 Just $
                   Sentry.Event.apply
                     ce.event
-                    ( Sentry.Event.setTag "kind" (if isJust ce.exception then "exception" else "message")
+                    ( Sentry.Event.setTag "kind" (if isJust ce.unwrappedException then "exception" else "message")
                         <> Sentry.Event.unsetUser
                     )
             }

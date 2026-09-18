@@ -1,15 +1,7 @@
--- | The in-flight value that flows through the capture pipeline.
+-- | This module defines the event wrapper passed to integrations and
+-- before-send hooks.
 --
--- A 'CapturedEvent' bundles a 'Patrol.Type.Event.Event' with optional
--- the originating 'Control.Exception.SomeException', if the event was
--- constructed from one (typically via 'Sentry.Capture.captureException').
---
--- Integrations and 'Sentry.Client.Options.beforeSend' callbacks receive this
--- wrapper and can modify the event using exception metadata (e.g. by
--- downcasting the exception to a library-specific type).
---
--- They return the resulting event record; see "Sentry.Event" for fields and
--- builders.
+-- Hooks can inspect the exception metadata and return an updated event record.
 module Sentry.Event.Captured
   ( CapturedEvent (..),
     withException,
@@ -22,36 +14,26 @@ import GHC.Stack (CallStack)
 import Patrol qualified
 import Witch qualified
 
--- | A 'Patrol.Type.Event.Event' plus any contextual metadata that integrations
--- or callbacks may want to inspect.
+-- | A 'CapturedEvent' carries an event and any exception metadata and call
+-- stack available at capture time.
 type CapturedEvent :: Type
 data CapturedEvent = CapturedEvent
-  { -- | The wire-format event under construction.
+  { -- | The event being prepared for delivery.
     event :: Patrol.Event,
-    -- | The inner (unwrapped) exception from which the event was built, if the
-    -- event was constructed via 'Sentry.Capture.captureException'.
+    -- | The exception used to construct the event, with any outer
+    -- 'Control.Exception.Annotated.AnnotatedException' wrapper removed.
+    -- 
+    -- Hooks can downcast this value to inspect the application exception.
+    unwrappedException :: Maybe SomeException,
+    -- | The exception supplied to capture, retaining any annotation wrapper
+    -- and exception context for stacktrace integrations.
     --
-    -- When the originating exception was an
-    -- 'Control.Exception.Annotated.AnnotatedException', this holds the
-    -- /inner/ exception — the same value used to build the 'Patrol.Event'.
-    exception :: Maybe SomeException,
-    -- | The original, unmodified exception exactly as it was passed to
-    -- 'Sentry.Capture.captureException' — before any
-    -- 'Control.Exception.Annotated.AnnotatedException' unwrapping.
+    -- Without an annotation wrapper, this and 'unwrappedException' contain
+    -- the same value.
     --
-    -- Integrations that extract 'GHC.Stack.CallStack' annotations (e.g.
-    -- "Sentry.Integration.Stacktrace") read this field so they see the full
-    -- annotation set.  'Nothing' for events built from messages.
-    originalException :: Maybe SomeException,
-    -- | The 'GHC.Stack.CallStack' at the
-    -- 'Sentry.Capture.captureException' \/ 'Sentry.Capture.captureMessage'
-    -- call site.
-    --
-    -- Populated only when those functions are called with a
-    -- 'GHC.Stack.HasCallStack' constraint in scope, which is the case for all
-    -- public entry points in "Sentry.Capture".
-    --
-    -- Acts as a universal backstop when no richer frame source is available.
+    -- Both are 'Nothing'.
+    capturedException :: Maybe SomeException,
+    -- | The call stack at the exception or message capture site.
     captureCallStack :: Maybe CallStack
   }
 
@@ -62,23 +44,22 @@ instance Witch.From Patrol.Event CapturedEvent where
   from event =
     CapturedEvent
       { event,
-        exception = Nothing,
-        originalException = Nothing,
+        unwrappedException = Nothing,
+        capturedException = Nothing,
         captureCallStack = Nothing
       }
 
--- | Wrap a 'Patrol.Type.Event.Event' that was constructed from the given
--- 'SomeException'.
+-- | Attach exception metadata to an event. The first exception is the
+-- unwrapped value used to construct the event; the second is the value
+-- supplied to capture.
 --
--- * @exception@ receives the inner (post-unwrap) exception used to build the
---   event body.
--- * @originalException@ receives @orig@ — the exception before any
---   'Control.Exception.Annotated.AnnotatedException' unwrapping.
+-- This function stores both values without unwrapping either and leaves
+-- 'captureCallStack' unset.
 withException :: Patrol.Event -> SomeException -> SomeException -> CapturedEvent
-withException event exception originalException =
+withException event unwrappedException capturedException =
   CapturedEvent
     { event,
-      exception = Just exception,
-      originalException = Just originalException,
+      unwrappedException = Just unwrappedException,
+      capturedException = Just capturedException,
       captureCallStack = Nothing
     }

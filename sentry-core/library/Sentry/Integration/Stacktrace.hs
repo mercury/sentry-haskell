@@ -34,7 +34,7 @@ instance Integration AttachAnnotatedExceptionIntegration where
   processEvent _ ce _ = pure . Just $ maybe ce.event (\cs -> mergeCallStack cs ce) stack
     where
       stack = do
-        orig <- ce.originalException
+        orig <- ce.capturedException
         let anns = foldMap annotations (fromException @(AnnotatedException SomeException) orig)
         Stacktrace.callStackFromAnnotations anns
 
@@ -49,7 +49,7 @@ instance Integration AttachExceptionContextIntegration where
 
   processEvent _ ce _ = pure . Just $ maybe ce.event (\cs -> mergeCallStack cs ce) stack
     where
-      stack = ce.originalException >>= Stacktrace.callStackFromExceptionContext
+      stack = ce.capturedException >>= Stacktrace.callStackFromExceptionContext
 
 -- | Attach the 'GHC.Stack.CallStack' carried along by 'CapturedEvent' from the
 -- callsite that captured the event itself.
@@ -91,6 +91,6 @@ mergeCallStack cs ce =
 -- | Return 'True' when this 'CapturedEvent' represents a message rather than
 -- an exception capture.
 isMessage :: CapturedEvent -> Bool
-isMessage ce = case ce.exception of
+isMessage ce = case ce.unwrappedException of
   Nothing -> True
   Just _ -> False
