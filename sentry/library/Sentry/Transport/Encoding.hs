@@ -36,7 +36,7 @@ type Compression :: Type
 data Compression
   = -- | Send the envelope body uncompressed.
     None
-  | -- | Compress the envelope body with gzip (level 9) and set
+  | -- | Compress the envelope body with gzip (level 1) and set
     -- @Content-Encoding: gzip@.
     Gzip
   deriving stock (Bounded, Enum, Eq, Ord, Show)
@@ -82,5 +82,5 @@ serializeBody compression envelope =
         None -> raw
         Gzip ->
           GZip.compressWith
-            GZip.defaultCompressParams{GZip.compressLevel = GZip.bestCompression}
+            GZip.defaultCompressParams{GZip.compressLevel = GZip.bestSpeed}
             raw
