@@ -38,7 +38,6 @@ where
 import Control.Exception (finally, mask_, onException)
 import Data.Default (Default (def))
 import Data.Kind (Type)
-import Data.Time.Clock (getCurrentTime)
 import Patrol qualified
 import Sentry.Client.Options (ClientOptions (..), TransportProvider (..))
 import Sentry.ClientReport (ClientReports)
@@ -127,11 +126,10 @@ build opts clientReports queueSize dsn = mask_ do
       endpoint = Connection.mkEndpoint opts.compression dsn
   manager <- Connection.newManager endpoint opts.validateCert opts.connectTimeout opts.http2Settings opts.reconnectPolicy
   let sendFn envelope = do
-        now <- getCurrentTime
         outcome <- Connection.sendEnvelope manager envelope
-        pure $ HTTPDelivery.interpret now outcome
-  -- Clean up the manager if `AsyncExecutor.new` throws an exception on
-  -- non-positive queue size.
+        HTTPDelivery.interpretNow outcome
+  -- Close the manager if executor creation fails, including when the queue
+  -- size is nonpositive.
   executor <-
     AsyncExecutor.new queueSize reportConfig sendFn
       `onException` Connection.closeManager manager

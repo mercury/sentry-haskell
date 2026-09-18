@@ -16,7 +16,6 @@ module Sentry.Transport.HTTP.Async
 where
 
 import Data.Kind (Type)
-import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Client.TLS (getGlobalManager)
 import OpenTelemetry.Instrumentation.HttpClient qualified as HttpClient
 import Patrol qualified
@@ -69,9 +68,8 @@ build opts clientReports queueSize manager dsn = do
   let reportConfig = fmap (\cr -> AsyncExecutor.clientReportConfig cr dsn) clientReports
       template = Request.prepare dsn
       sendFn envelope = do
-        now <- getCurrentTime
         outcome <- sendEnvelope manager opts.instrumentation template opts.compression envelope
-        pure $ HTTPDelivery.interpret now outcome
+        HTTPDelivery.interpretNow outcome
   executor <- AsyncExecutor.new queueSize reportConfig sendFn
   pure AsyncHttpTransport{executor}
 

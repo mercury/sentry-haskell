@@ -4,8 +4,9 @@
 
 module DeliveryTest where
 
+import Control.Concurrent (threadDelay)
 import Data.Foldable (for_)
-import Data.Time.Clock (UTCTime (..))
+import Data.Time.Clock (NominalDiffTime, UTCTime (..), addUTCTime, getCurrentTime)
 import Network.HTTP.Types qualified as Http
 import Sentry.ClientReport qualified as Report
 import Sentry.Transport.Delivery qualified as Delivery
@@ -31,3 +32,27 @@ spec_classification = describe "delivery discard classification" do
 -- this module still delegates to.
 spec_policy :: Spec
 spec_policy = describe "HTTP delivery policy" $ pure ()
+
+-- | Deadlines must be computed from a timestamp taken after the response, not
+-- from before the request.
+--
+-- Under a pre-send timestamp, @Retry-After: 60@ on a send lasting @d@ seconds
+-- yields a deadline only @60 - d@ seconds after the response, so the SDK
+-- resumes while the server is still asking it to back off.
+spec_deadlineTiming :: Spec
+spec_deadlineTiming = describe "rate-limit deadline timing" do
+  it "does not subtract a slow send's latency from the backoff" do
+    let
+      -- Stand in for a send whose response arrives measurably later than
+      -- the clock jitter around the two timestamps taken below.
+      slowSend = threadDelay 200_000 *> pure (HTTP.Responded Http.status200 [("Retry-After", "60")])
+      margin = 0.1 :: NominalDiffTime
+    sentAt <- getCurrentTime
+    outcome <- slowSend >>= HTTP.interpretNow
+    observedAt <- getCurrentTime
+    case outcome.rateLimits of
+      [limit] -> do
+        limit.expiresAt `shouldSatisfy` (>= addUTCTime (60 + margin) sentAt)
+        -- The deadline is also no later than the interval past the response.
+        limit.expiresAt `shouldSatisfy` (<= addUTCTime 60 observedAt)
+      limits -> expectationFailure $ "expected exactly one rate limit, got " <> show limits

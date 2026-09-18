@@ -1,5 +1,5 @@
 -- | HTTP results and their interpretation as SDK delivery policy.
-module Sentry.Transport.HTTP.Delivery (Outcome (..), interpret, retryAfter, sentryHeader) where
+module Sentry.Transport.HTTP.Delivery (Outcome (..), interpret, interpretNow, retryAfter, sentryHeader) where
 
 import Data.Attoparsec.ByteString.Char8 (Parser)
 import Data.Attoparsec.ByteString.Char8 qualified as Atto
@@ -11,7 +11,7 @@ import Data.Kind (Type)
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime)
+import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Network.HTTP.Types qualified as HttpTypes
 import Patrol.Type.DataCategory (DataCategory)
@@ -37,7 +37,12 @@ interpret now = \case
             <> maybe [] (retryAfter now) (lookup "Retry-After" headers)
     | otherwise -> Delivery.rejected ClientReport.SendError
 
--- | Interpret a Retry-After value, retaining numeric, date and fallback behavior.
+-- | Interpret a response, computing rate-limit deadlines from a timestamp
+-- taken after the response arrives.
+interpretNow :: Outcome -> IO Delivery.Outcome
+interpretNow outcome = flip interpret outcome <$> getCurrentTime
+
+-- | Interpret a Retry-After value, retaining numeric, HTTP-date, and fallback behavior.
 retryAfter :: UTCTime -> ByteString -> [Delivery.RateLimit]
 retryAfter now value = [Delivery.allCategoriesUntil (parseRetryAfter value now)]
 

@@ -30,13 +30,15 @@ request through a manager you own and consume the response, returning an
 Neither retries or replays an envelope. Any manager you supply stays yours to
 close, and an executor should be shut down before the manager it sends through.
 
-**Applying policy.** `HTTP.Delivery.interpret` turns that HTTP outcome into a
-generic `Delivery.Outcome`: whether the attempt was accepted, how a rejection
+**Applying policy.** `HTTP.Delivery.interpretNow` turns that HTTP outcome into
+a generic `Delivery.Outcome`: whether the attempt was accepted, how a rejection
 should be accounted for, and any rate-limit deadlines the response announced.
-A non-HTTP sender can construct a `Delivery.Outcome` directly, including
-absolute rate-limit deadlines, without inventing an HTTP status. `Accepted`
-means the sender took responsibility for the envelope under its own contract,
-not that Sentry stored it.
+Use it rather than the pure `interpret`, which is for when you already have the
+timestamp the response was observed at — a relative `Retry-After` is only
+correct when measured from the response. A non-HTTP sender can construct a
+`Delivery.Outcome` directly, including absolute rate-limit deadlines, without
+inventing an HTTP status. `Accepted` means the sender took responsibility for
+the envelope under its own contract, not that Sentry stored it.
 
 **Handing it to an executor.** Return a `Delivery.Outcome` from the callback you
 pass to `Executor.Async.new`, or use `HTTP.Sync.buildWithSender` for a

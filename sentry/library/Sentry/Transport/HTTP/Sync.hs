@@ -200,7 +200,9 @@ instance Transport SyncHttpTransport where
             mReport <- ClientReport.takePending cr now True
             pure $ maybe filteredEnvelope (`ClientReport.attach` filteredEnvelope) mReport
         httpOutcome <- transport.sendFn piggybacked
-        let outcome = HTTPDelivery.interpret now httpOutcome
+        -- The deadline for a relative rate-limit header is dated from the
+        -- response, not from the pre-send @now@ used for filtering above.
+        outcome <- HTTPDelivery.interpretNow httpOutcome
         -- Record failures against attempted items, excluding the piggybacked
         -- report. Upstream accounts for HTTP 429 rejections.
         Delivery.recordOutcome transport.clientReports filteredEnvelope outcome
