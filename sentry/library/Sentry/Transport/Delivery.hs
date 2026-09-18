@@ -44,7 +44,7 @@ data Outcome = Outcome {disposition :: Disposition, rateLimits :: [RateLimit]}
   deriving stock (Eq, Show)
 
 -- | Acceptance transfers responsibility under the sender's own contract.
--- 
+--
 -- It does not guarantee eventual storage by Sentry.
 type Disposition :: Type
 data Disposition = Accepted | Rejected DiscardAccounting

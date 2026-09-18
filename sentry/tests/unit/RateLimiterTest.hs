@@ -1,24 +1,22 @@
 module RateLimiterTest where
 
-import Control.Exception (toException)
 import Data.ByteString (ByteString)
 import Data.Map.Strict qualified as Map
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..), addUTCTime, secondsToDiffTime)
 import Data.Time.Clock.System (systemEpochDay)
+import Fixtures (testEvent)
 import Network.HTTP.Types qualified as Http
 import Patrol qualified
 import Patrol.Type.ClientReport qualified as Patrol.ClientReport
 import Patrol.Type.DataCategory qualified as DataCategory
 import Patrol.Type.Envelope qualified as Patrol.Envelope
-import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Headers qualified as Patrol.Headers
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.RateLimiter qualified as RateLimiter
 import Sentry.Transport.HTTP.Delivery qualified as HTTP
-import System.IO.Unsafe (unsafePerformIO)
 import Test.Hspec
 
 spec_updateFromRetryAfter :: Spec
@@ -183,7 +181,7 @@ mkEnvelope items =
 
 -- | An event item, which maps to the 'DataCategory.Error' rate-limit category.
 eventItem :: Patrol.Item
-eventItem = Patrol.Item.Event errorEvent
+eventItem = Patrol.Item.Event testEvent
 
 -- | A client-report item with no rate-limit category, governed by the global limit only.
 reportItem :: Patrol.Item
@@ -193,11 +191,6 @@ reportItem =
       { Patrol.ClientReport.timestamp = Nothing,
         Patrol.ClientReport.discardedEvents = []
       }
-
--- | A valid 'Patrol.Type.Event.Event' mock.
-errorEvent :: Patrol.Event
-errorEvent = unsafePerformIO . Patrol.Event.fromSomeException . toException $ userError "boom"
-{-# NOINLINE errorEvent #-}
 
 updateFromRetryAfter :: RateLimiter.RateLimiter -> UTCTime -> ByteString -> RateLimiter.RateLimiter
 updateFromRetryAfter rl now value = RateLimiter.apply rl (HTTP.retryAfter now value)

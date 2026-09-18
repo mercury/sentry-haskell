@@ -13,13 +13,12 @@ import Control.Monad.STM (atomically)
 import Data.Foldable (for_)
 import Data.Text (Text)
 import Data.Time.Clock (addUTCTime, getCurrentTime)
+import Fixtures (testDsn, testEnvelope)
 import Patrol qualified
 import Patrol.Type.ClientReport qualified
 import Patrol.Type.DataCategory qualified as DataCategory
 import Patrol.Type.DiscardedEvent qualified
-import Patrol.Type.Dsn qualified as Patrol.Dsn
 import Patrol.Type.Envelope qualified as Patrol.Envelope
-import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Headers qualified as Patrol.Headers
 import Patrol.Type.Item qualified as Patrol.Item
 import Patrol.Type.Items qualified as Patrol.Items
@@ -33,10 +32,9 @@ import Sentry.Transport.Delivery (accepted)
 import Sentry.Transport.Delivery qualified as Delivery
 import Sentry.Transport.Executor.Async qualified as AsyncExecutor
 import Sentry.Transport.Executor.Async.Internal qualified as Internal
-import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Test.Hspec
-import UnliftIO.Exception (throwIO, toException)
+import UnliftIO.Exception (throwIO)
 
 spec_send :: Spec
 spec_send = parallel $ describe "sending envelopes" do
@@ -257,29 +255,6 @@ emptyEnvelope =
   Patrol.Envelope.Envelope
     { Patrol.Envelope.items = Patrol.Items.EnvelopeItems [],
       Patrol.Envelope.headers = Patrol.Headers.empty
-    }
-
--- | A valid 'Patrol.Type.Envelope.Envelope', derived from the 'testEvent' and
--- 'testDsn' mocks.
-testEnvelope :: Patrol.Envelope
-testEnvelope = Patrol.Envelope.fromEvent testDsn testEvent
-
--- | A valid 'Patrol.Type.Event.Event' mock.
-testEvent :: Patrol.Event
-testEvent = unsafePerformIO . Patrol.Event.fromSomeException . toException $ userError "boom"
-{-# NOINLINE testEvent #-}
-
--- | A valid 'Patrol.Type.Dsn.Dsn' mock.
-testDsn :: Patrol.Dsn
-testDsn =
-  Patrol.Dsn.Dsn
-    { Patrol.Dsn.protocol = "a",
-      Patrol.Dsn.publicKey = "b",
-      Patrol.Dsn.secretKey = "",
-      Patrol.Dsn.host = "c",
-      Patrol.Dsn.port = Nothing,
-      Patrol.Dsn.path = "/",
-      Patrol.Dsn.projectId = "d"
     }
 
 -- These tests own all worker resources and bound every scenario.

@@ -86,6 +86,7 @@ library
     Sentry.Transport.HTTP.Sync
     Sentry.Transport.HTTP2.Async
     Sentry.Transport.HTTP2.Connection
+    Sentry.Transport.Instrument
 
   build-depends:
     async,
@@ -189,6 +190,8 @@ test-suite unit
     AsyncScopeTest
     DeliveryTest
     EncodingTest
+    Fixtures
+    InstrumentTest
     RateLimiterTest
     ScopeMetadataTest
 

@@ -354,6 +354,7 @@ covers all of them (`Delivery.RateLimitScope`).
 | `sentry-core/library/Sentry/Event/Captured.hs` | `CapturedEvent`, the in-flight capture wrapper |
 | `sentry-core/library/Sentry/Scope/Update.hs` | Composable atomic scope updates (`ScopeUpdate`) |
 | `sentry/library/Sentry/Transport/Encoding.hs` | Envelope serialization and compression (`EncodedBody`) |
+| `sentry/library/Sentry/Transport/Instrument.hs` | Delivery instrumentation (`observing`, `Attempt`) |
 | `sentry/library/Sentry/Transport/Executor/Async.hs` | Async executor with worker threads |
 | `sentry/library/Sentry/Transport/Executor/RateLimiter.hs` | Rate-limit deadline bookkeeping |
 | `sentry/library/Sentry/Transport/HTTP/Delivery.hs` | HTTP results and their delivery policy |

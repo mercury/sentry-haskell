@@ -137,7 +137,7 @@ mkWorker queue reports sendFn = loop RateLimiter.new
               newRateLimiter <-
                 -- A synchronous failure in sendFn is accounted as an internal
                 -- SDK error rather than being allowed to kill the worker.
-                -- 
+                --
                 -- Asynchronous exceptions are deliberately not caught here, so
                 -- cancellation still terminates the worker.
                 --
