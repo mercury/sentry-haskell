@@ -31,16 +31,17 @@ module Sentry.ClientReport
   )
 where
 
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
+import Control.Exception (mask_)
 import Control.Monad (guard)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (runMaybeT)
 import Data.Atomics.Counter (AtomicCounter, incrCounter_, newCounter, readCounter)
 import Data.Foldable (for_)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', atomicWriteIORef, newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
 import Data.Text (Text)
-import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime)
-import Data.Traversable (for)
+import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Patrol qualified
@@ -91,7 +92,9 @@ reasonText = \case
 type ClientReports :: Type
 data ClientReports = ClientReports
   { discarded :: Vector AtomicCounter,
-    lastSent :: IORef UTCTime
+    pending :: IORef Bool,
+    drainLock :: MVar (),
+    nextReportAt :: IORef UTCTime
   }
 
 -- | Every 'DataCategory', in the canonical order used to index 'discarded'.
@@ -155,27 +158,26 @@ cellIndex reason category = fromEnum reason * numCategories + categoryIndex cate
 piggybackInterval :: NominalDiffTime
 piggybackInterval = 30
 
--- | Create a new, empty 'ClientReports' accumulator, seeding 'lastSent' to
--- the supplied time so the first piggybacked report waits a full interval.
+-- | Create a new, empty 'ClientReports' accumulator.
 new :: UTCTime -> IO ClientReports
 new now = do
   discarded <- Vector.replicateM (numReasons * numCategories) (newCounter 0)
-  lastSent <- newIORef now
-  pure ClientReports{discarded, lastSent}
+  pending <- newIORef False
+  drainLock <- newMVar ()
+  nextReportAt <- newIORef $! addUTCTime piggybackInterval now
+  pure ClientReports{discarded, pending, drainLock, nextReportAt}
 
 -- | Record @n@ discarded events for the given reason and category.
---
--- A single atomic add into the @(reason, category)@ cell: allocation-free, and
--- distinct keys never contend. The keyspace is bounded by the product of the
--- closed 'DiscardReason' and 'DataCategory' vocabularies, so the accumulator
--- needs no cardinality cap.
 record :: ClientReports -> DiscardReason -> DataCategory -> Int -> IO ()
 record cr reason category n
   | n <= 0 = pure ()
-  | otherwise = incrCounter_ n (cr.discarded Vector.! cellIndex reason category)
+  | otherwise = mask_ do
+      incrCounter_ n (cr.discarded Vector.! cellIndex reason category)
+      -- Publish only after the increment.
+      atomicWriteIORef cr.pending True
 
--- | Snapshot and reset the accumulator, returning a
--- 'Patrol.Type.ClientReport.ClientReport' if there is anything pending.
+-- | Drain the accumulator, returning a 'Patrol.Type.ClientReport.ClientReport'
+-- if there is anything pending.
 --
 -- Returns 'Nothing' when:
 --   * the accumulator is empty, or
@@ -185,37 +187,51 @@ record cr reason category n
 -- When @force@ is 'True' the interval check is skipped, suitable for
 -- 'Sentry.Transport.flush' and 'Sentry.Transport.shutdown' paths.
 takePending :: ClientReports -> UTCTime -> Bool -> IO (Maybe Patrol.ClientReport.ClientReport)
-takePending cr now force = runMaybeT do
-  lastSent <- lift $ readIORef cr.lastSent
-  guard $ force || diffUTCTime now lastSent >= piggybackInterval
-  events <- lift $ drain cr
-  guard . not $ null events
-  lift $ writeIORef cr.lastSent now
-  pure
-    Patrol.ClientReport.ClientReport
-      { Patrol.ClientReport.timestamp = Just now,
-        Patrol.ClientReport.discardedEvents = events
-      }
+takePending cr now force = do
+  -- This read is only a hint to avoid locking an empty accumulator. It neither
+  -- clears pending work nor authorizes counter reads; the atomic claim below
+  -- provides that ordering after we acquire the lock. A concurrent publication
+  -- missed here remains pending for a later drain.
+  hasPending <- readIORef cr.pending
+  if not hasPending
+    then pure Nothing
+    else mask_ $ withMVar cr.drainLock \() -> runMaybeT do
+      nextReportAt <- lift $ readIORef cr.nextReportAt
+      guard $ force || now >= nextReportAt
+      -- Recheck and claim pending work before touching counters.
+      pending <- lift $ atomicModifyIORef' cr.pending (\old -> (False, old))
+      guard pending
+      events <- lift $ drain cr
+      guard . not $ null events
+      -- Compute the next deadline only for a nonempty report. An older concurrent
+      -- drain must not move it backwards.
+      lift $ writeIORef cr.nextReportAt $! max nextReportAt (addUTCTime piggybackInterval now)
+      pure
+        Patrol.ClientReport.ClientReport
+          { Patrol.ClientReport.timestamp = Just now,
+            Patrol.ClientReport.discardedEvents = events
+          }
 
--- | Read and reset every cell in 'discarded', returning one 'DiscardedEvent'
--- per nonzero count.
+-- | Drain each cell while holding 'drainLock'.
 drain :: ClientReports -> IO [Patrol.DiscardedEvent.DiscardedEvent]
-drain cr = do
-  counts <- for grid \(reason, category) -> do
-    let counter = cr.discarded Vector.! cellIndex reason category
-    quantity <- readCounter counter
-    incrCounter_ (negate quantity) counter
-    pure (reason, category, quantity)
-  pure
-    [ Patrol.DiscardedEvent.DiscardedEvent
-        { Patrol.DiscardedEvent.reason = reasonText reason,
-          Patrol.DiscardedEvent.category = category,
-          Patrol.DiscardedEvent.quantity = quantity
-        }
-    | (reason, category, quantity) <- counts,
-      quantity /= 0
-    ]
+drain cr = foldr step (pure []) grid
   where
+    step (reason, category) rest = do
+      let counter = cr.discarded Vector.! cellIndex reason category
+      quantity <- readCounter counter
+      if quantity == 0
+        then rest
+        else do
+          incrCounter_ (negate quantity) counter
+          remaining <- rest
+          pure $
+            Patrol.DiscardedEvent.DiscardedEvent
+              { Patrol.DiscardedEvent.reason = reasonText reason,
+                Patrol.DiscardedEvent.category = category,
+                Patrol.DiscardedEvent.quantity = quantity
+              }
+              : remaining
+
     grid :: [(DiscardReason, DataCategory)]
     grid = [(reason, category) | reason <- [minBound ..], category <- allCategories]
 
