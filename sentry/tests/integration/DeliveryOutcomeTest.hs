@@ -15,10 +15,10 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LBS
 import Data.Default (def)
 import Data.Foldable (for_, toList)
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
-import Data.Time.Clock (getCurrentTime)
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Network.Connection (TLSSettings (TLSSettingsSimple))
 import Network.HTTP.Client qualified as Http
 import Network.HTTP.Client.TLS (mkManagerSettings)
@@ -110,10 +110,10 @@ spec_networkFailure :: Spec
 spec_networkFailure = describe "synchronous injected network failures" do
   it "returns the failure and excludes piggybacked reports from attempted counts" $
     bounded $ withTransport "sync" \sink reports _ -> do
-      limiter <- newIORef RateLimiter.new
       attempted <- newIORef []
-      let transport = Sync.SyncHttpTransport limiter (\attempt -> modifyIORef' attempted (attempt :) *> pure (HTTP.NetworkFailure "timeout")) (Just reports)
-          envelope = Gen.sampleEnvelope (Sink.dsnFor sink "1")
+      transport <- Sync.buildWithSender (Just reports) \attempt ->
+        modifyIORef' attempted (attempt :) *> pure (HTTP.NetworkFailure "timeout")
+      let envelope = Gen.sampleEnvelope (Sink.dsnFor sink "1")
       Reports.record reports Reports.BeforeSend Category.Error 2
       Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other
       sent <- readIORef attempted
@@ -128,8 +128,7 @@ spec_networkFailure = describe "synchronous injected network failures" do
         Transport.send transport reportOnly `shouldReturn` Transport.SendFailed_Other
       allDrops sink reports `shouldReturn` []
   it "works with reports disabled" do
-    limiter <- newIORef RateLimiter.new
-    let transport = Sync.SyncHttpTransport limiter (const $ pure $ HTTP.NetworkFailure "timeout") Nothing
+    transport <- Sync.buildWithSender Nothing (const $ pure $ HTTP.NetworkFailure "timeout")
     Transport.send transport (Gen.sampleEnvelope Test.TEST_DSN) `shouldReturn` Transport.SendFailed_Other
   it "counts locally suppressed events separately when the remaining report fails" $
     bounded $ withTransport "sync" \sink reports _ -> do
@@ -145,3 +144,23 @@ spec_networkFailure = describe "synchronous injected network failures" do
       fmap (\d -> (d.reason, d.quantity)) drops `shouldBe` [("ratelimit_backoff", 1)]
       -- Local drop was drained into the attempted report, not a network_error.
       allDrops sink reports `shouldReturn` []
+
+-- | The transport merges each response's limits into the rate limiter rather
+-- than replacing them, so a later, shorter deadline cannot cut a longer one
+-- short. 'RateLimiter.apply' is what guarantees this; this pins that
+-- 'Transport.send' actually routes through it.
+spec_syncLimitMerging :: Spec
+spec_syncLimitMerging = describe "custom synchronous sender" do
+  it "keeps the longer deadline when a later response asks for less" $ bounded do
+    retryAfters <- newIORef ["300", "10"]
+    now <- getCurrentTime
+    transport <- Sync.buildWithSender Nothing \_ -> do
+      value <- atomicModifyIORef' retryAfters \case
+        v : rest -> (rest, v)
+        [] -> ([], "0")
+      pure (HTTP.Responded Status.status200 [("Retry-After", value)])
+    let envelope = Gen.sampleEnvelope Test.TEST_DSN
+    Transport.send transport envelope `shouldReturn` Transport.SendProcessed
+    Transport.send transport envelope `shouldReturn` Transport.SendFailed_Other
+    limiter <- readIORef transport.rateLimiter
+    fmap (\deadline -> diffUTCTime deadline now >= 300) limiter.global `shouldBe` Just True

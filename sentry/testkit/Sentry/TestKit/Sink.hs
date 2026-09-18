@@ -90,12 +90,13 @@ decodeBody req
 type SinkResponse :: Type
 data SinkResponse = SinkResponse
   { status :: Http.Status,
-    responseHeaders :: Http.ResponseHeaders
+    responseHeaders :: Http.ResponseHeaders,
+    responseBody :: LBS.ByteString
   }
 
 -- | 200 OK with no extra headers. This is the default response.
 ok :: SinkResponse
-ok = SinkResponse{status = Http.status200, responseHeaders = []}
+ok = SinkResponse{status = Http.status200, responseHeaders = [], responseBody = mempty}
 
 -- | @f i req@ maps the index, @i@, and the recorded request to the
 -- response the sink should return.
@@ -217,8 +218,8 @@ recordingApp recordRef responderRef request respond = do
           }
   idx <- atomicModifyIORef' recordRef \(n, rs) -> ((n + 1, req : rs), n)
   responder <- readIORef responderRef
-  SinkResponse{status, responseHeaders} <- responder idx req
-  respond (Wai.responseLBS status responseHeaders mempty)
+  SinkResponse{status, responseHeaders, responseBody} <- responder idx req
+  respond (Wai.responseLBS status responseHeaders responseBody)
 
 -- | The discarding application drains the body to keep the connection healthy,
 -- returns 200, and keeps no state.

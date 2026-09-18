@@ -221,6 +221,7 @@ test-suite integration
     ExecutorCaptureTest
     Http2CaptureTest
     Http2ConcurrencyTest
+    PublicComponentsTest
 
   build-depends:
     aeson,
@@ -233,6 +234,7 @@ test-suite integration
     http-client,
     http-client-tls,
     http-types,
+    http2,
     http2-tls,
     patrol,
     sentry,

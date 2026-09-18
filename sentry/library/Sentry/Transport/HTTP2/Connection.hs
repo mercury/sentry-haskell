@@ -42,6 +42,8 @@ module Sentry.Transport.HTTP2.Connection
 
     -- * Sending
     sendEnvelope,
+    buildRequest,
+    sendRequest,
   )
 where
 
@@ -87,10 +89,12 @@ data Endpoint = Endpoint
     port :: PortNumber,
     -- | Pre-built request path, e.g. @\"/api\/42\/envelope\/\"@.
     path :: ByteString,
-    -- | Pre-built Sentry-specific HTTP headers, including @content-encoding@
-    -- when the body is compressed.
+    -- | Pre-built Sentry-specific HTTP headers.
+    --
+    -- __NOTE__: These carry no @Content-Encoding@; 'buildRequest' derives that
+    -- from the body.
     headers :: RequestHeaders,
-    -- | Body encoding.
+    -- | The encoding 'sendEnvelope' prepares bodies with.
     compression :: Compression
   }
 
@@ -111,10 +115,7 @@ mkEndpoint compression dsn =
         [ ("content-type", Patrol.Constant.applicationXSentryEnvelope),
           ("user-agent", Text.Encoding.encodeUtf8 Sentry.Sdk.userAgent),
           ("x-sentry-auth", Patrol.Dsn.intoAuthorization dsn)
-        ]
-          <> case compression of
-            Encoding.None -> []
-            Encoding.Gzip -> [("content-encoding", "gzip")],
+        ],
       compression
     }
 
@@ -438,9 +439,35 @@ runHttp2 tgt validateCert http2s client =
 -- connection-level failure is handled centrally by the runner-exit reset).
 sendEnvelope :: Manager -> Patrol.Envelope -> IO HTTPDelivery.Outcome
 sendEnvelope mgr envelope =
+  sendRequest mgr (buildRequest mgr.target (Encoding.encode mgr.target.compression envelope))
+
+-- | Build a native HTTP\/2 request for an already encoded body.
+--
+-- @content-encoding@ comes from the body rather than from the endpoint, so a
+-- caller who encodes differently from the endpoint's default still gets a
+-- header that describes the bytes they are sending.
+buildRequest :: Endpoint -> Encoding.EncodedBody -> HTTP2.Request
+buildRequest endpoint body =
+  HTTP2.requestStreaming
+    methodPost
+    endpoint.path
+    ( endpoint.headers <> case Encoding.compression body of
+        Encoding.None -> []
+        Encoding.Gzip -> [("content-encoding", "gzip")]
+    )
+    $ \write _flush -> write (Builder.lazyByteString (Encoding.bytes body))
+
+-- | Send a native request over the shared connection, draining its response.
+--
+-- The manager stays owned by the caller. Nothing is retried or replayed here;
+-- a failed send is reported for this request only. 'acquire' reports its own
+-- failures without throwing, and 'sendOn' catches everything from 'doSend'
+-- onward, so no exception reaches this function to guard against.
+sendRequest :: Manager -> HTTP2.Request -> IO HTTPDelivery.Outcome
+sendRequest mgr request =
   acquire mgr >>= \case
     Left err -> pure $ HTTPDelivery.NetworkFailure err
-    Right conn -> sendOn mgr conn envelope
+    Right conn -> sendOn conn request
 
 -- | Acquire a live connection, single-flighting a connect when necessary.
 acquire :: Manager -> IO (Either Text Active)
@@ -517,17 +544,9 @@ runConnect mgr policy = (`onException` resetClaim) $ mask $ \restore -> do
 -- continuation on success, or the handler on failure) before we read it below.
 --
 -- A failure here is reported as a 'NetworkFailure' for this envelope only.
-sendOn :: Manager -> Active -> Patrol.Envelope -> IO HTTPDelivery.Outcome
-sendOn mgr conn envelope = do
+sendOn :: Active -> HTTP2.Request -> IO HTTPDelivery.Outcome
+sendOn conn req = do
   outcomeRef <- newIORef Nothing
-  let body = Encoding.bytes (Encoding.encode mgr.target.compression envelope)
-      req =
-        HTTP2.requestStreaming
-          methodPost
-          mgr.target.path
-          mgr.target.headers
-          $ \write _flush ->
-            write (Builder.lazyByteString body)
   ( conn.doSend req $ \resp -> do
       drainBody resp
       let headers = toResponseHeaders (HTTP2.responseHeaders resp)

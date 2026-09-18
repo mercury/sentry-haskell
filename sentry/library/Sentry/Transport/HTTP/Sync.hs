@@ -15,7 +15,9 @@ module Sentry.Transport.HTTP.Sync
     HttpTransportOptions (..),
     new,
     build,
+    buildWithSender,
     sendEnvelope,
+    sendRequest,
     fromExceptionContent,
 
     -- * Re-exports
@@ -118,10 +120,14 @@ build ::
   HttpClient.Manager ->
   Patrol.Dsn ->
   IO SyncHttpTransport
-build opts clientReports manager dsn = do
+build opts clientReports manager dsn =
+  buildWithSender clientReports $
+    sendEnvelope manager opts.instrumentation (Request.prepare dsn) opts.compression
+
+-- | Build a 'SyncHttpTransport' from the given send function.
+buildWithSender :: Maybe ClientReports -> (Patrol.Envelope -> IO HTTPDelivery.Outcome) -> IO SyncHttpTransport
+buildWithSender clientReports sendFn = do
   rateLimiter <- newIORef RateLimiter.new
-  let template = Request.prepare dsn
-      sendFn = sendEnvelope manager opts.instrumentation template opts.compression
   pure SyncHttpTransport{rateLimiter, sendFn, clientReports}
 
 -- | Encode and send an envelope, reporting what HTTP had to say about it.
@@ -134,16 +140,27 @@ sendEnvelope ::
   Patrol.Envelope ->
   m HTTPDelivery.Outcome
 sendEnvelope manager otelConfig prepared compression envelope =
-  -- Network-level failures (connection refused, DNS, timeout, TLS) throw an
-  -- 'HttpException'; normalize them into an outcome so callers (notably the
-  -- async worker thread) never see a thrown exception.
+  sendRequest manager otelConfig (Request.attach prepared (Encoding.encode compression envelope))
+{-# INLINEABLE sendEnvelope #-}
+
+-- | Send a request you built yourself, consuming its response.
+sendRequest ::
+  (MonadIO m) =>
+  HttpClient.Manager ->
+  HttpClientInstrumentationConfig ->
+  HttpClient.Request ->
+  m HTTPDelivery.Outcome
+sendRequest manager otelConfig request =
   liftIO . handle (pure . fromExceptionContent . exceptionContent) $ do
-    let request = Request.attach prepared (Encoding.encode compression envelope)
-    -- A non-2xx status is already a value here, because the prepared request
-    -- leaves @http-client@'s status check at its default no-op.
+    -- 'httpLbs'' consumes the response before returning, so the outcome is
+    -- complete by the time this returns.
+    --
+    -- A non-2xx status is already a value because the prepared request sets
+    -- @http-client@'s status check to a no-op; a caller-supplied 'checkResponse'
+    -- that throws is folded back into an outcome by 'fromExceptionContent'.
     response <- HttpClient.httpLbs' otelConfig request manager
     pure $ HTTPDelivery.Responded (HttpClient.responseStatus response) (HttpClient.responseHeaders response)
-{-# INLINEABLE sendEnvelope #-}
+{-# INLINEABLE sendRequest #-}
 
 -- | Project an 'HttpException' down to its 'HttpClient.HttpExceptionContent'.
 --

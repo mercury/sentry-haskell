@@ -4,17 +4,26 @@
 
 module Http2CaptureTest where
 
+import Control.Concurrent.Async qualified as Async
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
+import Control.Exception (bracket)
 import Control.Monad (replicateM_)
+import Data.ByteString.Lazy qualified as LBS
 import Data.Default (def)
 import Network.HTTP.Types qualified as Http
+import Network.HTTP2.Client qualified as Native
 import Network.HTTP2.TLS.Client qualified as HTTP2TLS
 import Sentry.TestKit.Gen qualified as Gen
 import Sentry.TestKit.Sink qualified as Sink
 import Sentry.Transport (FlushResponse (..))
 import Sentry.Transport qualified as Transport
-import Sentry.Transport.HTTP2.Async (Http2Settings (..), Http2TransportOptions (..))
+import Sentry.Transport.Encoding qualified as Encoding
+import Sentry.Transport.HTTP.Delivery qualified as Delivery
+import Sentry.Transport.HTTP2.Async (AsyncHttp2Transport (..), Http2Settings (..), Http2TransportOptions (..))
 import Sentry.Transport.HTTP2.Async qualified as Http2
 import Sentry.Transport.HTTP2.Connection (applyHttp2Settings)
+import Sentry.Transport.HTTP2.Connection qualified as HTTP2
+import System.Timeout (timeout)
 import Test.Hspec
 
 -- | Transport options for all specs: disable cert validation so the embedded
@@ -57,7 +66,7 @@ spec_rateLimitHttp429 = describe "rate-limit: HTTP 429 suppresses subsequent sen
       -- Arm: the next response will be 429 with Retry-After: 60.
       Sink.setResponder sink \_ _ ->
         pure
-          Sink.SinkResponse
+          Sink.ok
             { Sink.status = Http.tooManyRequests429,
               Sink.responseHeaders = [("Retry-After", "60")]
             }
@@ -91,7 +100,7 @@ spec_rateLimitSentryHeader =
         -- category with a 60-second window.
         Sink.setResponder sink \_ _ ->
           pure
-            Sink.SinkResponse
+            Sink.ok
               { Sink.status = Http.status200,
                 Sink.responseHeaders = [("X-Sentry-Rate-Limits", "60:error:organization")]
               }
@@ -167,3 +176,74 @@ spec_customSettingsDelivery =
         reqs <- Sink.received sink
         length reqs `shouldBe` 3
         all (\r -> r.httpVersion == Http.http20) reqs `shouldBe` True
+
+-- | Transport-lifecycle tests that reach into 'AsyncHttp2Transport.manager'
+-- directly, rather than going through the 'Sentry.Transport.Transport'
+-- interface alone.
+spec_managedHTTP2 :: Spec
+spec_managedHTTP2 = describe "managed HTTP/2 request lifecycle" do
+  it "drains large responses and reuses the connection" $ bounded $ Sink.withSink \sink -> do
+    Sink.setResponder sink \_ _ -> pure Sink.ok{Sink.responseBody = LBS.replicate 1_000_000 120}
+    let endpoint = HTTP2.mkEndpoint Encoding.Gzip (Sink.dsnFor sink "1")
+    bracket (HTTP2.newManager endpoint False 5_000_000 def (pure HTTP2.DontReconnect)) HTTP2.closeManager \manager ->
+      replicateM_ 3 $ HTTP2.sendRequest manager (Native.requestNoBody "POST" "/" []) >>= assertOK
+
+  it "normalizes failed TLS acquisition and rejects sends after close" $ bounded $ Sink.withSink \sink -> do
+    let endpoint = HTTP2.mkEndpoint Encoding.Gzip (Sink.dsnFor sink "1")
+    bracket (HTTP2.newManager endpoint True 5_000_000 def (pure HTTP2.DontReconnect)) HTTP2.closeManager \manager -> do
+      HTTP2.sendRequest manager (Native.requestNoBody "POST" "/" []) >>= assertNetworkFailure
+      HTTP2.closeManager manager
+      HTTP2.sendRequest manager (Native.requestNoBody "POST" "/" []) >>= assertNetworkFailure
+      -- Nothing should have reached the sink: both sends failed in TLS.
+      fmap length (Sink.received sink) `shouldReturn` 0
+
+  it "closes the owned manager when shutdown times out" $ bounded $ Sink.withSink \sink ->
+    withBlockedTransport sink \entered transport -> do
+      Transport.send transport (Gen.sampleEnvelope $ Sink.dsnFor sink "1") `shouldReturn` Transport.SendProcessed
+      readMVar entered
+      Transport.shutdown transport 0.001 `shouldReturn` Transport.ShutdownFailed_TimedOut 0.001
+      HTTP2.sendRequest transport.manager (Native.requestNoBody "POST" "/" []) >>= assertNetworkFailure
+
+  it "closes the owned manager when the shutdown caller is cancelled" $ bounded $ Sink.withSink \sink ->
+    withBlockedTransport sink \entered transport -> do
+      Transport.send transport (Gen.sampleEnvelope $ Sink.dsnFor sink "1") `shouldReturn` Transport.SendProcessed
+      readMVar entered
+      started <- newEmptyMVar
+      Async.withAsync (putMVar started () >> Transport.shutdown transport 30) \closing -> do
+        readMVar started
+        -- Wait until shutdown has been admitted, which `send` reports, before
+        -- cancelling; otherwise the cancellation can land before it starts.
+        let awaitClosed =
+              Transport.send transport (Gen.sampleEnvelope $ Sink.dsnFor sink "1") >>= \case
+                Transport.SendFailed_Shutdown -> pure ()
+                _ -> awaitClosed
+        awaitClosed
+        Async.cancel closing
+      HTTP2.sendRequest transport.manager (Native.requestNoBody "POST" "/" []) >>= assertNetworkFailure
+
+-- | Build an owned async HTTP/2 transport whose responder blocks a send until
+-- 'entered' is observed, so a caller can synchronize with an in-flight
+-- request before racing a shutdown against it. Closes the owned manager on
+-- the way out, mirroring what the transport itself does on a clean shutdown.
+withBlockedTransport :: Sink.SinkHandle -> (MVar () -> AsyncHttp2Transport -> IO a) -> IO a
+withBlockedTransport sink action = do
+  entered <- newEmptyMVar
+  never <- newEmptyMVar
+  Sink.setResponder sink \_ _ -> putMVar entered () >> readMVar never
+  bracket
+    (Http2.build def{Http2.validateCert = False} Nothing 4 (Sink.dsnFor sink "1"))
+    (\transport -> HTTP2.closeManager transport.manager)
+    (action entered)
+
+assertOK :: Delivery.Outcome -> IO ()
+assertOK = \case
+  Delivery.Responded status _ -> status `shouldBe` Http.status200
+  Delivery.NetworkFailure err -> expectationFailure (show err)
+
+assertNetworkFailure :: Delivery.Outcome -> IO ()
+assertNetworkFailure = \case
+  Delivery.NetworkFailure _ -> pure ()
+  Delivery.Responded status _ -> expectationFailure ("unexpected response: " <> show status)
+
+bounded :: IO () -> IO ()
+bounded action = timeout 15_000_000 action `shouldReturn` Just ()
