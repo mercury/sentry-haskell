@@ -232,10 +232,16 @@ classifyInApp include exclude event =
     classifyFrame frame
       -- Already explicitly set — leave it alone.
       | Just _ <- frame.inApp = frame
-      | matchesPrefix frame include = frame{Patrol.Frame.inApp = Just True}
-      | matchesPrefix frame exclude = frame{Patrol.Frame.inApp = Just False}
-      | matchesBuiltinDenylist frame = frame{Patrol.Frame.inApp = Just False}
+      | matchesPrefix include = frame{Patrol.Frame.inApp = Just True}
+      | matchesPrefix exclude = frame{Patrol.Frame.inApp = Just False}
+      | any matches wellKnownNotInApp = frame{Patrol.Frame.inApp = Just False}
       | otherwise = frame
+      where
+        -- Share package parsing across prefixes, but only evaluate it when a
+        -- module comparison needs to fall back to the package name.
+        barePackage = packageName frame.package
+        matches = isPrefixOf frame.module_ barePackage
+        matchesPrefix prefixes = any matches (HashSet.toList prefixes)
 
     -- any_in_app fallback: promote unclassified frames when none are in-app.
     promoteNothing :: Patrol.Frame.Frame -> Patrol.Frame.Frame
@@ -243,20 +249,12 @@ classifyInApp include exclude event =
       | frame.inApp == Nothing = frame{Patrol.Frame.inApp = Just True}
       | otherwise = frame
 
-    matchesPrefix :: Patrol.Frame.Frame -> HashSet Text -> Bool
-    matchesPrefix frame prefixes =
-      any (isPrefixOf frame) (HashSet.toList prefixes)
-
-    matchesBuiltinDenylist :: Patrol.Frame.Frame -> Bool
-    matchesBuiltinDenylist frame =
-      any (isPrefixOf frame) wellKnownNotInApp
-
     -- A frame matches prefix @p@ if its @module_@ equals @p@ exactly or
     -- starts with @p <> "."@, or if its @package@'s bare name equals @p@
     -- exactly or starts with @p <> "."@.
-    isPrefixOf :: Patrol.Frame.Frame -> Text -> Bool
-    isPrefixOf frame p =
-      fieldMatches frame.module_ || fieldMatches (packageName frame.package)
+    isPrefixOf :: Text -> Text -> Text -> Bool
+    isPrefixOf moduleName barePackage p =
+      fieldMatches moduleName || fieldMatches barePackage
       where
         fieldMatches f =
           not (Text.null f)
