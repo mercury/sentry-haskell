@@ -1,4 +1,6 @@
 -- | Shared evaluation policy for collection builders.
+--
+-- /This module's API is unstable!/
 module Sentry.Collection.Internal (mapWHNF) where
 
 -- | Map over a finite list, forcing every result to WHNF before returning.

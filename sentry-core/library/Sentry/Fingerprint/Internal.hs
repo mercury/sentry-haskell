@@ -1,4 +1,7 @@
--- | Private fingerprint list operations. Lists and components remain shallow.
+-- | Internal fingerprint list operations. Lists and components remain shallow.
+--
+-- /This module's API is unstable!/ Use the fingerprint builders in "Sentry.Event"
+-- or "Sentry.Scope" to configure grouping.
 module Sentry.Fingerprint.Internal where
 
 import Data.Text (Text)

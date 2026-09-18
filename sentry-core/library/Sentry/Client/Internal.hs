@@ -1,4 +1,6 @@
--- | Package-private representation. Public accessors cannot update a client.
+-- | Internal client representation and accessors.
+--
+-- /This module's API is unstable!/ Use "Sentry.Client" to construct initialized clients.
 module Sentry.Client.Internal where
 
 import Data.Kind (Type)

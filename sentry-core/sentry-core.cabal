@@ -75,10 +75,7 @@ library workloads
 
 library
   import: defaults
-  hs-source-dirs:
-    library
-    internal
-
+  hs-source-dirs: library
   -- cabal-gild: discover library
   exposed-modules:
     Data.Atomics.Extra
@@ -87,10 +84,13 @@ library
     Sentry.BrowserContext
     Sentry.Capture
     Sentry.Client
+    Sentry.Client.Internal
     Sentry.Client.Options
+    Sentry.Client.Options.Defaults
     Sentry.Client.Options.Dsn
     Sentry.Client.Options.Env
     Sentry.ClientReport
+    Sentry.Collection.Internal
     Sentry.Context
     Sentry.Context.Internal
     Sentry.Core
@@ -99,6 +99,7 @@ library
     Sentry.Event
     Sentry.Event.Captured
     Sentry.Exception
+    Sentry.Fingerprint.Internal
     Sentry.Geo
     Sentry.Init
     Sentry.Integration
@@ -125,13 +126,7 @@ library
     Sentry.Update
     Sentry.User
 
-  other-modules:
-    Paths_sentry_core
-    Sentry.Client.Internal
-    Sentry.Client.Options.Defaults
-    Sentry.Collection.Internal
-    Sentry.Fingerprint.Internal
-
+  other-modules: Paths_sentry_core
   autogen-modules: Paths_sentry_core
   build-depends:
     aeson,
