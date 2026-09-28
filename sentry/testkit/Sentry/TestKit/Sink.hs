@@ -29,6 +29,7 @@ module Sentry.TestKit.Sink
     -- * Recording sink (tests)
     SinkHandle (..),
     withSink,
+    withTruncatedHTTP1Response,
     received,
     connectionsOpened,
 
@@ -125,7 +126,21 @@ data SinkHandle = SinkHandle
 -- | Start a recording TLS sink on an OS-assigned free port, run the action,
 -- then tear the server down.
 withSink :: (SinkHandle -> IO a) -> IO a
-withSink action =
+withSink = withSinkMiddleware id
+
+-- | Send a raw HTTP/1 response whose body ends before its declared length.
+-- Warp closes the connection when the raw response callback returns, so the
+-- client observes EOF without waiting for a keep-alive timeout.
+withTruncatedHTTP1Response :: (SinkHandle -> IO a) -> IO a
+withTruncatedHTTP1Response = withSinkMiddleware \_ request respond -> do
+  _ <- strictBody request
+  respond $
+    Wai.responseRaw
+      (\_ send -> send "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 10\r\nConnection: close\r\n\r\nx")
+      (Wai.responseLBS Http.status500 [] "Raw HTTP/1 response required")
+
+withSinkMiddleware :: Wai.Middleware -> (SinkHandle -> IO a) -> IO a
+withSinkMiddleware middleware action =
   bracket Warp.openFreePort (Socket.close . snd) \(port, sock) -> do
     recordRef <- newIORef (0, [])
     responderRef <- newIORef (\_ _ -> pure ok)
@@ -133,7 +148,7 @@ withSink action =
     let handle = SinkHandle{port, recordRef, responderRef, connRef}
         -- Count each accepted TCP connection by returning 'True' to accept it.
         settings = Warp.setOnOpen (\_ -> atomicModifyIORef' connRef \n -> (n + 1, True)) Warp.defaultSettings
-        runner = WarpTLS.runTLSSocket tlsSettings settings sock (recordingApp recordRef responderRef)
+        runner = WarpTLS.runTLSSocket tlsSettings settings sock (middleware $ recordingApp recordRef responderRef)
     Async.withAsync runner \serverAsync -> do
       -- Surface any server-side crash immediately rather than letting the
       -- client hang waiting for a dead server.

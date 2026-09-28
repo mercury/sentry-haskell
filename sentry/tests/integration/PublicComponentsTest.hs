@@ -184,12 +184,12 @@ spec_responseTiming = describe "HTTP response receipt" do
 
   for_ ["h1", "h2"] \(backend :: String) ->
     it ("retains rate-limit headers from a truncated body on " <> backend) $
-      bounded $ Sink.withSink \sink -> do
+      bounded $ (if backend == "h1" then Sink.withTruncatedHTTP1Response else Sink.withSink) \sink -> do
         Sink.setResponder sink \_ _ ->
           pure
             Sink.ok
               { Sink.status = Status.status429,
-                Sink.responseHeaders = [("Retry-After", "60"), ("Content-Length", "10")] <> [("Connection", "close") | backend == "h1"],
+                Sink.responseHeaders = [("Retry-After", "60"), ("Content-Length", "10")],
                 Sink.responseBody = "x"
               }
         let dsn = Sink.dsnFor sink "1"
