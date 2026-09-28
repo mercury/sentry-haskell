@@ -15,6 +15,7 @@ Use the [README example](../README.md#scopes) to get started.
 - [Fingerprints](#fingerprints)
 - [Defaults without overwriting](#defaults-without-overwriting)
 - [Optional assignments](#optional-assignments)
+- [Request metadata](#request-metadata)
 
 ## Which scope should I use?
 
@@ -73,12 +74,12 @@ scopes in order from `Global` -> `Isolation` -> `Current`, using these rules:
 | Metadata | Combination rule |
 | --- | --- |
 | Tags and extras | Combine by key; on collision, the later scope's value wins. |
-| User | The last assigned user replaces earlier users as a whole. |
+| User and request | The last assigned record replaces earlier records as a whole. |
 | Contexts | Combine by name; the later scope's payload replaces the entire earlier payload. |
 | Level, fingerprint, transaction | Use the last assigned value; absent values preserve earlier assignments. |
 | Breadcrumbs | Append in scope order: `Global`, `Isolation`, `Current`. |
 
-An explicitly empty user or fingerprint still counts as an assignment.
+An explicitly empty user, request, or fingerprint still counts as an assignment.
 
 For example, a user assigned on the current scope replaces the isolation user:
 
@@ -100,6 +101,7 @@ to an event according to the following rules:
 | Metadata | Precedence |
 | --- | --- |
 | User | A user assigned directly to the event wins, including an empty user record; otherwise, use the scope's user. |
+| Request | A request assigned directly to the event wins as a whole, including an empty record; otherwise, use the scope request. |
 | Transaction | A nonempty name on the event wins; an empty name defers to a transaction from the scope. |
 | Level | A level present on the scope overrides the level already present on an event. |
 | Tags and extras | Combine by key; on collision, the value present on the scope replaces the one on the event. |
@@ -360,3 +362,52 @@ Automatic optional setters target isolation, except transaction naming, which
 targets current. They skip their arguments without a recording client. Explicit
 scope operations remain usable without initialization; context-based `*At`
 operations skip absent targets without creating scopes.
+
+
+## Request metadata
+
+With a recording client initialized, establish a request inside its isolation
+bracket.
+
+```haskell
+import Data.Aeson qualified as Aeson
+import Sentry qualified
+import Sentry.Request qualified
+
+handleRequest :: Sentry.Request -> IO ()
+handleRequest request = Sentry.withIsolationScope \_ -> do
+  Sentry.setRequest request
+  Sentry.modifyRequest
+    [ Sentry.Request.removeHeader "Authorization",
+      Sentry.Request.with \req ->
+        Sentry.Request.setData $ redactBody req.data_
+    ]
+  Sentry.captureMessage_ Sentry.Info "Request received"
+
+redactBody :: Aeson.Value -> Aeson.Value
+redactBody _ = Aeson.Null
+```
+
+* `setRequest` replaces the `Request` interface entirely
+* `modifyRequest` applies an edit to either the `Request` interface already
+  present on the scope, or an empty one if none exists
+* `modifyExistingRequest` is like `modifyRequest`, but if no `Request` exists
+  it simply no-ops
+* `setOptionalRequest` accepts `Just` to replace it and `Nothing` to remove it
+* `unsetRequest` does exactly what you'd expect: removes it unconditionally
+
+The convenience operations in the above code snippet apply to the isolation
+scope by default; `Sentry.Scope.Operations` provides explicit scope operations
+that can target either the given `Scope` handle or the isolation scope on the
+given OpenTelemetry `Context` variable (depending on the type signature).
+
+Event processors like `Sentry.Event.modifyRequest` inherit from a `Request` set
+on the `Scope` that has been merged and handed to it during processing.
+
+It is important to note that if an event processor explicitly sets a `Request`
+on the event body, one of the modifier functions, it will take precedence over
+scope modifiers/setters and replace that entry entirely.
+
+This follows the more general pattern of event processors having the final say
+of what an outgoing `Event` payload looks like before it's serialized to an
+`Envelope`.

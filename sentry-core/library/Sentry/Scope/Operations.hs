@@ -64,6 +64,18 @@ module Sentry.Scope.Operations
     modifyExistingUser,
     modifyExistingUserAt,
 
+    -- *** Request
+    setRequest,
+    setRequestAt,
+    setOptionalRequest,
+    setOptionalRequestAt,
+    unsetRequest,
+    unsetRequestAt,
+    modifyRequest,
+    modifyRequestAt,
+    modifyExistingRequest,
+    modifyExistingRequestAt,
+
     -- *** Fingerprint
     setFingerprint,
     setFingerprintAt,
@@ -241,6 +253,7 @@ import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Fingerprint.Internal qualified as Fingerprint
 import Sentry.OsContext (OsContextUpdate)
 import Sentry.OsContext qualified
+import Sentry.Request (Request, RequestUpdate)
 import Sentry.RuntimeContext (RuntimeContextUpdate)
 import Sentry.RuntimeContext qualified
 import Sentry.Scope.Internal (Scope, ScopeData (..), ScopeType (..))
@@ -545,6 +558,9 @@ unsetEventProcessor scope = Update.apply scope Update.unsetEventProcessor
 --
 -- Metadata is applied to the event using these precedence rules:
 --
+-- * A request assigned directly to the event wins as a whole, including an
+--   empty request. Otherwise, the scope request is used before processors run.
+--
 -- * A user assigned directly to the event wins, including an empty user record.
 --   Otherwise, the scope's user is used.
 --
@@ -574,6 +590,7 @@ applyToEvent scope ce = scope.eventProcessor ce{event = merged}
           Patrol.Event.fingerprint = Fingerprint.merge scope.fingerprint event.fingerprint,
           Patrol.Event.transaction = if event.transaction == "" then fromMaybe event.transaction scope.transaction else event.transaction,
           Patrol.Event.user = event.user <|> scope.user,
+          Patrol.Event.request = event.request <|> scope.request,
           Patrol.Event.tags = Map.union scope.tags event.tags,
           Patrol.Event.extra = Map.union scope.extras event.extra,
           Patrol.Event.contexts = Map.union scope.contexts event.contexts,
@@ -900,6 +917,50 @@ setAppContextAt ctx upd = updateAt ctx (Update.setAppContext upd)
 -- | Apply 'Update.modifyExistingUser' to the given scope.
 modifyExistingUser :: (MonadIO m, Witch.From a UserUpdate) => Scope -> a -> m ()
 modifyExistingUser scope upd = Update.apply scope (Update.modifyExistingUser upd)
+
+-- | Establish the request on the given 'Scope'. See 'Update.setRequest'.
+setRequest :: (MonadIO m, Witch.From a RequestUpdate) => Scope -> a -> m ()
+setRequest scope u = Update.apply scope (Update.setRequest u)
+
+-- | This operation replaces the supplied scope's local request, or removes the
+-- assignment when given 'Nothing'. Removing it allows inherited requests to
+-- appear in captures.
+setOptionalRequest :: (MonadIO m) => Scope -> Maybe Request -> m ()
+setOptionalRequest scope request = Update.apply scope (Update.setOptionalRequest request)
+
+-- | Clear the 'Patrol.Type.Request.Request' from the given 'Scope'.
+unsetRequest :: (MonadIO m) => Scope -> m ()
+unsetRequest scope = Update.apply scope Update.unsetRequest
+
+-- | Update the local request, starting from empty when absent. See
+-- 'Update.modifyRequest'.
+modifyRequest :: (MonadIO m, Witch.From a RequestUpdate) => Scope -> a -> m ()
+modifyRequest scope upd = Update.apply scope (Update.modifyRequest upd)
+
+-- | Apply 'Update.setRequest' to the isolation scope on the given context.
+setRequestAt :: (MonadIO m, Witch.From a RequestUpdate) => Context -> a -> m ()
+setRequestAt ctx u = updateAt ctx (Update.setRequest u)
+
+-- | Apply 'Update.setOptionalRequest' to the isolation scope on the given context.
+setOptionalRequestAt :: (MonadIO m) => Context -> Maybe Request -> m ()
+setOptionalRequestAt ctx request = updateAt ctx (Update.setOptionalRequest request)
+
+-- | Apply 'Update.unsetRequest' to the isolation scope on the given context.
+unsetRequestAt :: (MonadIO m) => Context -> m ()
+unsetRequestAt ctx = updateAt ctx Update.unsetRequest
+
+-- | Apply 'Update.modifyRequest' to the isolation scope on the given context.
+modifyRequestAt :: (MonadIO m, Witch.From a RequestUpdate) => Context -> a -> m ()
+modifyRequestAt ctx upd = updateAt ctx (Update.modifyRequest upd)
+
+-- | Apply 'Update.modifyExistingRequest' to the given scope.
+modifyExistingRequest :: (MonadIO m, Witch.From a RequestUpdate) => Scope -> a -> m ()
+modifyExistingRequest scope upd = Update.apply scope (Update.modifyExistingRequest upd)
+
+-- | Apply 'Update.modifyExistingRequest' to the isolation scope on the given
+-- context.
+modifyExistingRequestAt :: (MonadIO m, Witch.From a RequestUpdate) => Context -> a -> m ()
+modifyExistingRequestAt ctx upd = updateAt ctx (Update.modifyExistingRequest upd)
 
 -- | Apply 'Update.modifyExistingUser' to the isolation scope on the given
 -- context.

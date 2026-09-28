@@ -528,3 +528,22 @@ The unimplemented lookup and transformation follow-up is documented in
 `docs/builder-helpers-plan.md`. Use `modifyExistingX` for present-only edits and
 `alterX` for `Maybe a -> Maybe a`; do not introduce `adjustX` aliases or scalar
 defaults to complete a naming family.
+
+
+### Request metadata on scopes
+
+`ScopeData.request` is an optional whole request record. Scope layers replace
+requests in global, isolation, current order; no fields are implicitly merged.
+`setRequest`, `setOptionalRequest`, `modifyRequest`, `modifyExistingRequest`, and
+`unsetRequest` mirror the user family through pure builders, explicit operations,
+ambient isolation operations, and context-based isolation `*At` operations.
+Modifiers edit only local metadata and force the resulting record to WHNF.
+Absent `modifyExistingRequest` skips its argument. Disabled ambient operations
+skip arguments and scope creation; missing context targets are no-ops.
+
+An event's own request wins, including a present empty record. An absent event
+request falls back to the merged scope request before scope processors run.
+Removal may reveal inheritance; present-empty records prevent fallback.
+Processors may change or remove the selected request without changing stored
+metadata; integrations follow scope processors and `beforeSend` runs afterward.
+See `docs/scopes.md` for request body refinement using `Sentry.Request.with`.

@@ -59,6 +59,13 @@ module Sentry.Scope.Update
     modifyUser,
     modifyExistingUser,
 
+    -- ** Request
+    setRequest,
+    setOptionalRequest,
+    unsetRequest,
+    modifyRequest,
+    modifyExistingRequest,
+
     -- ** Fingerprint
     setFingerprint,
     setOptionalFingerprint,
@@ -208,6 +215,8 @@ import Sentry.Event.Captured (CapturedEvent (..))
 import Sentry.Fingerprint.Internal (defaultFingerprintComponent)
 import Sentry.Fingerprint.Internal qualified as Fingerprint
 import Sentry.OsContext qualified
+import Sentry.Request (RequestUpdate)
+import Sentry.Request qualified
 import Sentry.RuntimeContext (RuntimeContextUpdate)
 import Sentry.RuntimeContext qualified
 import Sentry.Scope.Internal (Scope, ScopeData (..), modifyScopeData)
@@ -284,6 +293,42 @@ modifyExistingUser :: (Witch.From a UserUpdate) => a -> ScopeUpdate
 modifyExistingUser upd = edit \s -> case s.user of
   Nothing -> s
   Just u -> let !u' = Sentry.Update.run upd u in s{user = Just u'}
+
+-- | Establish the local request from empty, replacing any previous request.
+--
+-- Accepts a 'Sentry.Request.RequestUpdate', a list of them, or a
+-- 'Sentry.Request.Request' you already hold. Use 'modifyRequest' to refine
+-- a local request or create one when absent.
+--
+-- The new value is forced before it is stored, so the update runs as part of
+-- this single atomic scope modification rather than being retained as a thunk.
+setRequest :: (Witch.From a RequestUpdate) => a -> ScopeUpdate
+setRequest upd =
+  edit \s -> let !request = Sentry.Update.run upd Sentry.Request.empty in s{request = Just request}
+
+-- | This update replaces the local request with a supplied record, or removes the
+-- assignment when given 'Nothing'. Removing it allows an inherited request to
+-- appear in captures; 'Just' an empty request retains a local override.
+setOptionalRequest :: Maybe Sentry.Request.Request -> ScopeUpdate
+setOptionalRequest = maybe unsetRequest setRequest
+
+-- | Remove the local request override.
+unsetRequest :: ScopeUpdate
+unsetRequest = edit \s -> s{request = Nothing}
+
+-- | Modify the local request, starting from empty when absent. This never
+-- copies an inherited request into this scope.
+modifyRequest :: (Witch.From a RequestUpdate) => a -> ScopeUpdate
+modifyRequest upd = edit \s -> case s.request of
+  Nothing -> Sentry.Update.run (setRequest upd) s
+  Just _ -> Sentry.Update.run (modifyExistingRequest upd) s
+
+-- | Modify an existing local request. If absent, skip the update without
+-- evaluating its argument.
+modifyExistingRequest :: (Witch.From a RequestUpdate) => a -> ScopeUpdate
+modifyExistingRequest upd = edit \s -> case s.request of
+  Nothing -> s
+  Just request -> let !result = Sentry.Update.run upd request in s{request = Just result}
 
 -- | Replace the local fingerprint.
 setFingerprint :: [Text] -> ScopeUpdate

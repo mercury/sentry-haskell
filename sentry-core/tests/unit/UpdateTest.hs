@@ -1406,3 +1406,97 @@ spec_optionalTypedReplacement = describe "optional typed context replacement" do
         removed = Sentry.Update.run (Sentry.Event.setOptionalTraceContext Nothing) original
     Map.lookup "trace" assigned.contexts `shouldBe` Just (Patrol.Context.Trace Sentry.TraceContext.empty)
     removed.contexts `shouldBe` Map.empty
+
+spec_scopeRequests :: Spec
+spec_scopeRequests = describe "scope request metadata" do
+  let run upd = Sentry.Update.run upd (mempty @Sentry.ScopeData)
+      original = Sentry.Update.run [Sentry.Request.setUrl "/checkout", Sentry.Request.setMethod "POST"] Sentry.Request.empty
+  it "accepts records, lists, and single updates in left-to-right order" do
+    (run (Builders.setRequest original)).request `shouldBe` Just original
+    let edited = run (Builders.setRequest [Sentry.Request.setUrl "/old", Sentry.Request.setUrl "/new"] <> Builders.modifyRequest (Sentry.Request.setMethod "GET"))
+    fmap (.url) edited.request `shouldBe` Just "/new"
+    fmap (.method) edited.request `shouldBe` Just "GET"
+    (Sentry.Update.run (Builders.modifyExistingRequest original) edited).request `shouldBe` Just original
+    (Sentry.Update.run (Builders.setRequest Sentry.Request.empty) edited).request `shouldBe` Just Sentry.Request.empty
+  it "distinguishes absence from an empty assignment" do
+    (run (Builders.setOptionalRequest (Just Sentry.Request.empty))).request `shouldBe` Just Sentry.Request.empty
+    (run (Builders.setRequest original <> Builders.setOptionalRequest Nothing)).request `shouldBe` Nothing
+    (run (Builders.setRequest original <> Builders.unsetRequest)).request `shouldBe` Nothing
+    (run (Builders.modifyRequest original)).request `shouldBe` Just original
+    (run (Builders.modifyExistingRequest (error "unused" :: Sentry.RequestUpdate))).request `shouldBe` Nothing
+  it "forces resulting records for new and existing assignments" do
+    let bad = Sentry.Update.Update (const (error "request")) :: Sentry.RequestUpdate
+    for_ [Builders.setRequest bad, Builders.modifyRequest bad, Builders.setOptionalRequest (Just (error "record"))] \upd ->
+      evaluate (run upd) `shouldThrow` anyErrorCall
+    let present = run (Builders.setRequest original)
+    for_ [Builders.modifyRequest bad, Builders.modifyExistingRequest bad] \upd ->
+      evaluate (Sentry.Update.run upd present) `shouldThrow` anyErrorCall
+  it "observes preceding body edits and transforms non-object bodies" do
+    for_ [Aeson.Null, Aeson.String "secret", Aeson.toJSON ([1, 2] :: [Int]), Aeson.object ["secret" Aeson..= True]] \body -> do
+      let edited =
+            run $
+              Builders.modifyRequest
+                [ Sentry.Request.setHeader "authorization" "secret",
+                  Sentry.Request.setData body,
+                  Sentry.Request.removeHeader "Authorization",
+                  Sentry.Request.with \request -> Sentry.Request.setData (Aeson.toJSON [request.data_])
+                ]
+      fmap (.data_) edited.request `shouldBe` Just (Aeson.toJSON [body])
+      fmap (.headers) edited.request `shouldBe` Just Map.empty
+  it "replaces requests by layer and reveals inheritance on local removal" do
+    let global = run (Builders.setRequest original)
+        isolation = run (Builders.setRequest (Sentry.Request.setMethod "GET"))
+        current = run (Builders.setRequest Sentry.Request.empty)
+    (global <> isolation).request `shouldBe` isolation.request
+    (global <> isolation <> current).request `shouldBe` Just Sentry.Request.empty
+    (global <> isolation <> Sentry.Update.run Builders.unsetRequest current).request `shouldBe` isolation.request
+    (global <> run (Builders.modifyRequest (Sentry.Request.setMethod "PUT"))).request
+      `shouldBe` Just (Sentry.Update.run (Sentry.Request.setMethod "PUT") Sentry.Request.empty)
+  it "routes optional assignments to isolation and skips unavailable targets" $
+    optionalRouting
+      IsolationTarget
+      (Sentry.setOptionalRequest (Just original))
+      (\ctx -> Scope.setOptionalRequestAt ctx Nothing)
+      (\scope -> Scope.setOptionalRequest scope (Just original))
+      (\result -> result.request)
+      (Just original)
+      Nothing
+      (Sentry.setOptionalRequest (error "unused"))
+      (Scope.setOptionalRequestAt Context.empty (error "unused"))
+  it "supports explicit edits without initialization and all context operations" $ Test.withGlobalScope do
+    scope <- Scope.create Scope.Isolation
+    Scope.setRequest scope original
+    Scope.modifyRequest scope (Sentry.Request.setMethod "PUT")
+    Scope.modifyExistingRequest scope [Sentry.Request.setUrl "/explicit"]
+    fmap (fmap (.url) . (.request)) (Scope.readScopeRef scope) `shouldReturn` Just "/explicit"
+    Scope.unsetRequest scope
+    Scope.modifyExistingRequest scope (error "unused" :: Sentry.RequestUpdate)
+    let ctx = Scope.insertIsolation scope Context.empty
+    Scope.setRequestAt ctx original
+    Scope.modifyRequestAt ctx [Sentry.Request.setMethod "PATCH"]
+    Scope.modifyExistingRequestAt ctx (Sentry.Request.setUrl "/context")
+    fmap (fmap (.url) . (.request)) (Scope.readScopeRef scope) `shouldReturn` Just "/context"
+    Scope.unsetRequestAt ctx
+    fmap (.request) (Scope.readScopeRef scope) `shouldReturn` Nothing
+    Scope.setRequestAt Context.empty (error "unused" :: Sentry.RequestUpdate)
+    Scope.modifyRequestAt Context.empty (error "unused" :: Sentry.RequestUpdate)
+    Scope.modifyExistingRequestAt Context.empty (error "unused" :: Sentry.RequestUpdate)
+  it "routes ambient edits to isolation and preserves current metadata" do
+    _ <- Test.withClient \_ -> Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+      Sentry.setRequest original
+      Sentry.modifyRequest [Sentry.Request.setMethod "PUT"]
+      Sentry.modifyExistingRequest (Sentry.Request.setUrl "/ambient")
+      fmap (fmap (.url) . (.request)) (Scope.readScopeRef isolation) `shouldReturn` Just "/ambient"
+      fmap (.request) (Scope.readScopeRef current) `shouldReturn` Nothing
+      Sentry.unsetRequest
+      fmap (.request) (Scope.readScopeRef isolation) `shouldReturn` Nothing
+    pure ()
+  it "skips ambient arguments and mutation without a recording client" $ Test.withGlobalScope do
+    Sentry.setRequest (error "unused" :: Sentry.RequestUpdate)
+    Sentry.modifyRequest (error "unused" :: Sentry.RequestUpdate)
+    Sentry.modifyExistingRequest (error "unused" :: Sentry.RequestUpdate)
+    Sentry.setOptionalRequest (error "unused")
+    isolation <- Sentry.getIsolationScope
+    Scope.setRequest isolation original
+    Sentry.unsetRequest
+    fmap (.request) (Scope.readScopeRef isolation) `shouldReturn` Just original

@@ -10,8 +10,10 @@ import Patrol.Type.Event qualified as Patrol.Event
 import Patrol.Type.Level qualified as Patrol.Level
 import Patrol.Type.User qualified as Patrol.User
 import Sentry.Capture qualified as Capture
+import Sentry.Core qualified as Sentry
 import Sentry.Event qualified
 import Sentry.Event.Captured (CapturedEvent (..))
+import Sentry.Request qualified
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations (ScopeData (..), ScopeType (..))
 import Sentry.Scope.Operations qualified as Scope
@@ -220,3 +222,34 @@ spec_eventPrecedence = describe "scope to Event precedence" do
       Map.lookup "processed" local.tags `shouldBe` Nothing
     events <- Test.fetchAndClearEvents transport
     map (.tags) events `shouldBe` [Map.fromList [("collision", "scope"), ("processed", "yes")]]
+
+spec_requestCapture :: Spec
+spec_requestCapture = describe "capture request selection" do
+  let stored = Sentry.Request.empty{Sentry.Request.url = "/scope", Sentry.Request.method = "POST"}
+      own = Sentry.Request.empty{Sentry.Request.url = "/event"}
+  it "uses scope fallback only for an absent event request" do
+    let scope = def{request = Just stored}
+        capture event = fmap (.request) (Scope.applyToEvent scope (Witch.into @CapturedEvent event))
+    capture Patrol.Event.empty `shouldBe` Just (Just stored)
+    capture Patrol.Event.empty{Patrol.Event.request = Just own} `shouldBe` Just (Just own)
+    capture Patrol.Event.empty{Patrol.Event.request = Just Sentry.Request.empty} `shouldBe` Just (Just Sentry.Request.empty)
+    capture (Sentry.Event.apply Patrol.Event.empty{Patrol.Event.request = Just own} Sentry.Event.unsetRequest) `shouldBe` Just (Just stored)
+  it "inspection does not execute processors; capture edits do not mutate scope metadata" do
+    (_, transport) <- Test.withClient \_ -> Sentry.withIsolationScope \isolation -> Sentry.withScope \current -> do
+      Scope.setRequest isolation stored
+      Scope.setEventProcessor current (\_ -> error "inspection must not run processors")
+      fmap (.request) (Scope.readScopeRef current) `shouldReturn` Nothing
+      fmap (.request) Scope.readMergedScope `shouldReturn` Just stored
+      Scope.setEventProcessor current \ce ->
+        if ce.event.request == Just stored
+          then Just (Sentry.Event.apply ce.event (Sentry.Event.modifyRequest (Sentry.Request.setMethod "PATCH")))
+          else Nothing
+      Capture.captureEvent_ Patrol.Event.empty
+      Scope.setEventProcessor current \ce -> Just (Sentry.Event.apply ce.event (Sentry.Event.setRequest own))
+      Capture.captureEvent_ Patrol.Event.empty
+      Scope.setEventProcessor current \ce -> Just (Sentry.Event.apply ce.event Sentry.Event.unsetRequest)
+      Capture.captureEvent_ Patrol.Event.empty
+      fmap (.request) (Scope.readScopeRef isolation) `shouldReturn` Just stored
+      fmap (.request) Scope.readMergedScope `shouldReturn` Just stored
+    events <- Test.fetchAndClearEvents transport
+    map (.request) events `shouldBe` [Just stored{Sentry.Request.method = "PATCH"}, Just own, Nothing]

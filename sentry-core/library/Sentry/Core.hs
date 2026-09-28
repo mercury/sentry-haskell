@@ -112,6 +112,13 @@ module Sentry.Core
     modifyUser,
     modifyExistingUser,
 
+    -- ** Request
+    setRequest,
+    setOptionalRequest,
+    unsetRequest,
+    modifyRequest,
+    modifyExistingRequest,
+
     -- ** Fingerprint
     setFingerprint,
     setOptionalFingerprint,
@@ -311,6 +318,26 @@ modifyUser upd = ambientUpdate getIsolationScope (ScopeUpdate.modifyUser upd)
 -- | Apply 'ScopeUpdate.modifyExistingUser' to the active isolation scope.
 modifyExistingUser :: (MonadIO m, Witch.From a UserUpdate) => a -> m ()
 modifyExistingUser upd = ambientUpdate getIsolationScope (ScopeUpdate.modifyExistingUser upd)
+
+-- | Apply 'ScopeUpdate.setRequest' to the active isolation scope.
+setRequest :: (MonadIO m, Witch.From a RequestUpdate) => a -> m ()
+setRequest u = ambientUpdate getIsolationScope (ScopeUpdate.setRequest u)
+
+-- | Apply 'ScopeUpdate.setOptionalRequest' to the active isolation scope.
+setOptionalRequest :: (MonadIO m) => Maybe Request -> m ()
+setOptionalRequest request = ambientUpdate getIsolationScope (ScopeUpdate.setOptionalRequest request)
+
+-- | Apply 'ScopeUpdate.unsetRequest' to the active isolation scope.
+unsetRequest :: (MonadIO m) => m ()
+unsetRequest = ambientUpdate getIsolationScope ScopeUpdate.unsetRequest
+
+-- | Apply 'ScopeUpdate.modifyRequest' to the active isolation scope.
+modifyRequest :: (MonadIO m, Witch.From a RequestUpdate) => a -> m ()
+modifyRequest upd = ambientUpdate getIsolationScope (ScopeUpdate.modifyRequest upd)
+
+-- | Apply 'ScopeUpdate.modifyExistingRequest' to the active isolation scope.
+modifyExistingRequest :: (MonadIO m, Witch.From a RequestUpdate) => a -> m ()
+modifyExistingRequest upd = ambientUpdate getIsolationScope (ScopeUpdate.modifyExistingRequest upd)
 
 -- | Apply 'ScopeUpdate.setTag' to the active isolation scope.
 setTag :: (MonadIO m) => Text -> Text -> m ()

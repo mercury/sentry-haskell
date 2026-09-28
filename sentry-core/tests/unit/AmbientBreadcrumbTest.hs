@@ -16,6 +16,7 @@ import Sentry.Client.Options (ClientOptions (..))
 import Sentry.Client.Options.Dsn qualified as Dsn
 import Sentry.Core qualified as Sentry
 import Sentry.Init qualified as Init
+import Sentry.Request qualified
 import Sentry.Scope.IO qualified as Scope.IO
 import Sentry.Scope.Operations qualified as Scope
 import Sentry.Test qualified as Test
@@ -116,6 +117,11 @@ spec_ambientMetadata :: Spec
 spec_ambientMetadata = describe "ambient metadata targeting" do
   it "skips invalid arguments and creates no scopes while disabled" $ freshContext do
     Sentry.setUser (error "user" :: Sentry.UserUpdate)
+    Sentry.setRequest (error "request" :: Sentry.RequestUpdate)
+    Sentry.modifyRequest (error "request" :: Sentry.RequestUpdate)
+    Sentry.modifyExistingRequest (error "request" :: Sentry.RequestUpdate)
+    Sentry.setOptionalRequest (error "optional request")
+    Sentry.unsetRequest
     Sentry.setTag (error "key") (error "value")
     Sentry.setTransaction (error "transaction")
     Sentry.addBreadcrumb (error "crumb" :: Sentry.BreadcrumbUpdate)
@@ -168,11 +174,18 @@ spec_ambientMetadata = describe "ambient metadata targeting" do
     restored <- Sentry.readMergedScope
     restored.tags `shouldBe` outer.tags
     current <- Sentry.getCurrentScope
+    Sentry.setRequest (Sentry.Request.setUrl "/recording")
     Scope.bindClient (Just Sentry.NON_RECORDING_CLIENT) current
+    Sentry.setRequest (error "shadowed request" :: Sentry.RequestUpdate)
+    Sentry.modifyRequest (error "shadowed request" :: Sentry.RequestUpdate)
+    Sentry.modifyExistingRequest (error "shadowed request" :: Sentry.RequestUpdate)
+    Sentry.setOptionalRequest (error "shadowed request")
+    Sentry.unsetRequest
     Sentry.setTag "request" "disabled"
     Sentry.addBreadcrumbs (error "shadowed")
     final <- Sentry.readMergedScope
     final.tags `shouldBe` outer.tags
+    fmap (.url) final.request `shouldBe` Just "/recording"
 
   it "skips breadcrumb hooks on a non-recording client with an existing scope" $ freshContext do
     let opts = def{dsn = Dsn.Disabled, beforeBreadcrumb = Just (error "disabled hook")}

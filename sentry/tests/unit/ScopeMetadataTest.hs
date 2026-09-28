@@ -200,3 +200,26 @@ spec_nestedRecords = describe "nested public record builders" do
                 <> Sentry.Event.setRuntimeContext (Sentry.RuntimeContext.setName "ghc")
             )
     fmap (.headers) event.request `shouldBe` Just (Map.singleton "Method" "POST")
+
+spec_scopeRequestFacade :: Spec
+spec_scopeRequestFacade = describe "request metadata through Sentry" do
+  it "captures a request established and refined within isolation" do
+    (_, transport) <- Test.withClient \_ -> Sentry.withIsolationScope \_ -> do
+      Sentry.setRequest [Sentry.Request.setUrl "/checkout", Sentry.Request.setHeader "Authorization" "secret"]
+      Sentry.modifyRequest
+        [ Sentry.Request.removeHeader "Authorization",
+          Sentry.Request.with \request -> Sentry.Request.setData (Aeson.toJSON [request.data_])
+        ]
+      Sentry.modifyExistingRequest (Sentry.Request.setMethod "POST")
+      Sentry.captureMessage_ Sentry.Info "request"
+      Sentry.setOptionalRequest (Just Sentry.Request.empty)
+      Sentry.captureMessage_ Sentry.Info "empty"
+      Sentry.unsetRequest
+      Sentry.captureMessage_ Sentry.Info "absent"
+    events <- Test.fetchAndClearEvents transport
+    map (fmap (.url) . (.request)) events `shouldBe` [Just "/checkout", Just "", Nothing]
+    case events of
+      event : _ -> do
+        fmap (.headers) event.request `shouldBe` Just Map.empty
+        fmap (.data_) event.request `shouldBe` Just (Aeson.toJSON [Aeson.Null])
+      [] -> expectationFailure "Expected captured events"

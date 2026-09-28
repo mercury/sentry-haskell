@@ -61,6 +61,13 @@ module Sentry.Scope
     modifyUser,
     modifyExistingUser,
 
+    -- ** Request
+    setRequest,
+    setOptionalRequest,
+    unsetRequest,
+    modifyRequest,
+    modifyExistingRequest,
+
     -- ** Fingerprint
     setFingerprint,
     setOptionalFingerprint,

@@ -93,6 +93,7 @@ data ScopeData = ScopeData
     transaction :: Maybe Text,
     breadcrumbs :: Seq Patrol.Breadcrumb,
     user :: Maybe Patrol.User,
+    request :: Maybe Patrol.Request,
     extras :: Map Text Aeson.Value,
     tags :: Map Text Text,
     contexts :: Map Text Patrol.Context,
@@ -116,6 +117,8 @@ instance Show ScopeData where
         . shows scope.breadcrumbs
         . showString ", user = "
         . shows scope.user
+        . showString ", request = "
+        . shows scope.request
         . showString ", extras = "
         . shows scope.extras
         . showString ", tags = "
@@ -129,7 +132,7 @@ instance Show ScopeData where
 -- | Merge two scopes.
 --
 -- For scalar fields ('level', 'fingerprint', 'transaction',
--- 'user'), the right-hand (newer) value takes precedent over the left-hand
+-- 'user', 'request'), the right-hand (newer) value takes precedent over the left-hand
 -- (older) value.
 --
 -- For collection fields ('breadcrumbs', 'extras', 'tags', 'contexts'), values
@@ -146,6 +149,7 @@ instance Semigroup ScopeData where
         transaction = new.transaction <|> old.transaction,
         breadcrumbs = old.breadcrumbs <> new.breadcrumbs,
         user = new.user <|> old.user,
+        request = new.request <|> old.request,
         extras = new.extras <> old.extras,
         tags = new.tags <> old.tags,
         contexts = new.contexts <> old.contexts,
@@ -175,6 +179,7 @@ defaultScopeData =
       transaction = Nothing,
       breadcrumbs = mempty,
       user = Nothing,
+      request = Nothing,
       extras = mempty,
       tags = mempty,
       contexts = mempty,
